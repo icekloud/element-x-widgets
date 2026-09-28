@@ -80,6 +80,10 @@ internal fun MarkwonMessageText(
                 isLongClickable = false
                 isFocusable = false
                 setLineSpacing(0f, 1.1f)
+                // Element June: fill each line greedily. The default high-quality/balanced breaking wraps early
+                // and leaves a wider gap on the right than the left padding.
+                breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
+                hyphenationFrequency = android.text.Layout.HYPHENATION_FREQUENCY_NONE
                 addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
                     val textView = view as TextView
                     val layout = textView.layout ?: return@addOnLayoutChangeListener
