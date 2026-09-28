@@ -529,22 +529,23 @@ class AttachmentsPreviewPresenter(
         sendActionState: MutableState<SendActionState>,
         inReplyToEventId: EventId?,
     ) = runCatchingExceptions {
-        if (mediaUploadInfos.size == 1) {
-            sendActionState.value = SendActionState.Sending.Uploading(mediaUploadInfos)
+        // Element June: send every item as its own regular media event instead of an m.gallery event,
+        // so that every client (including bots) can receive them. The caption goes with the first item.
+        sendActionState.value = SendActionState.Sending.Uploading(mediaUploadInfos)
+        var firstError: Throwable? = null
+        mediaUploadInfos.forEachIndexed { index, mediaUploadInfo ->
             mediaSender.sendPreProcessedMedia(
-                mediaUploadInfo = mediaUploadInfos.first(),
-                caption = caption,
+                mediaUploadInfo = mediaUploadInfo,
+                caption = caption.takeIf { index == 0 },
                 formattedCaption = null,
-                inReplyToEventId = inReplyToEventId,
-            ).getOrThrow()
-        } else {
-            mediaSender.sendGallery(
-                mediaUploadInfos = mediaUploadInfos,
-                caption = caption,
-                formattedCaption = null,
-                inReplyToEventId = inReplyToEventId,
-            ).getOrThrow()
+                inReplyToEventId = inReplyToEventId.takeIf { index == 0 },
+            ).onFailure { error ->
+                if (error is CancellationException) throw error
+                Timber.e(error, "Failed to send attachment ${index + 1}/${mediaUploadInfos.size}")
+                if (firstError == null) firstError = error
+            }
         }
+        firstError?.let { throw it }
     }.fold(
         onSuccess = {
             mediaUploadInfos.forEach { cleanUp(it) }

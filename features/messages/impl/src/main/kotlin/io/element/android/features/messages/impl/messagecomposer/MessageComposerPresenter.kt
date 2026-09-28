@@ -189,7 +189,8 @@ class MessageComposerPresenter(
             canShareLocation.value = locationService.isServiceAvailable()
         }
 
-        val isSendGalleryMessagesEnabled by featureFlagService.isFeatureEnabledFlow(FeatureFlags.SendGalleryMessages)
+        // Element June: multi selection is always available, items are sent one by one (no m.gallery)
+        val isSendGalleryMessagesEnabled = true
             .collectAsState(initial = false)
 
         val galleryMediaPicker = mediaPickerProvider.registerGalleryPicker { uri, mimeType ->

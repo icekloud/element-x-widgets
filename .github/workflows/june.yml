@@ -50,6 +50,8 @@ jobs:
           JUNE_KEYSTORE_FILE: ${{ runner.temp }}/june.p12
           JUNE_STORE_PASSWORD: ${{ secrets.JUNE_STORE_PASSWORD }}
           JUNE_KEY_ALIAS: ${{ secrets.JUNE_KEY_ALIAS }}
+          # Element June: map tiles for location sharing (key only in GitHub Secrets)
+          ELEMENT_ANDROID_MAPTILER_API_KEY: ${{ secrets.MAPTILER_KEY }}
         run: ./gradlew :app:assembleFdroidRelease $CI_GRADLE_ARG_PROPERTIES
       - name: Remove signing key
         if: always()
