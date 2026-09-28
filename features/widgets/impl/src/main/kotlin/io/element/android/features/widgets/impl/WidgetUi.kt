@@ -10,6 +10,7 @@ package io.element.android.features.widgets.impl
 
 import android.graphics.Bitmap
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -17,6 +18,7 @@ import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
 import androidx.glance.Image
 import androidx.glance.ImageProvider
+import androidx.glance.LocalContext
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.background
 import androidx.glance.layout.Alignment
@@ -26,6 +28,8 @@ import androidx.glance.layout.size
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
+import io.element.android.libraries.designsystem.june.JuneSettings
 
 @Composable
 internal fun RoomAvatar(name: String, bitmap: Bitmap?, size: Dp) {
@@ -56,12 +60,15 @@ internal fun RoomAvatar(name: String, bitmap: Bitmap?, size: Dp) {
 internal fun UnreadBadge(count: Long) {
     if (count <= 0) return
     Box(
-        modifier = GlanceModifier.cornerRadius(10.dp).background(GlanceTheme.colors.primary).padding(horizontal = 6.dp, vertical = 1.dp),
+        modifier = GlanceModifier
+            .cornerRadius(10.dp)
+            .background(ColorProvider(JuneSettings.colorOf(LocalContext.current, JuneSettings.ColorSlot.WidgetBadge)))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = if (count > 99) "99+" else count.toString(),
-            style = TextStyle(color = GlanceTheme.colors.onPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            style = TextStyle(color = ColorProvider(Color.White), fontSize = 11.sp, fontWeight = FontWeight.Bold),
         )
     }
 }

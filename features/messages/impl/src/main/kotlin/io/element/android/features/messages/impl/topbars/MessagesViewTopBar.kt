@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,8 @@ import io.element.android.libraries.designsystem.components.avatar.AvatarSize
 import io.element.android.libraries.designsystem.components.avatar.AvatarType
 import io.element.android.libraries.designsystem.components.avatar.anAvatarData
 import io.element.android.libraries.designsystem.components.button.BackButton
+import io.element.android.libraries.designsystem.june.JuneSettings
+import io.element.android.libraries.designsystem.june.juneColor
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.preview.ROOM_NAME
@@ -85,7 +88,8 @@ internal fun MessagesViewTopBar(
             val roundedCornerShape = RoundedCornerShape(8.dp)
             Row(
                 modifier = Modifier
-                    .heightIn(min = 48.dp)
+                    // Element June: compact room bar (was 48dp min inside a 64dp bar)
+                    .heightIn(min = 40.dp)
                     .clip(roundedCornerShape)
                     .clickable { onRoomDetailsClick() }
                     .semantics { heading() },
@@ -142,7 +146,12 @@ internal fun MessagesViewTopBar(
             }
         },
         actions = menuActions,
-        windowInsets = WindowInsets(0.dp)
+        windowInsets = WindowInsets(0.dp),
+        // Element June: compact room bar, user colour
+        expandedHeight = 48.dp,
+        colors = juneColor(JuneSettings.ColorSlot.TopBar)
+            ?.let { TopAppBarDefaults.topAppBarColors(containerColor = it) }
+            ?: TopAppBarDefaults.topAppBarColors(),
     )
 }
 

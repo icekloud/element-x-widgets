@@ -36,6 +36,11 @@
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".config.JuneSettingsActivity"
+            android:exported="false"
+            android:label="June 꾸미기"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
     </application>
 
 </manifest>

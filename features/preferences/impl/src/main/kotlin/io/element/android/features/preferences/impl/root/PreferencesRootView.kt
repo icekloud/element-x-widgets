@@ -8,6 +8,7 @@
 
 package io.element.android.features.preferences.impl.root
 
+import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -28,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -319,6 +321,17 @@ private fun AppSettingsSection(
             onSelectOption = { themeOption ->
                 state.eventSink(PreferencesRootEvent.SetTheme(themeOption))
             }
+        )
+        // Element June: colours and composer menu
+        val juneContext = LocalContext.current
+        ListItem(
+            content = { Text("June 꾸미기 (색상 · + 메뉴)") },
+            leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Edit())),
+            onClick = {
+                juneContext.startActivity(
+                    Intent().setClassName(juneContext, "io.element.android.features.widgets.impl.config.JuneSettingsActivity")
+                )
+            },
         )
         ListItem(
             content = { Text(stringResource(id = CommonStrings.common_media_upload_quality)) },

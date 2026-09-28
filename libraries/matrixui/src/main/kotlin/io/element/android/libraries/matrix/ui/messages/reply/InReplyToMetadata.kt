@@ -70,7 +70,8 @@ internal fun InReplyToDetails.Ready.metadata(hideImage: Boolean): InReplyToMetad
         is ImageMessageType -> Thumbnail(
             AttachmentThumbnailInfo(
                 thumbnailSource = (type.info?.thumbnailSource ?: type.source).takeUnless { hideImage },
-                textContent = eventContent.body,
+                // Element June: a picture of a batch stands for the whole batch
+                textContent = juneBatchReplyText(type.filename, type.caption) ?: eventContent.body,
                 type = AttachmentThumbnailType.Image,
                 blurHash = type.info?.blurhash,
             )
@@ -182,4 +183,13 @@ internal fun InReplyToDetails.Ready.metadata(hideImage: Boolean): InReplyToMetad
     is CallNotifyContent,
     is LiveLocationContent,
     null -> null
+}
+
+private val JUNE_BATCH_FILENAME = Regex("^june-[0-9a-f]{6,32}-(\\d{1,3})of(\\d{1,3})\\.[A-Za-z0-9]{1,5}$")
+
+/** Element June: "사진 N장" (plus the caption, if any) for a picture sent in a batch, null otherwise. */
+private fun juneBatchReplyText(filename: String, caption: String?): String? {
+    val total = JUNE_BATCH_FILENAME.matchEntire(filename)?.groupValues?.get(2)?.toIntOrNull() ?: return null
+    if (total < 2) return null
+    return if (caption.isNullOrBlank()) "사진 ${total}장" else "사진 ${total}장 · $caption"
 }

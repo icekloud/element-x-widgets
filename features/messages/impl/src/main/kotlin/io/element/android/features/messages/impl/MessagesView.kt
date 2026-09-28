@@ -486,10 +486,7 @@ internal fun RowScope.MessagesMenuActions(
         )
         Spacer(Modifier.width(8.dp))
     }
-    CallMenuItem(
-        roomCallState = roomCallState,
-        onJoinCallClick = onJoinCallClick,
-    )
+    // Element June: no voice/video call buttons (not needed in this build)
     Spacer(Modifier.width(8.dp))
 }
 

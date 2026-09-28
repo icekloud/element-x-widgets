@@ -31,6 +31,7 @@ import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.features.messages.impl.R
 import io.element.android.libraries.androidutils.ui.hideKeyboard
 import io.element.android.libraries.designsystem.components.list.ListItemContent
+import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.theme.components.IconSource
@@ -103,50 +104,55 @@ private fun AttachmentSourcePickerMenu(
             .imePadding()
             .verticalScroll(rememberScrollState())
     ) {
-        ListItem(
-            modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.PhotoFromCamera) },
-            leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.TakePhoto())),
-            content = { Text(stringResource(R.string.screen_room_attachment_source_camera_photo)) },
-        )
-        ListItem(
-            modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.VideoFromCamera) },
-            leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.VideoCall())),
-            content = { Text(stringResource(R.string.screen_room_attachment_source_camera_video)) },
-        )
-        ListItem(
-            modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.FromGallery) },
-            leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
-            content = { Text(stringResource(R.string.screen_room_attachment_source_gallery)) },
-        )
-        ListItem(
-            modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.FromFiles) },
-            leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Attachment())),
-            content = { Text(stringResource(R.string.screen_room_attachment_source_files)) },
-        )
-        if (state.canShareLocation) {
-            ListItem(
-                modifier = Modifier.clickable {
-                    state.eventSink(MessageComposerEvent.PickAttachmentSource.Location)
-                    onSendLocationClick()
-                },
-                leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.LocationPin())),
-                content = { Text(stringResource(R.string.screen_room_attachment_source_location)) },
-            )
-        }
-        ListItem(
-            modifier = Modifier.clickable {
-                state.eventSink(MessageComposerEvent.PickAttachmentSource.Poll)
-                onCreatePollClick()
-            },
-            leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Polls())),
-            content = { Text(stringResource(R.string.screen_room_attachment_source_poll)) },
-        )
-        if (enableTextFormatting) {
-            ListItem(
-                modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.ToggleTextFormatting(enabled = true)) },
-                leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.TextFormatting())),
-                content = { Text(stringResource(R.string.screen_room_attachment_text_formatting)) },
-            )
+        // Element June: the items and their order come from Settings > June 꾸미기 > + 메뉴
+        JuneSettings.visibleComposerMenu().forEach { item ->
+            when (item) {
+                JuneSettings.ComposerMenuItem.CameraPhoto -> ListItem(
+                    modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.PhotoFromCamera) },
+                    leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.TakePhoto())),
+                    content = { Text(stringResource(R.string.screen_room_attachment_source_camera_photo)) },
+                )
+                JuneSettings.ComposerMenuItem.CameraVideo -> ListItem(
+                    modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.VideoFromCamera) },
+                    leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.VideoCall())),
+                    content = { Text(stringResource(R.string.screen_room_attachment_source_camera_video)) },
+                )
+                JuneSettings.ComposerMenuItem.Gallery -> ListItem(
+                    modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.FromGallery) },
+                    leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
+                    content = { Text(stringResource(R.string.screen_room_attachment_source_gallery)) },
+                )
+                JuneSettings.ComposerMenuItem.Files -> ListItem(
+                    modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.PickAttachmentSource.FromFiles) },
+                    leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Attachment())),
+                    content = { Text(stringResource(R.string.screen_room_attachment_source_files)) },
+                )
+                JuneSettings.ComposerMenuItem.Location -> if (state.canShareLocation) {
+                    ListItem(
+                        modifier = Modifier.clickable {
+                            state.eventSink(MessageComposerEvent.PickAttachmentSource.Location)
+                            onSendLocationClick()
+                        },
+                        leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.LocationPin())),
+                        content = { Text(stringResource(R.string.screen_room_attachment_source_location)) },
+                    )
+                }
+                JuneSettings.ComposerMenuItem.Poll -> ListItem(
+                    modifier = Modifier.clickable {
+                        state.eventSink(MessageComposerEvent.PickAttachmentSource.Poll)
+                        onCreatePollClick()
+                    },
+                    leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Polls())),
+                    content = { Text(stringResource(R.string.screen_room_attachment_source_poll)) },
+                )
+                JuneSettings.ComposerMenuItem.TextFormatting -> if (enableTextFormatting) {
+                    ListItem(
+                        modifier = Modifier.clickable { state.eventSink(MessageComposerEvent.ToggleTextFormatting(enabled = true)) },
+                        leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.TextFormatting())),
+                        content = { Text(stringResource(R.string.screen_room_attachment_text_formatting)) },
+                    )
+                }
+            }
         }
     }
 }

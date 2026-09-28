@@ -42,7 +42,9 @@ import androidx.glance.layout.width
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
 import io.element.android.libraries.architecture.bindings
+import io.element.android.libraries.designsystem.june.JuneSettings
 
 class RoomListWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Responsive(
@@ -99,7 +101,7 @@ private fun RoomListContent(
             .fillMaxSize()
             .appWidgetBackground()
             .cornerRadius(16.dp)
-            .background(GlanceTheme.colors.widgetBackground)
+            .background(ColorProvider(JuneSettings.colorOf(context, JuneSettings.ColorSlot.WidgetBackground)))
             .padding(horizontal = 8.dp, vertical = 2.dp),
     ) {
         if (config == null || config.roomIds.isEmpty()) {
@@ -130,7 +132,7 @@ private fun RoomListContent(
                                 text = room.name,
                                 maxLines = 1,
                                 style = TextStyle(
-                                    color = GlanceTheme.colors.onSurface,
+                                    color = ColorProvider(JuneSettings.colorOf(context, JuneSettings.ColorSlot.WidgetText)),
                                     fontSize = 14.sp,
                                     fontWeight = if (room.unread > 0) FontWeight.Bold else FontWeight.Medium,
                                 ),
@@ -139,7 +141,10 @@ private fun RoomListContent(
                                 Text(
                                     text = room.preview,
                                     maxLines = 1,
-                                    style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp),
+                                    style = TextStyle(
+                                        color = ColorProvider(JuneSettings.colorOf(context, JuneSettings.ColorSlot.WidgetText).copy(alpha = 0.7f)),
+                                        fontSize = 12.sp,
+                                    ),
                                 )
                             }
                         }

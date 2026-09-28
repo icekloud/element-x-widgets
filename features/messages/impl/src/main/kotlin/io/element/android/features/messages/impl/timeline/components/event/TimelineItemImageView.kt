@@ -209,6 +209,9 @@ private val JUNE_BATCH_FILENAME = Regex("^june-[0-9a-f]{6,32}-(\\d{1,3})of(\\d{1
 /**
  * Element June: (index, total) when this picture was sent as part of a multi-picture batch (june-<id>-<i>of<n> file name).
  */
+internal fun TimelineItemImageContent.juneBatchId(): String? =
+    JUNE_BATCH_FILENAME.matchEntire(filename)?.let { filename.removePrefix("june-").substringBefore('-') }
+
 internal fun TimelineItemImageContent.juneBatchPosition(): Pair<Int, Int>? {
     val match = JUNE_BATCH_FILENAME.matchEntire(filename) ?: return null
     val index = match.groupValues[1].toInt()

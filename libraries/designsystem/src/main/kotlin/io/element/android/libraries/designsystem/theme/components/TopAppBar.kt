@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.libraries.designsystem.components.button.BackButton
@@ -87,12 +88,15 @@ fun TopAppBar(
     actions: @Composable RowScope.() -> Unit = {},
     windowInsets: WindowInsets = TopAppBarDefaults.windowInsets,
     colors: TopAppBarColors = TopAppBarDefaults.topAppBarColors(),
-    scrollBehavior: TopAppBarScrollBehavior? = null
+    scrollBehavior: TopAppBarScrollBehavior? = null,
+    // Element June: lets a screen use a lower bar
+    expandedHeight: Dp = TopAppBarDefaults.TopAppBarExpandedHeight,
 ) {
     androidx.compose.material3.TopAppBar(
         title = title,
         modifier = modifier,
         navigationIcon = navigationIcon,
+        expandedHeight = expandedHeight,
         actions = {
             CompositionLocalProvider(LocalContentColor provides ElementTheme.colors.textActionPrimary) {
                 actions()

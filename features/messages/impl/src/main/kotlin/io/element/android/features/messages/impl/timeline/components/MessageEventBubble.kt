@@ -42,6 +42,8 @@ import io.element.android.features.messages.impl.timeline.model.bubble.BubbleSta
 import io.element.android.features.messages.impl.timeline.model.bubble.BubbleStatePreviewParam
 import io.element.android.libraries.core.extensions.to01
 import io.element.android.libraries.designsystem.components.avatar.AvatarSize
+import io.element.android.libraries.designsystem.june.JuneSettings
+import io.element.android.libraries.designsystem.june.juneColor
 import io.element.android.libraries.designsystem.modifiers.onKeyboardContextMenuAction
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
@@ -106,7 +108,7 @@ fun MessageEventBubble(
     val yOffsetPx = -(NEGATIVE_MARGIN_FOR_BUBBLE + avatarRadius).toPx()
 
     // Element June: no bubble background, a thin gray outline separates messages
-    val updatedBorderColor by rememberUpdatedState(borderColor ?: ElementTheme.colors.borderInteractiveSecondary)
+    val updatedBorderColor by rememberUpdatedState(borderColor ?: juneColor(JuneSettings.ColorSlot.BubbleBorder) ?: ElementTheme.colors.borderInteractiveSecondary)
     BoxWithConstraints(
         modifier = modifier
             .drawWithCache {
@@ -205,8 +207,8 @@ object MessageEventBubbleDefaults {
 
     @Composable
     fun backgroundBubbleColor(isMine: Boolean): Color {
-        // Element June: transparent bubbles (outline only)
-        return Color.Transparent
+        // Element June: outline bubbles, background colour chosen by the user (transparent by default for received ones)
+        return juneColor(if (isMine) JuneSettings.ColorSlot.OwnBubble else JuneSettings.ColorSlot.OtherBubble) ?: Color.Transparent
     }
 
     // Design says: The maximum width of a bubble is still 3/4 of the screen width. But try with 78% now.

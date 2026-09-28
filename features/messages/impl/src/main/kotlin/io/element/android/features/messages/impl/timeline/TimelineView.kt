@@ -83,6 +83,7 @@ import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.features.messages.impl.crypto.sendfailure.resolve.ResolveVerifiedUserSendFailureView
 import io.element.android.features.messages.impl.timeline.components.FloatingDateBadgeOverlay
 import io.element.android.features.messages.impl.timeline.components.TimelineItemRow
+import io.element.android.features.messages.impl.timeline.components.event.juneBatchId
 import io.element.android.features.messages.impl.timeline.components.toText
 import io.element.android.features.messages.impl.timeline.di.LocalTimelineItemPresenterFactories
 import io.element.android.features.messages.impl.timeline.di.aFakeTimelineItemPresenterFactories
@@ -91,6 +92,7 @@ import io.element.android.features.messages.impl.timeline.model.NewEventState
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemEventContent
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemEventContentPreviewParam
+import io.element.android.features.messages.impl.timeline.model.event.TimelineItemImageContent
 import io.element.android.features.messages.impl.timeline.protection.TimelineProtectionState
 import io.element.android.features.messages.impl.timeline.protection.aTimelineProtectionState
 import io.element.android.libraries.androidutils.system.copyToClipboard
@@ -109,6 +111,7 @@ import io.element.android.libraries.testtags.TestTags
 import io.element.android.libraries.testtags.testTag
 import io.element.android.libraries.ui.strings.CommonStrings
 import io.element.android.wysiwyg.link.Link
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -119,7 +122,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun TimelineView(
@@ -207,6 +209,11 @@ fun TimelineView(
                     reverseLayout = true,
                     contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues() + PaddingValues(top = 64.dp, bottom = 8.dp),
                 ) {
+                    val juneFocusedBatch = state.focusedEventId?.let { focused ->
+                        state.timelineItems.firstNotNullOfOrNull { item ->
+                            ((item as? TimelineItem.Event)?.takeIf { it.eventId == focused }?.content as? TimelineItemImageContent)?.juneBatchId()
+                        }
+                    }
                     items(
                         items = state.timelineItems,
                         contentType = { timelineItem -> timelineItem.contentType() },
@@ -218,7 +225,15 @@ fun TimelineView(
                             timelineRoomInfo = state.timelineRoomInfo,
                             timelineProtectionState = timelineProtectionState,
                             isLastOutgoingMessage = state.isLastOutgoingMessage(timelineItem.identifier()),
-                            focusedEventId = state.focusedEventId,
+                            // Element June: a focused batch picture highlights every picture of the batch
+                            focusedEventId = if (timelineItem is TimelineItem.Event && timelineItem.eventId != null &&
+                                juneFocusedBatch != null &&
+                                (timelineItem.content as? TimelineItemImageContent)?.juneBatchId() == juneFocusedBatch
+                            ) {
+                                timelineItem.eventId
+                            } else {
+                                state.focusedEventId
+                            },
                             displayThreadSummaries = state.displayThreadSummaries,
                             onUserDataClick = onUserDataClick,
                             onLinkClick = onLinkClick,
