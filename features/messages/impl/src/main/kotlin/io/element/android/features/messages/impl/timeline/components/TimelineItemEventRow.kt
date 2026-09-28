@@ -854,8 +854,8 @@ private fun MessageEventBubbleContent(
             val topPadding = if (showThreadDecoration) 0.dp else 8.dp
             val shape = RoundedCornerShape(6.dp)
             val inReplyToModifier = Modifier
-                // Element June: keep the reply box clear of the bubble outline
-                .padding(top = topPadding, start = 8.dp, end = 12.dp)
+                // Element June: reply box centred inside the bubble outline (same margin on both sides)
+                .padding(top = topPadding, start = 10.dp, end = 10.dp)
                 .clip(shape)
 
             val talkbackCompatModifier = when {
