@@ -15,6 +15,7 @@ import android.text.style.ClickableSpan
 import android.text.util.Linkify
 import android.view.MotionEvent
 import android.widget.TextView
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -64,8 +65,12 @@ internal fun MarkwonMessageText(
     val measure = ContentAvoidingLayout.measureLegacyLastTextLine(onContentLayoutChange = onContentLayoutChange)
     val currentMeasure by rememberUpdatedState(measure)
     val currentContentLayoutChange by rememberUpdatedState(onContentLayoutChange)
+    // Element June: a code block background spans the TextView width, so let such messages use the whole bubble width
+    val hasCodeBlock = remember(spanned) {
+        spanned is android.text.Spanned && spanned.getSpans(0, spanned.length, CodeBlockSpan::class.java).isNotEmpty()
+    }
     AndroidView(
-        modifier = modifier,
+        modifier = if (hasCodeBlock) modifier.fillMaxWidth() else modifier,
         factory = { ctx ->
             TextView(ctx).apply {
                 setTag(R_ID_LINK_HANDLER, { link: String -> currentOnLinkClick(Link(url = link, text = link)) })
