@@ -902,7 +902,8 @@ private fun MessageEventBubbleContent(
         }
         if (inReplyToDetails != null) {
             // Use SubComposeLayout only if necessary as it can have consequences on the performance.
-            EqualWidthColumn(spacing = 8.dp) {
+            // Element June: pass the modifier so a full-width bubble also makes the reply box full width (equal side margins)
+            EqualWidthColumn(modifier = modifier, spacing = 8.dp) {
                 threadDecoration()
                 inReplyTo(inReplyToDetails)
                 contentWithTimestamp()
