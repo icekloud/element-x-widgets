@@ -395,6 +395,7 @@ class MessagesPresenter(
     ) = launch {
         when (action) {
             TimelineItemAction.CopyText -> handleCopyContents(targetEvent)
+            TimelineItemAction.SelectText -> Unit // Element June: handled by the view (selection dialog)
             TimelineItemAction.CopyCaption -> handleCopyCaption(targetEvent)
             TimelineItemAction.CopyLink -> handleCopyLink(targetEvent)
             TimelineItemAction.Redact -> handleActionRedact(targetEvent, redactEventAction)

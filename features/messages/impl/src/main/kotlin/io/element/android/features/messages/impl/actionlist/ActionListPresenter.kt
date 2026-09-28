@@ -231,6 +231,8 @@ class DefaultActionListPresenter(
             }
             if (timelineItem.content.canBeCopied()) {
                 add(TimelineItemAction.CopyText)
+                // Element June: partial text selection
+                add(TimelineItemAction.SelectText)
             } else if (timelineItem.content.captionOrNull().isNullOrBlank().not()) {
                 add(TimelineItemAction.CopyCaption)
             }

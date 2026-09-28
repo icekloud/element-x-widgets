@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Element June -->
+<resources>
+    <string name="june_action_select_text">텍스트 선택</string>
+</resources>

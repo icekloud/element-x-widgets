@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -92,6 +93,7 @@ import io.element.android.features.messages.impl.timeline.components.receipt.bot
 import io.element.android.features.messages.impl.timeline.components.receipt.bottomsheet.ReadReceiptBottomSheetEvent
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
 import io.element.android.features.messages.impl.timeline.model.TimelineItemGroupPosition
+import io.element.android.features.messages.impl.timeline.model.event.TimelineItemTextBasedContent
 import io.element.android.features.messages.impl.timeline.model.event.aTimelineItemStateEventContent
 import io.element.android.features.messages.impl.timeline.model.event.aTimelineItemTextContent
 import io.element.android.features.messages.impl.timeline.sendfailure.SendFailureDialogView
@@ -205,7 +207,17 @@ fun MessagesView(
         }
     }
 
+    // Element June: text selection dialog (select any part of a message)
+    var juneSelectText by remember { mutableStateOf<String?>(null) }
+    juneSelectText?.let { text ->
+        JuneSelectTextDialog(text = text, onDismiss = { juneSelectText = null })
+    }
+
     fun onActionSelected(action: TimelineItemAction, event: TimelineItem.Event) {
+        if (action == TimelineItemAction.SelectText) {
+            juneSelectText = (event.content as? TimelineItemTextBasedContent)?.body
+            return
+        }
         state.eventSink(MessagesEvent.HandleAction(action, event))
     }
 
@@ -826,5 +838,26 @@ internal fun MessagesViewA11yPreview() = ElementPreview {
         forceJumpToBottomVisibility = true,
         knockRequestsBannerView = {},
         customReactionBottomSheet = {},
+    )
+}
+
+/** Element June: shows the message text in a selectable view, long press and drag the handles to pick a part. */
+@Composable
+private fun JuneSelectTextDialog(text: String, onDismiss: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("텍스트 선택") },
+        text = {
+            androidx.compose.foundation.text.selection.SelectionContainer(
+                modifier = Modifier
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+            ) {
+                Text(text = text, style = ElementTheme.typography.fontBodyLgRegular)
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("닫기") }
+        },
     )
 }
