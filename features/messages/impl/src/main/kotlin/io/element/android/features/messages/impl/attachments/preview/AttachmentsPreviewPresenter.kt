@@ -537,7 +537,8 @@ class AttachmentsPreviewPresenter(
         items.forEachIndexed { index, mediaUploadInfo ->
             mediaSender.sendPreProcessedMedia(
                 mediaUploadInfo = mediaUploadInfo,
-                caption = caption.takeIf { index == 0 },
+                // Element June: the text goes with the last picture, it is shown under the stacked pictures
+                caption = caption.takeIf { index == items.lastIndex },
                 formattedCaption = null,
                 inReplyToEventId = inReplyToEventId.takeIf { index == 0 },
             ).onFailure { error ->

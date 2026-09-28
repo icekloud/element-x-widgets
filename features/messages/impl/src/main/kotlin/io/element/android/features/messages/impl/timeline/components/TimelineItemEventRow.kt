@@ -235,7 +235,9 @@ fun TimelineItemEventRow(
             .fillMaxWidth()
             .semantics { customActions = accessibilityActions }
     ) {
-        if (event.groupPosition.isNew()) {
+        if (event.juneBatchPosition()?.let { it.first > 1 } == true) {
+            // Element June: pictures of one batch are stacked without a gap
+        } else if (event.groupPosition.isNew()) {
             Spacer(modifier = Modifier.height(16.dp))
         } else {
             Spacer(modifier = Modifier.height(2.dp))
@@ -568,7 +570,10 @@ private fun TimelineItemEventRowContent(
                 },
             state = bubbleState,
             // Element June: received text, file and audio messages all use the same (full) width
-            fillWidth = event.fillsBubbleWidth(),
+            fillWidth = event.fillsBubbleWidth() || event.juneBatchPosition() != null,
+            // Element June: stacked batch pictures look like one message block
+            squareTop = event.juneBatchPosition()?.let { it.first > 1 } == true,
+            squareBottom = event.juneBatchPosition()?.let { it.first < it.second } == true,
             interactionSource = interactionSource,
             onClick = onContentClick,
             onLongClick = onLongClick,
@@ -682,8 +687,22 @@ private fun MessageSenderInformation(
 private fun TimelineItem.Event.fillsBubbleWidth(): Boolean = !isMine && (
     content is TimelineItemTextBasedContent ||
         content is TimelineItemFileContent ||
-        content is TimelineItemAudioContent
+        content is TimelineItemAudioContent ||
+        juneBatchPosition() != null
     )
+
+private val JUNE_BATCH_FILENAME = Regex("^june-[0-9a-f]{6,32}-(\\d{1,3})of(\\d{1,3})\\.[A-Za-z0-9]{1,5}$")
+
+/**
+ * Element June: (index, total) when this picture was sent as part of a multi-picture batch, see withBatchMarker.
+ */
+internal fun TimelineItem.Event.juneBatchPosition(): Pair<Int, Int>? {
+    val image = content as? TimelineItemImageContent ?: return null
+    val match = JUNE_BATCH_FILENAME.matchEntire(image.filename) ?: return null
+    val index = match.groupValues[1].toInt()
+    val total = match.groupValues[2].toInt()
+    return if (total >= 2 && index in 1..total) index to total else null
+}
 
 @Composable
 private fun MessageEventBubbleContent(
@@ -923,7 +942,10 @@ private fun MessageEventBubbleContent(
             event.content !is TimelineItemAttachmentsContent &&
             contentValidationState.hasError()
 
-    val timestampPosition = if (needsInvalidContentLayout) {
+    val timestampPosition = if (event.juneBatchPosition()?.let { it.first < it.second } == true) {
+        // Element June: only the last picture of a batch shows the timestamp
+        TimestampPosition.Hidden
+    } else if (needsInvalidContentLayout) {
         // The invalid content view will be displayed in all these cases, independent of the event content
         TimestampPosition.Aligned
     } else {

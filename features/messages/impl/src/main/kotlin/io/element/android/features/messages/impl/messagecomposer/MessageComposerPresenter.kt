@@ -778,7 +778,8 @@ class MessageComposerPresenter(
         withBatchMarker(infos).forEachIndexed { index, info ->
             mediaSender.sendPreProcessedMedia(
                 mediaUploadInfo = info,
-                caption = caption.takeIf { index == 0 },
+                // Element June: the text goes with the last picture, it is shown under the stacked pictures
+                caption = caption.takeIf { index == infos.lastIndex },
                 formattedCaption = null,
                 inReplyToEventId = inReplyToEventId.takeIf { index == 0 },
             ).onFailure { cause ->
