@@ -152,6 +152,8 @@ fun MessageEventBubble(
 
 object MessageEventBubbleDefaults {
     fun shape(cutTopStart: Boolean, groupPosition: TimelineItemGroupPosition, isMine: Boolean): Shape {
+        // Element June: outline-only bubbles look best with all corners rounded, grouped or not
+        if (true) return RoundedCornerShape(BUBBLE_RADIUS)
         val topLeftCorner = if (cutTopStart) 0.dp else BUBBLE_RADIUS
         return when (groupPosition) {
             TimelineItemGroupPosition.First -> if (isMine) {
