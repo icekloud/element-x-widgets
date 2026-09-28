@@ -559,7 +559,7 @@ private fun TimelineItemEventRowContent(
                         // Keep the bubble inside the screen, whatever the start offset is
                         end.linkTo(parent.end, margin = 4.dp)
                         horizontalBias = 0f
-                        width = if (event.content is TimelineItemTextBasedContent) {
+                        width = if (event.fillsBubbleWidth()) {
                             Dimension.fillToConstraints
                         } else {
                             Dimension.preferredWrapContent
@@ -568,11 +568,7 @@ private fun TimelineItemEventRowContent(
                 },
             state = bubbleState,
             // Element June: received text, file and audio messages all use the same (full) width
-            fillWidth = !event.isMine && (
-                event.content is TimelineItemTextBasedContent ||
-                    event.content is TimelineItemFileContent ||
-                    event.content is TimelineItemAudioContent
-                ),
+            fillWidth = event.fillsBubbleWidth(),
             interactionSource = interactionSource,
             onClick = onContentClick,
             onLongClick = onLongClick,
@@ -587,6 +583,8 @@ private fun TimelineItemEventRowContent(
                 inReplyToClick = inReplyToClick,
                 eventSink = eventSink,
                 eventContentView = eventContentView,
+                // Element June: content (reply box, file row, timestamp) spans the whole bubble
+                bubbleModifier = if (event.fillsBubbleWidth()) Modifier.fillMaxWidth() else Modifier,
             )
         }
 
@@ -680,6 +678,13 @@ private fun MessageSenderInformation(
 }
 
 @Suppress("MultipleEmitters") // False positive
+// Element June: received text, file and audio messages all use the same (full) bubble width
+private fun TimelineItem.Event.fillsBubbleWidth(): Boolean = !isMine && (
+    content is TimelineItemTextBasedContent ||
+        content is TimelineItemFileContent ||
+        content is TimelineItemAudioContent
+    )
+
 @Composable
 private fun MessageEventBubbleContent(
     event: TimelineItem.Event,
@@ -816,7 +821,8 @@ private fun MessageEventBubbleContent(
                 Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
             } else {
                 Modifier
-            }
+            // Element June: timestamp sits at the bubble's right edge, not at the end of the content
+            }.then(if (event.fillsBubbleWidth()) Modifier.fillMaxWidth() else Modifier)
 
         val topPadding = if (inReplyToDetails != null) 0.dp else 8.dp
         val contentModifier = when (paddingBehaviour) {
