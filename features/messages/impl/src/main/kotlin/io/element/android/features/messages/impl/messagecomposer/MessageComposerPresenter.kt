@@ -191,7 +191,6 @@ class MessageComposerPresenter(
 
         // Element June: multi selection is always available, items are sent one by one (no m.gallery)
         val isSendGalleryMessagesEnabled = true
-            .collectAsState(initial = false)
 
         val galleryMediaPicker = mediaPickerProvider.registerGalleryPicker { uri, mimeType ->
             handlePickedMedia(uri, mimeType)
