@@ -18,7 +18,6 @@ import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
 import androidx.glance.LocalContext
-import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
@@ -93,14 +92,8 @@ private fun RoomListContent(
     avatars: Map<String, Bitmap?>,
 ) {
     val context = LocalContext.current
-    val size = LocalSize.current
-    val tiny = size.height < RoomListWidget.SMALL.height
-    val compact = size.height < RoomListWidget.MEDIUM.height
-    val avatarSize = when {
-        tiny -> 28.dp
-        compact -> 32.dp
-        else -> 40.dp
-    }
+    // Element June: every widget size shows the same row (avatar, name, preview); a smaller widget only shows fewer rows
+    val avatarSize = 40.dp
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -126,7 +119,7 @@ private fun RoomListContent(
                     Row(
                         modifier = GlanceModifier
                             .fillMaxWidth()
-                            .padding(vertical = if (tiny) 1.dp else 3.dp)
+                            .padding(vertical = 3.dp)
                             .clickable(actionStartActivity(WidgetIntents.openRoom(context, config.sessionId, room.roomId))),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -142,7 +135,7 @@ private fun RoomListContent(
                                     fontWeight = if (room.unread > 0) FontWeight.Bold else FontWeight.Medium,
                                 ),
                             )
-                            if (room.preview.isNotEmpty() && !tiny) {
+                            if (room.preview.isNotEmpty()) {
                                 Text(
                                     text = room.preview,
                                     maxLines = 1,
