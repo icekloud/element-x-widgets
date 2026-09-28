@@ -305,15 +305,19 @@ class MessageComposerPresenter(
                 }
                 is MessageComposerEvent.SendUri -> {
                     val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
+                    val pastedMedia = localMediaFactory.createFromUri(
+                        uri = event.uri,
+                        mimeType = null,
+                        name = null,
+                        formattedFileSize = null
+                    )
+                    // Element June: a pasted picture waits in the composer like a picked one
+                    if (pastedMedia.info.mimeType.isMimeTypeImage() && !messageComposerContext.composerMode.isEditing) {
+                        pendingAttachments = (pendingAttachments + pastedMedia).toImmutableList()
+                        return
+                    }
                     sessionCoroutineScope.sendAttachment(
-                        attachment = Attachment.Media(
-                            localMedia = localMediaFactory.createFromUri(
-                                uri = event.uri,
-                                mimeType = null,
-                                name = null,
-                                formattedFileSize = null
-                            ),
-                        ),
+                        attachment = Attachment.Media(localMedia = pastedMedia),
                         inReplyToEventId = inReplyToEventId,
                     )
 

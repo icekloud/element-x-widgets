@@ -144,7 +144,13 @@ fun MessageEventBubble(
                 .widthIn(
                     min = MIN_BUBBLE_WIDTH,
                     // Element June: own messages keep the original width so they stay on the right
-                    max = (constraints.maxWidth * if (state.isMine) MessageEventBubbleDefaults.OWN_BUBBLE_WIDTH_RATIO else MessageEventBubbleDefaults.BUBBLE_WIDTH_RATIO)
+                    // Element June: a full-width bubble must use the whole outline width, otherwise the content stops ~3% short
+                    // of the right border (wider right gap everywhere: text, reply box, file row)
+                    max = (constraints.maxWidth * when {
+                        state.isMine -> MessageEventBubbleDefaults.OWN_BUBBLE_WIDTH_RATIO
+                        fillWidth -> 1f
+                        else -> MessageEventBubbleDefaults.BUBBLE_WIDTH_RATIO
+                    })
                         .toInt()
                         .toDp()
                 )
