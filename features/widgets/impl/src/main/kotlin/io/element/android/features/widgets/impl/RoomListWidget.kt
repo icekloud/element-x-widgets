@@ -47,7 +47,7 @@ import io.element.android.libraries.architecture.bindings
 
 class RoomListWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Responsive(
-        setOf(SMALL, MEDIUM, LARGE),
+        setOf(TINY, SMALL, MEDIUM, LARGE),
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -68,6 +68,7 @@ class RoomListWidget : GlanceAppWidget() {
     }
 
     companion object {
+        val TINY = DpSize(110.dp, 40.dp)
         val SMALL = DpSize(180.dp, 110.dp)
         val MEDIUM = DpSize(250.dp, 250.dp)
         val LARGE = DpSize(320.dp, 250.dp)
@@ -93,31 +94,21 @@ private fun RoomListContent(
 ) {
     val context = LocalContext.current
     val size = LocalSize.current
+    val tiny = size.height < RoomListWidget.SMALL.height
     val compact = size.height < RoomListWidget.MEDIUM.height
-    val avatarSize = if (compact) 32.dp else 40.dp
+    val avatarSize = when {
+        tiny -> 28.dp
+        compact -> 32.dp
+        else -> 40.dp
+    }
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
             .appWidgetBackground()
             .cornerRadius(16.dp)
             .background(GlanceTheme.colors.widgetBackground)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = if (tiny) 2.dp else 8.dp),
     ) {
-        Row(
-            modifier = GlanceModifier.fillMaxWidth().padding(bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Element June",
-                modifier = GlanceModifier.defaultWeight().clickable(actionStartActivity(WidgetIntents.openApp(context))),
-                style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-            )
-            Text(
-                text = "설정",
-                modifier = GlanceModifier.clickable(actionStartActivity(WidgetIntents.configure(context, appWidgetId))),
-                style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp),
-            )
-        }
         if (config == null || config.roomIds.isEmpty()) {
             Box(
                 modifier = GlanceModifier.fillMaxSize().clickable(actionStartActivity(WidgetIntents.configure(context, appWidgetId))),
@@ -135,7 +126,7 @@ private fun RoomListContent(
                     Row(
                         modifier = GlanceModifier
                             .fillMaxWidth()
-                            .padding(vertical = if (compact) 3.dp else 5.dp)
+                            .padding(vertical = if (tiny) 2.dp else if (compact) 3.dp else 5.dp)
                             .clickable(actionStartActivity(WidgetIntents.openRoom(context, config.sessionId, room.roomId))),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -151,7 +142,7 @@ private fun RoomListContent(
                                     fontWeight = if (room.unread > 0) FontWeight.Bold else FontWeight.Medium,
                                 ),
                             )
-                            if (room.preview.isNotEmpty()) {
+                            if (room.preview.isNotEmpty() && !tiny) {
                                 Text(
                                     text = room.preview,
                                     maxLines = 1,

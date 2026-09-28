@@ -64,6 +64,24 @@ class WidgetRoomRepository(
         return config.roomIds.mapNotNull { byId[it] }
     }
 
+    /**
+     * Return the configured rooms from the local cache only (fast, no network), in the order chosen by the user.
+     */
+    fun cachedConfiguredRooms(config: WidgetConfig): List<WidgetRoom> {
+        val byId = store.getCachedRooms(config.sessionId)
+        return config.roomIds.mapNotNull { byId[it] }
+    }
+
+    /**
+     * Return the avatar from the disk cache only (fast, no network).
+     */
+    fun cachedAvatar(avatarUrl: String?): Bitmap? {
+        if (avatarUrl.isNullOrEmpty()) return null
+        val file = File(File(context.cacheDir, "june_widget_avatars"), avatarUrl.sha1())
+        if (!file.exists()) return null
+        return runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+    }
+
     private suspend fun fetchRooms(sessionId: String): List<WidgetRoom>? {
         val client = getClient(sessionId) ?: return null
         val summaries = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
@@ -77,7 +95,9 @@ class WidgetRoomRepository(
     private suspend fun getClient(sessionId: String): MatrixClient? {
         val id = SessionId(sessionId)
         return matrixClientProvider.getOrNull(id)
-            ?: matrixClientProvider.getOrRestore(id).onFailure { Timber.w(it, "Widget: cannot restore session") }.getOrNull()
+            ?: withTimeoutOrNull(RESTORE_TIMEOUT_MS) {
+                matrixClientProvider.getOrRestore(id).onFailure { Timber.w(it, "Widget: cannot restore session") }.getOrNull()
+            }
     }
 
     /**
@@ -92,10 +112,14 @@ class WidgetRoomRepository(
             val bytes = withTimeoutOrNull(AVATAR_TIMEOUT_MS) {
                 client.matrixMediaLoader.loadMediaThumbnail(MediaSource(avatarUrl), AVATAR_SIZE, AVATAR_SIZE).getOrNull()
             } ?: return null
-            runCatching { file.writeBytes(bytes) }
+            val scaled = runCatching {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { Bitmap.createScaledBitmap(it, AVATAR_SIZE.toInt(), AVATAR_SIZE.toInt(), true) }
+            }.getOrNull() ?: return null
+            runCatching { file.outputStream().use { scaled.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+            return scaled
         }
         return runCatching {
-            BitmapFactory.decodeFile(file.absolutePath)?.let { Bitmap.createScaledBitmap(it, AVATAR_SIZE.toInt(), AVATAR_SIZE.toInt(), true) }
+            BitmapFactory.decodeFile(file.absolutePath)
         }.getOrNull()
     }
 
@@ -128,7 +152,8 @@ class WidgetRoomRepository(
     }
 
     private companion object {
-        const val FETCH_TIMEOUT_MS = 15_000L
+        const val RESTORE_TIMEOUT_MS = 10_000L
+        const val FETCH_TIMEOUT_MS = 10_000L
         const val AVATAR_TIMEOUT_MS = 5_000L
         const val AVATAR_SIZE = 96L
     }
