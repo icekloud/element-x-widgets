@@ -551,7 +551,7 @@ private fun TimelineItemEventRowContent(
                     top.linkTo(sender.bottom, margin = topMargin)
                     // Element June: minimal side margins so bubbles use the full screen width
                     if (event.isMine) {
-                        end.linkTo(parent.end, margin = 4.dp)
+                        end.linkTo(parent.end, margin = 16.dp)
                     } else {
                         val startMargin = if (timelineRoomInfo.isDm) 4.dp else 4.dp + BUBBLE_INCOMING_OFFSET
                         start.linkTo(parent.start, margin = startMargin)
@@ -615,11 +615,11 @@ private fun TimelineItemEventRowContent(
                         // Note: due to the applied constraints, start is left for other's message and right for mine
                         // In design we want a offset of 6.dp compare to the bubble, so start is 22.dp (16 + 6)
                         start = when {
-                            event.isMine -> 10.dp
+                            event.isMine -> 22.dp
                             timelineRoomInfo.isDm -> 10.dp
                             else -> 10.dp + BUBBLE_INCOMING_OFFSET
                         },
-                        end = 4.dp
+                        end = if (event.isMine) 16.dp else 4.dp
                     )
             )
         }

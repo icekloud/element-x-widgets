@@ -90,7 +90,8 @@ fun MessageEventBubble(
     val radiusPx = (avatarRadius + SENDER_AVATAR_BORDER_WIDTH).toPx()
     val yOffsetPx = -(NEGATIVE_MARGIN_FOR_BUBBLE + avatarRadius).toPx()
 
-    val updatedBorderColor by rememberUpdatedState(borderColor)
+    // Element June: no bubble background, a thin gray outline separates messages
+    val updatedBorderColor by rememberUpdatedState(borderColor ?: ElementTheme.colors.borderInteractiveSecondary)
     BoxWithConstraints(
         modifier = modifier
             .drawWithCache {
@@ -138,7 +139,8 @@ fun MessageEventBubble(
                 .testTag(TestTags.messageBubble)
                 .widthIn(
                     min = MIN_BUBBLE_WIDTH,
-                    max = (constraints.maxWidth * MessageEventBubbleDefaults.BUBBLE_WIDTH_RATIO)
+                    // Element June: own messages keep the original width so they stay on the right
+                    max = (constraints.maxWidth * if (state.isMine) MessageEventBubbleDefaults.OWN_BUBBLE_WIDTH_RATIO else MessageEventBubbleDefaults.BUBBLE_WIDTH_RATIO)
                         .toInt()
                         .toDp()
                 )
@@ -179,16 +181,14 @@ object MessageEventBubbleDefaults {
 
     @Composable
     fun backgroundBubbleColor(isMine: Boolean): Color {
-        return if (isMine) {
-            ElementTheme.colors.messageFromMeBackground
-        } else {
-            ElementTheme.colors.messageFromOtherBackground
-        }
+        // Element June: transparent bubbles (outline only)
+        return Color.Transparent
     }
 
     // Design says: The maximum width of a bubble is still 3/4 of the screen width. But try with 78% now.
     // Element June: use (almost) the full width for message bubbles
     const val BUBBLE_WIDTH_RATIO = 0.97f
+    const val OWN_BUBBLE_WIDTH_RATIO = 0.78f
 }
 
 @PreviewsDayNight
