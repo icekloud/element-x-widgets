@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -27,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewParameter
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import io.element.android.features.messages.impl.timeline.aTimelineItemEvent
@@ -63,7 +66,17 @@ fun TimelineItemImageView(
 ) {
     val a11yLabel = stringResource(CommonStrings.common_image)
     val description = content.caption?.let { "$a11yLabel: $it" } ?: a11yLabel
-    Column(modifier = modifier.wrapContentWidth(Alignment.CenterHorizontally)) {
+    // Element June: every picture of a batch gets the same width so the stack looks like one block,
+    // whatever its own aspect ratio and whether it carries the caption
+    val batchSize = content.juneBatchPosition()?.let {
+        val ratio = (content.aspectRatio ?: DEFAULT_ASPECT_RATIO).coerceIn(MIN_ASPECT_RATIO, MAX_ASPECT_RATIO)
+        DpSize(JUNE_BATCH_WIDTH_DP.dp, (JUNE_BATCH_WIDTH_DP / ratio).coerceIn(MIN_HEIGHT_IN_DP.toFloat(), MAX_HEIGHT_IN_DP / 2f).dp)
+    }
+    Column(
+        modifier = modifier
+            .then(if (batchSize != null) Modifier.width(batchSize.width) else Modifier)
+            .wrapContentWidth(Alignment.CenterHorizontally)
+    ) {
         val containerModifier = if (content.showCaption) {
             Modifier.clip(RoundedCornerShape(10.dp))
         } else {
@@ -74,6 +87,7 @@ fun TimelineItemImageView(
         val isContentBeingValidated = !eventContentValidation.isValidated()
         TimelineItemAspectRatioBox(
             modifier = containerModifier
+                .then(if (batchSize != null) Modifier.size(batchSize) else Modifier)
                 .blurHashBackground(content.blurhash, alpha = 0.9f)
                 .align(Alignment.CenterHorizontally),
             aspectRatio = coerceRatioWhenHidingContent(content.aspectRatio, hideMediaContent),
@@ -187,6 +201,8 @@ internal fun ATimelineItemEventRowPreview() = ElementPreview {
         }
     }
 }
+
+private const val JUNE_BATCH_WIDTH_DP = 260f
 
 private val JUNE_BATCH_FILENAME = Regex("^june-[0-9a-f]{6,32}-(\\d{1,3})of(\\d{1,3})\\.[A-Za-z0-9]{1,5}$")
 
