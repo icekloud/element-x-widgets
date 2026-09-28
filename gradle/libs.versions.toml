@@ -103,6 +103,10 @@ androidx_camera_view = { module = "androidx.camera:camera-view", version.ref = "
 androidx_camera_camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camera" }
 androidx_javascriptengine = "androidx.javascriptengine:javascriptengine:1.1.0"
 androidx_workmanager_runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+markwon_core = "io.noties.markwon:core:4.6.2"
+markwon_strikethrough = "io.noties.markwon:ext-strikethrough:4.6.2"
+markwon_tables = "io.noties.markwon:ext-tables:4.6.2"
+markwon_linkify = "io.noties.markwon:linkify:4.6.2"
 androidx_glance_appwidget = { module = "androidx.glance:glance-appwidget", version = "1.2.0" }
 
 androidx_recyclerview = "androidx.recyclerview:recyclerview:1.4.0"

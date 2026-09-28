@@ -72,6 +72,11 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.datetime)
     implementation(libs.jsoup)
+    // Element June: Element classic style message rendering
+    implementation(libs.markwon.core)
+    implementation(libs.markwon.strikethrough)
+    implementation(libs.markwon.tables)
+    implementation(libs.markwon.linkify)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.constraintlayout.compose)
     implementation(libs.androidx.exifinterface)

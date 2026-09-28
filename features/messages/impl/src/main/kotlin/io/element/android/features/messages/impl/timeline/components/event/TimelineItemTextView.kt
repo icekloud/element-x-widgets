@@ -92,6 +92,17 @@ fun TimelineItemTextView(
         LocalContentColor provides ElementTheme.colors.textPrimary,
         LocalTextStyle provides textStyle
     ) {
+        // Element June: render with Markwon (Element classic look) unless the message is emoji only
+        if (!emojiOnly) {
+            Box(modifier.semantics { contentDescription = content.plainText }) {
+                MarkwonMessageText(
+                    markdown = content.body,
+                    onLinkClick = onLinkClick,
+                    onContentLayoutChange = onContentLayoutChange,
+                )
+            }
+            return@CompositionLocalProvider
+        }
         val text = getTextWithResolvedMentions(content)
         Box(modifier.semantics { contentDescription = content.plainText }) {
             EditorStyledText(
