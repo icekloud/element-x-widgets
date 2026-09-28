@@ -139,6 +139,8 @@ private object MarkwonCache {
                         .codeBlockBackgroundColor(codeBackground)
                         .codeTypeface(Typeface.MONOSPACE)
                         .codeBlockTypeface(Typeface.MONOSPACE)
+                        // Element June: headings only slightly larger than body text (default is 2x..0.67x)
+                        .headingTextSizeMultipliers(floatArrayOf(1.25f, 1.15f, 1.08f, 1f, 1f, 1f))
                 }
 
                 // Inline code without the non-breaking space padding Markwon adds around it
