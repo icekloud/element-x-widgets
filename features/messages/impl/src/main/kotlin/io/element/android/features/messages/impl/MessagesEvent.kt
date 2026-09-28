@@ -23,6 +23,8 @@ sealed interface MessagesEvent {
     data object StopLiveLocationShare : MessagesEvent
     data object ShowLiveLocationShare : MessagesEvent
     data object MarkAsFullyReadAndExit : MessagesEvent
+    // Element June: stop button and quick commands send a plain text message to the room
+    data class SendQuickText(val text: String) : MessagesEvent
 }
 
 enum class InviteDialogAction {

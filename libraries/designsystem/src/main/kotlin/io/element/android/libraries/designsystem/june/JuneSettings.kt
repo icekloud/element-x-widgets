@@ -26,6 +26,15 @@ object JuneSettings {
     private const val PREFS = "june_settings"
     private const val KEY_MENU_ORDER = "composer_menu_order"
     private const val KEY_MENU_HIDDEN = "composer_menu_hidden"
+    private const val KEY_QUICK = "quick_commands"
+    private const val QUICK_SEPARATOR = "\u001F"
+
+    /** Default quick commands of the room top bar. */
+    val DEFAULT_QUICK_COMMANDS = listOf(
+        "지금 하는 작업 진행 상황 보고",
+        "앞으로 해야 할 일들 정리",
+        "남아 있는 결정사항 정리",
+    )
 
     /** Customisable colours. The defaults give a light lavender look. */
     enum class ColorSlot(val key: String, val label: String, val defaultArgb: Long, val lightOnly: Boolean) {
@@ -55,6 +64,7 @@ object JuneSettings {
     private val colors = mutableStateMapOf<ColorSlot, Color>()
     private val menuOrder = mutableStateListOf<ComposerMenuItem>()
     private val menuHidden = mutableStateListOf<ComposerMenuItem>()
+    private val quick = mutableStateListOf<String>()
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -73,6 +83,9 @@ object JuneSettings {
             menuOrder.addAll(saved + ComposerMenuItem.entries.filter { it !in saved })
             menuHidden.clear()
             menuHidden.addAll(p.getString(KEY_MENU_HIDDEN, null).orEmpty().split(',').mapNotNull { byKey[it] })
+            quick.clear()
+            val savedQuick = p.getString(KEY_QUICK, null)
+            quick.addAll(if (savedQuick == null) DEFAULT_QUICK_COMMANDS else savedQuick.split(QUICK_SEPARATOR).filter { it.isNotBlank() })
             loaded = true
         }
     }
@@ -147,5 +160,53 @@ object JuneSettings {
             .putString(KEY_MENU_ORDER, menuOrder.joinToString(",") { it.key })
             .putString(KEY_MENU_HIDDEN, menuHidden.joinToString(",") { it.key })
             .apply()
+    }
+
+    /** Quick commands in the user's order (observable). */
+    fun quickCommands(context: Context): List<String> {
+        ensureLoaded(context)
+        return quick.toList()
+    }
+
+    fun addQuickCommand(context: Context, text: String) {
+        ensureLoaded(context)
+        val t = text.trim()
+        if (t.isEmpty()) return
+        quick.add(t)
+        saveQuick(context)
+    }
+
+    fun updateQuickCommand(context: Context, index: Int, text: String) {
+        ensureLoaded(context)
+        val t = text.trim()
+        if (index !in quick.indices || t.isEmpty()) return
+        quick[index] = t
+        saveQuick(context)
+    }
+
+    fun removeQuickCommand(context: Context, index: Int) {
+        ensureLoaded(context)
+        if (index in quick.indices) quick.removeAt(index)
+        saveQuick(context)
+    }
+
+    fun moveQuickCommand(context: Context, index: Int, delta: Int) {
+        ensureLoaded(context)
+        val to = (index + delta).coerceIn(0, quick.size - 1)
+        if (index !in quick.indices || index == to) return
+        val item = quick.removeAt(index)
+        quick.add(to, item)
+        saveQuick(context)
+    }
+
+    fun resetQuickCommands(context: Context) {
+        ensureLoaded(context)
+        quick.clear()
+        quick.addAll(DEFAULT_QUICK_COMMANDS)
+        saveQuick(context)
+    }
+
+    private fun saveQuick(context: Context) {
+        prefs(context).edit().putString(KEY_QUICK, quick.joinToString(QUICK_SEPARATOR)).apply()
     }
 }

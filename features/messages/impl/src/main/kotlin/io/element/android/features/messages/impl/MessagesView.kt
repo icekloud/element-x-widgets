@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -106,11 +107,14 @@ import io.element.android.libraries.designsystem.components.ExpandableBottomShee
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.components.rememberExpandableBottomSheetLayoutState
+import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.text.toAnnotatedString
 import io.element.android.libraries.designsystem.text.toDp
 import io.element.android.libraries.designsystem.theme.components.BottomSheetDragHandle
+import io.element.android.libraries.designsystem.theme.components.DropdownMenu
+import io.element.android.libraries.designsystem.theme.components.DropdownMenuItem
 import io.element.android.libraries.designsystem.theme.components.Icon
 import io.element.android.libraries.designsystem.theme.components.Scaffold
 import io.element.android.libraries.designsystem.theme.components.Text
@@ -133,9 +137,9 @@ import io.element.android.libraries.matrix.ui.media.contentvalidation.LocalEvent
 import io.element.android.libraries.textcomposer.model.TextEditorState
 import io.element.android.libraries.ui.strings.CommonStrings
 import io.element.android.wysiwyg.link.Link
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.collections.immutable.persistentListOf
 import timber.log.Timber
-import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun MessagesView(
@@ -258,7 +262,8 @@ fun MessagesView(
                                     displayThreads = state.timelineState.timelineMode !is Timeline.Mode.Thread && state.threads.hasThreads,
                                     roomCallState = state.roomCallState,
                                     onJoinCallClick = onJoinCallClick,
-                                    onThreadsListClick = onThreadsListClick
+                                    onThreadsListClick = onThreadsListClick,
+                                    onSendQuickText = { state.eventSink(MessagesEvent.SendQuickText(it)) },
                                 )
                             }
                         )
@@ -477,7 +482,49 @@ internal fun RowScope.MessagesMenuActions(
     roomCallState: RoomCallState,
     onJoinCallClick: (isAudioCall: Boolean) -> Unit,
     onThreadsListClick: () -> Unit,
+    onSendQuickText: (String) -> Unit = {},
 ) {
+    // Element June: stop the bot's current task, and quick commands (edited in Settings > June 꾸미기)
+    var showStopConfirm by remember { mutableStateOf(false) }
+    var showQuick by remember { mutableStateOf(false) }
+    Icon(
+        modifier = Modifier.clickable { showStopConfirm = true },
+        imageVector = CompoundIcons.Stop(),
+        contentDescription = "중단",
+    )
+    Spacer(Modifier.width(12.dp))
+    Box {
+        Icon(
+            modifier = Modifier.clickable { showQuick = true },
+            imageVector = CompoundIcons.ListBulleted(),
+            contentDescription = "빠른 명령",
+        )
+        DropdownMenu(expanded = showQuick, onDismissRequest = { showQuick = false }) {
+            JuneSettings.quickCommands(LocalContext.current).forEach { text ->
+                DropdownMenuItem(
+                    text = { Text(text) },
+                    onClick = {
+                        showQuick = false
+                        onSendQuickText(text)
+                    },
+                )
+            }
+        }
+    }
+    Spacer(Modifier.width(12.dp))
+    if (showStopConfirm) {
+        ConfirmationDialog(
+            title = "작업 중단",
+            content = "봇에게 /stop 을 보내 지금 하는 작업을 멈출까요?",
+            submitText = "중단",
+            cancelText = stringResource(id = CommonStrings.action_cancel),
+            onSubmitClick = {
+                showStopConfirm = false
+                onSendQuickText("/stop")
+            },
+            onDismiss = { showStopConfirm = false },
+        )
+    }
     if (displayThreads) {
         Icon(
             modifier = Modifier.clickable(enabled = true, onClick = onThreadsListClick),

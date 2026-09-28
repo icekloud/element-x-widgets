@@ -295,6 +295,10 @@ class MessagesPresenter(
                 MessagesEvent.ShowLiveLocationShare -> {
                     navigator.navigateToCurrentLiveLocation()
                 }
+                is MessagesEvent.SendQuickText -> coroutineScope.launch {
+                    room.liveTimeline.sendMessage(body = event.text, htmlBody = null, intentionalMentions = emptyList())
+                        .onFailure { Timber.w(it, "Element June: quick text not sent") }
+                }
                 is MessagesEvent.MarkAsFullyReadAndExit -> if (!markingAsReadAndExiting.getAndSet(true)) {
                     coroutineScope.launch {
                         val latestEventId = room.liveTimeline.getLatestEventId().getOrElse {
