@@ -31,7 +31,8 @@ object BuildTimeConfig {
     val BUG_REPORT_APP_NAME: String? = null
     const val PUSH_CONFIG_INCLUDE_FIREBASE: Boolean = true
     const val PUSH_CONFIG_INCLUDE_UNIFIED_PUSH: Boolean = true
-    val PUSHER_APP_ID_RELEASE: String? = null
+    // Element June: pusher app_id must match the app entry in our own Sygnal
+    val PUSHER_APP_ID_RELEASE: String? = "io.element.android.june"
     val PUSHER_APP_ID_DEBUG: String? = null
     val PUSHER_APP_ID_NIGHTLY: String? = null
 }
