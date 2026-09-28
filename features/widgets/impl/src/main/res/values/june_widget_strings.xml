@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="june_widget_room_button_label">대화방 바로가기</string>
+    <string name="june_widget_room_button_description">누르면 선택한 대화방을 바로 엽니다</string>
+    <string name="june_widget_room_list_label">대화방 목록</string>
+    <string name="june_widget_room_list_description">선택한 대화방의 최근 메시지와 안 읽은 개수를 보여 줍니다</string>
+    <string name="june_widget_config_title">위젯 설정</string>
+</resources>

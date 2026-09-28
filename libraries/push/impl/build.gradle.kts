@@ -88,6 +88,7 @@ dependencies {
     implementation(projects.libraries.workmanager.api)
     implementation(projects.features.announcement.api)
     implementation(projects.features.call.api)
+    implementation(projects.features.widgets.api)
     implementation(projects.features.enterprise.api)
     implementation(projects.features.lockscreen.api)
     implementation(projects.libraries.featureflag.api)

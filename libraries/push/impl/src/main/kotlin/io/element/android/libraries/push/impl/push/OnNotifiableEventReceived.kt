@@ -10,6 +10,7 @@ package io.element.android.libraries.push.impl.push
 
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
+import io.element.android.features.widgets.api.WidgetUpdater
 import io.element.android.libraries.di.annotations.AppCoroutineScope
 import io.element.android.libraries.push.impl.notifications.DefaultNotificationDrawerManager
 import io.element.android.libraries.push.impl.notifications.model.NotifiableEvent
@@ -26,10 +27,13 @@ class DefaultOnNotifiableEventReceived(
     private val defaultNotificationDrawerManager: DefaultNotificationDrawerManager,
     @AppCoroutineScope
     private val coroutineScope: CoroutineScope,
+    private val widgetUpdater: WidgetUpdater,
 ) : OnNotifiableEventReceived {
     override fun onNotifiableEventsReceived(notifiableEvents: List<NotifiableEvent>) {
         coroutineScope.launch {
             defaultNotificationDrawerManager.onNotifiableEventsReceived(notifiableEvents.filter { it !is NotifiableRingingCallEvent })
+            // Element June: refresh the home screen widgets on new messages
+            widgetUpdater.requestUpdate()
         }
     }
 }

@@ -103,6 +103,7 @@ androidx_camera_view = { module = "androidx.camera:camera-view", version.ref = "
 androidx_camera_camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camera" }
 androidx_javascriptengine = "androidx.javascriptengine:javascriptengine:1.1.0"
 androidx_workmanager_runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+androidx_glance_appwidget = { module = "androidx.glance:glance-appwidget", version = "1.2.0" }
 
 androidx_recyclerview = "androidx.recyclerview:recyclerview:1.4.0"
 androidx_browser = "androidx.browser:browser:1.10.0"

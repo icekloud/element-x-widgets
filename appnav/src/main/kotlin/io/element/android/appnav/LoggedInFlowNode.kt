@@ -69,6 +69,7 @@ import io.element.android.features.securebackup.api.SecureBackupEntryPoint
 import io.element.android.features.share.api.ShareEntryPoint
 import io.element.android.features.share.api.ShareIntentData
 import io.element.android.features.startchat.api.StartChatEntryPoint
+import io.element.android.features.widgets.api.WidgetUpdater
 import io.element.android.features.userprofile.api.UserProfileEntryPoint
 import io.element.android.features.verifysession.api.IncomingVerificationEntryPoint
 import io.element.android.libraries.architecture.BackstackView
@@ -160,6 +161,7 @@ class LoggedInFlowNode(
     private val createRoomEntryPoint: CreateRoomEntryPoint,
     private val activeLiveLocationShareManager: ActiveLiveLocationShareManager,
     private val customMapTilerConfigProvider: CustomMapTilerConfigProvider,
+    private val widgetUpdater: WidgetUpdater,
 ) : BaseFlowNode<LoggedInFlowNode.NavTarget>(
     backstack = BackStack(
         initialElement = NavTarget.Placeholder,
@@ -225,6 +227,8 @@ class LoggedInFlowNode(
         lifecycle.subscribe(
             onCreate = {
                 analyticsRoomListStateWatcher.start()
+                // Element June: refresh the home screen widgets when the session is opened
+                widgetUpdater.requestUpdate()
                 appNavigationStateService.onNavigateToSession(id, matrixClient.sessionId)
                 loggedInFlowProcessor.observeEvents(sessionCoroutineScope)
                 matrixClient.sessionVerificationService.setListener(verificationListener)
