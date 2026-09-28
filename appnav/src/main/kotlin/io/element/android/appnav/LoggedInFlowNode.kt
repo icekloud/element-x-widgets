@@ -257,6 +257,10 @@ class LoggedInFlowNode(
                     notificationConversationService.onAvailableRoomsChanged(sessionId = matrixClient.sessionId, roomIds = availableRoomIds)
                 }
             },
+            // Element June: refresh widget badges once rooms were read and the app goes to the background
+            onStop = {
+                widgetUpdater.requestUpdate()
+            },
             onDestroy = {
                 appNavigationStateService.onLeavingSession(id)
                 loggedInFlowProcessor.stopObserving()

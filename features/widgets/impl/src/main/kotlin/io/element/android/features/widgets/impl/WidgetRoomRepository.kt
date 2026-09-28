@@ -128,7 +128,8 @@ class WidgetRoomRepository(
             roomId = info.id.value,
             name = info.name?.takeIf { it.isNotBlank() } ?: info.id.value,
             preview = latestEvent.previewText(),
-            unread = maxOf(info.numUnreadMessages, info.numUnreadNotifications),
+            // Element June: count only notifying messages (bot progress m.notice is excluded by push rules)
+            unread = info.numUnreadNotifications,
             avatarUrl = info.avatarUrl,
             timestamp = latestEventTimestamp,
         )
