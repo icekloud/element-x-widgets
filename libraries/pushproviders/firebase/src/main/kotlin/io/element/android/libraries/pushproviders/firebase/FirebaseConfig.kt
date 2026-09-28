@@ -13,7 +13,8 @@ object FirebaseConfig {
      * It is the push gateway for firebase.
      * Note: pusher_http_url should have path '/_matrix/push/v1/notify' -->
      */
-    const val PUSHER_HTTP_URL: String = "https://matrix.org/_matrix/push/v1/notify"
+    // Element June: gateway injected at build time
+    const val PUSHER_HTTP_URL: String = BuildConfig.JUNE_PUSH_GATEWAY_URL
 
     const val INDEX = 0
     const val NAME = "Firebase"

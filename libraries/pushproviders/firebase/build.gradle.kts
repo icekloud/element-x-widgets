@@ -22,6 +22,15 @@ android {
 
     buildFeatures {
         resValues = true
+        // Element June: push gateway URL comes from CI (JUNE_PUSH_GATEWAY_URL), never from the repository
+        buildConfig = true
+    }
+
+    defaultConfig {
+        // Element June: own Sygnal push gateway, falls back to the upstream gateway when not configured
+        val juneGateway = System.getenv("JUNE_PUSH_GATEWAY_URL")?.takeIf { it.isNotBlank() }
+            ?: "https://matrix.org/_matrix/push/v1/notify"
+        buildConfigField("String", "JUNE_PUSH_GATEWAY_URL", "\"$juneGateway\"")
     }
 
     buildTypes {

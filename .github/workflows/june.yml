@@ -45,14 +45,20 @@ jobs:
         env:
           JUNE_KEYSTORE_B64: ${{ secrets.JUNE_KEYSTORE_B64 }}
         run: echo "$JUNE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/june.p12"
-      - name: Assemble F-Droid release APK (UnifiedPush)
+      - name: Write Firebase config from secret
         env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: python3 .github/june/write_firebase_xml.py
+      - name: Assemble Google Play flavour release APK (Firebase push)
+        env:
+          # Element June: own push gateway (value only in GitHub Secrets)
+          JUNE_PUSH_GATEWAY_URL: ${{ secrets.JUNE_PUSH_GATEWAY_URL }}
           JUNE_KEYSTORE_FILE: ${{ runner.temp }}/june.p12
           JUNE_STORE_PASSWORD: ${{ secrets.JUNE_STORE_PASSWORD }}
           JUNE_KEY_ALIAS: ${{ secrets.JUNE_KEY_ALIAS }}
           # Element June: map tiles for location sharing (key only in GitHub Secrets)
           ELEMENT_ANDROID_MAPTILER_API_KEY: ${{ secrets.MAPTILER_KEY }}
-        run: ./gradlew :app:assembleFdroidRelease $CI_GRADLE_ARG_PROPERTIES
+        run: ./gradlew :app:assembleGplayRelease $CI_GRADLE_ARG_PROPERTIES
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/june.p12"
@@ -60,5 +66,5 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: element-june-apk
-          path: app/build/outputs/apk/fdroid/release/*.apk
+          path: app/build/outputs/apk/gplay/release/*.apk
           retention-days: 14
