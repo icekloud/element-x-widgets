@@ -347,6 +347,8 @@ licensee {
     allow("EPL-1.0")
     allowUrl("https://opensource.org/license/bsd-3-clause")
     allowUrl("https://opensource.org/license/bsd-2-clause")
+    // Element June: commonmark (used by Markwon) declares its BSD-2-Clause license with an http URL
+    allowUrl("http://opensource.org/licenses/BSD-2-Clause")
     allowUrl("https://opensource.org/licenses/MIT")
     allowUrl("https://developer.android.com/studio/terms.html")
     allowUrl("https://www.zetetic.net/sqlcipher/license/")
