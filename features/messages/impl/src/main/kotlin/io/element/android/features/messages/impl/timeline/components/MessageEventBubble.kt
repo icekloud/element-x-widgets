@@ -13,6 +13,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -68,6 +69,8 @@ fun MessageEventBubble(
     modifier: Modifier = Modifier,
     customBackgroundColor: Color? = null,
     borderColor: Color? = null,
+    // Element June: make the bubble take the maximum allowed width
+    fillWidth: Boolean = false,
     content: @Composable BoxScope.() -> Unit = {},
 ) {
     val clickableModifier = if (isTalkbackActive()) {
@@ -144,6 +147,7 @@ fun MessageEventBubble(
                         .toInt()
                         .toDp()
                 )
+                .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
                 .then(clickableModifier),
             content = content,
         )

@@ -31,6 +31,9 @@ import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.LinkResolver
 import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonConfiguration
+import io.noties.markwon.MarkwonVisitor
+import io.noties.markwon.core.spans.CodeBlockSpan
+import org.commonmark.node.Code
 import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
@@ -60,6 +63,7 @@ internal fun MarkwonMessageText(
     val spanned = remember(markwon, markdown) { MarkwonCache.parse(markwon, markdown) }
     val measure = ContentAvoidingLayout.measureLegacyLastTextLine(onContentLayoutChange = onContentLayoutChange)
     val currentMeasure by rememberUpdatedState(measure)
+    val currentContentLayoutChange by rememberUpdatedState(onContentLayoutChange)
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -72,7 +76,17 @@ internal fun MarkwonMessageText(
                 isFocusable = false
                 setLineSpacing(0f, 1.1f)
                 addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
-                    (view as TextView).layout?.let { currentMeasure(it) }
+                    val textView = view as TextView
+                    val layout = textView.layout ?: return@addOnLayoutChangeListener
+                    val text = textView.text
+                    val endsWithCodeBlock = text is android.text.Spanned && text.length > 0 &&
+                        text.getSpans(text.length - 1, text.length, CodeBlockSpan::class.java).isNotEmpty()
+                    if (endsWithCodeBlock) {
+                        // The code block background spans the whole width: put the timestamp on its own row
+                        currentContentLayoutChange(ContentAvoidingLayoutData.NotOverlapping)
+                    } else {
+                        currentMeasure(layout)
+                    }
                 }
             }
         },
@@ -125,6 +139,15 @@ private object MarkwonCache {
                         .codeBlockBackgroundColor(codeBackground)
                         .codeTypeface(Typeface.MONOSPACE)
                         .codeBlockTypeface(Typeface.MONOSPACE)
+                }
+
+                // Inline code without the non-breaking space padding Markwon adds around it
+                override fun configureVisitor(builder: MarkwonVisitor.Builder) {
+                    builder.on(Code::class.java) { visitor, code ->
+                        val length = visitor.length()
+                        visitor.builder().append(code.literal)
+                        visitor.setSpansForNodeOptional(code, length)
+                    }
                 }
 
                 override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {

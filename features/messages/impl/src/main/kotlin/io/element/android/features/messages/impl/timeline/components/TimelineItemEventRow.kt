@@ -129,6 +129,7 @@ import io.element.android.libraries.matrix.api.timeline.item.event.toMatrixUser
 import io.element.android.libraries.matrix.api.user.MatrixUser
 import io.element.android.libraries.matrix.ui.media.contentvalidation.collectOverallState
 import io.element.android.libraries.matrix.ui.media.contentvalidation.rememberEventContentValidationState
+import io.element.android.features.messages.impl.timeline.model.event.TimelineItemTextBasedContent
 import io.element.android.libraries.matrix.ui.messages.reply.InReplyToDetails
 import io.element.android.libraries.matrix.ui.messages.reply.InReplyToView
 import io.element.android.libraries.matrix.ui.messages.reply.content
@@ -558,6 +559,8 @@ private fun TimelineItemEventRowContent(
                     }
                 },
             state = bubbleState,
+            // Element June: received text messages all use the same (full) width
+            fillWidth = !event.isMine && event.content is TimelineItemTextBasedContent,
             interactionSource = interactionSource,
             onClick = onContentClick,
             onLongClick = onLongClick,
@@ -845,7 +848,8 @@ private fun MessageEventBubbleContent(
             val topPadding = if (showThreadDecoration) 0.dp else 8.dp
             val shape = RoundedCornerShape(6.dp)
             val inReplyToModifier = Modifier
-                .padding(top = topPadding, start = 8.dp, end = 8.dp)
+                // Element June: keep the reply box clear of the bubble outline
+                .padding(top = topPadding, start = 8.dp, end = 12.dp)
                 .clip(shape)
 
             val talkbackCompatModifier = when {
