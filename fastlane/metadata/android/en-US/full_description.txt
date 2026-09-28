@@ -1,29 +1,8 @@
-Freedom to communicate on your own terms
+Element June은 Element X Android(AGPL-3.0)를 바탕으로 한 개인용 Matrix 앱입니다.
+원본 Element X와 나란히 설치할 수 있도록 앱 ID가 분리되어 있습니다.
 
-For individuals and communities - private communication between family, friends, hobby groups, clubs, etc.
-
-Element X gives you fast, secure and private instant messaging and video calls built on Matrix, the open standard for real-time communication. This is a free and open-source app maintained at https://github.com/element-hq/element-x-android.
-
-Stay in touch with friends, family and communities with:
- • Real time messaging & video calls
- • Public rooms for open group communication
- • Private rooms for closed group communication
- • Rich messaging features: emoji reactions, replies, polls, pinned messages and more.
- • Video calling while browsing messages.
- • Interoperability with other Matrix-based apps such as FluffyChat, Cinny and many more.
-
-<b>Privacy-first<b>
-Unlike some other messengers from Big Tech companies, we don’t mine your data or monitor your communications.
-
-<b>Own your conversations</b>
-Choose where to host your data - from any public server (the largest free server is matrix.org, but there are plenty of others to choose from) to creating your own personal server and hosting it on your own domain. This ability to choose a server is a large part of what differentiates us from other real time communication apps. However you host, you have ownership; it’s your data. You’re not the product. You’re in control.
-
-<b>Communicate in real time, all the time</b>
-Use Element everywhere. Stay in touch wherever you are with fully synchronised message history across all your devices, including on the web at https://app.element.io
-
-<b>Element X is our next-generation app</b>
-If you’re using the previous-generation Element Classic app, it’s time to try Element X! It’s faster, easier to use, and more powerful than the classic app. It’s better in every way and we’re adding new features all the time.
-
-The application requires the android.permission.REQUEST_INSTALL_PACKAGES permission to enable the installation of applications received as attachments, ensuring seamless and convenient access to new software within the app.
-
-The application requires the USE_FULL_SCREEN_INTENT permission to ensure our users can effectively receive call notifications even when their devices are locked.
+추가 기능
+- 1x1 대화방 버튼 위젯: 누르면 선택한 대화방을 바로 엽니다.
+- 대화방 목록 위젯(4x4, 크기 조절 가능): 대화방 로고, 이름, 최근 메시지, 안 읽은 개수를 보여 주고, 누르면 해당 대화방으로 이동합니다.
+- 위젯별로 대화방을 고르고 순서를 직접 정할 수 있습니다.
+- 새 메시지가 오면 위젯이 갱신됩니다.

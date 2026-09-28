@@ -88,6 +88,17 @@ android {
             storeFile = file("./signature/debug.keystore")
             storePassword = "android"
         }
+        register("june") {
+            // Element June: release signing key provided by CI secrets only
+            val juneStore = System.getenv("JUNE_KEYSTORE_FILE")
+            if (!juneStore.isNullOrBlank()) {
+                storeFile = file(juneStore)
+                storeType = "PKCS12"
+                storePassword = System.getenv("JUNE_STORE_PASSWORD")
+                keyAlias = System.getenv("JUNE_KEY_ALIAS")
+                keyPassword = System.getenv("JUNE_STORE_PASSWORD")
+            }
+        }
         register("nightly") {
             keyAlias = environmentOrGradleValue("ELEMENT_ANDROID_NIGHTLY_KEYID", "signing.element.nightly.keyId")
             keyPassword = environmentOrGradleValue("ELEMENT_ANDROID_NIGHTLY_KEYPASSWORD", "signing.element.nightly.keyPassword")
@@ -124,7 +135,11 @@ android {
                 "login_redirect_scheme",
                 oAuthRedirectSchemeBase,
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (System.getenv("JUNE_KEYSTORE_FILE").isNullOrBlank()) {
+                signingConfigs.getByName("debug")
+            } else {
+                signingConfigs.getByName("june")
+            }
 
             optimization {
                 enable = true
