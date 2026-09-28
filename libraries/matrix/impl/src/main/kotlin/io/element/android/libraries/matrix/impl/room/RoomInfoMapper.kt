@@ -46,7 +46,8 @@ class RoomInfoMapper {
             avatarUrl = it.avatarUrl,
             isPublic = it.isPublic,
             isDirect = it.isDirect,
-            isDm = it.isDm,
+            // Element June: any non-space room with only two members (me + one other) is shown as a 1:1 chat
+            isDm = it.isDm || (!it.isSpace && it.activeMembersCount.toLong() == 2L),
             isEncrypted = when (it.encryptionState) {
                 EncryptionState.ENCRYPTED -> true
                 EncryptionState.NOT_ENCRYPTED -> false
