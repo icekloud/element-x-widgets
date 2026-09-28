@@ -77,6 +77,8 @@ fun TimelineItemImageView(
                 .blurHashBackground(content.blurhash, alpha = 0.9f)
                 .align(Alignment.CenterHorizontally),
             aspectRatio = coerceRatioWhenHidingContent(content.aspectRatio, hideMediaContent),
+            // Element June: pictures sent together are shown at half height, stacked
+            maxHeight = if (content.juneBatchPosition() != null) MAX_HEIGHT_IN_DP / 2 else MAX_HEIGHT_IN_DP,
         ) {
             if (isContentBeingValidated) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -184,4 +186,16 @@ internal fun ATimelineItemEventRowPreview() = ElementPreview {
             )
         }
     }
+}
+
+private val JUNE_BATCH_FILENAME = Regex("^june-[0-9a-f]{6,32}-(\\d{1,3})of(\\d{1,3})\\.[A-Za-z0-9]{1,5}$")
+
+/**
+ * Element June: (index, total) when this picture was sent as part of a multi-picture batch (june-<id>-<i>of<n> file name).
+ */
+internal fun TimelineItemImageContent.juneBatchPosition(): Pair<Int, Int>? {
+    val match = JUNE_BATCH_FILENAME.matchEntire(filename) ?: return null
+    val index = match.groupValues[1].toInt()
+    val total = match.groupValues[2].toInt()
+    return if (total >= 2 && index in 1..total) index to total else null
 }

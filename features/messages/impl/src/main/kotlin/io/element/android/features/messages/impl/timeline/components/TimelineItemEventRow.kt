@@ -83,6 +83,7 @@ import io.element.android.features.messages.impl.timeline.model.bubble.BubbleSta
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemAttachmentsContent
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemGalleryContent
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemImageContent
+import io.element.android.features.messages.impl.timeline.components.event.juneBatchPosition
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemLocationContent
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemPollContent
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemStickerContent
@@ -570,7 +571,7 @@ private fun TimelineItemEventRowContent(
                 },
             state = bubbleState,
             // Element June: received text, file and audio messages all use the same (full) width
-            fillWidth = event.fillsBubbleWidth() || event.juneBatchPosition() != null,
+            fillWidth = event.fillsBubbleWidth(),
             // Element June: stacked batch pictures look like one message block
             squareTop = event.juneBatchPosition()?.let { it.first > 1 } == true,
             squareBottom = event.juneBatchPosition()?.let { it.first < it.second } == true,
@@ -687,22 +688,13 @@ private fun MessageSenderInformation(
 private fun TimelineItem.Event.fillsBubbleWidth(): Boolean = !isMine && (
     content is TimelineItemTextBasedContent ||
         content is TimelineItemFileContent ||
-        content is TimelineItemAudioContent ||
-        juneBatchPosition() != null
+        content is TimelineItemAudioContent
     )
-
-private val JUNE_BATCH_FILENAME = Regex("^june-[0-9a-f]{6,32}-(\\d{1,3})of(\\d{1,3})\\.[A-Za-z0-9]{1,5}$")
 
 /**
  * Element June: (index, total) when this picture was sent as part of a multi-picture batch, see withBatchMarker.
  */
-internal fun TimelineItem.Event.juneBatchPosition(): Pair<Int, Int>? {
-    val image = content as? TimelineItemImageContent ?: return null
-    val match = JUNE_BATCH_FILENAME.matchEntire(image.filename) ?: return null
-    val index = match.groupValues[1].toInt()
-    val total = match.groupValues[2].toInt()
-    return if (total >= 2 && index in 1..total) index to total else null
-}
+internal fun TimelineItem.Event.juneBatchPosition(): Pair<Int, Int>? = (content as? TimelineItemImageContent)?.juneBatchPosition()
 
 @Composable
 private fun MessageEventBubbleContent(
