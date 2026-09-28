@@ -528,12 +528,13 @@ class AttachmentsPreviewPresenter(
         caption: String?,
         sendActionState: MutableState<SendActionState>,
         inReplyToEventId: EventId?,
-    ) = runCatchingExceptions {
+    ) = withBatchMarker(mediaUploadInfos).let { items ->
+      runCatchingExceptions {
         // Element June: send every item as its own regular media event instead of an m.gallery event,
         // so that every client (including bots) can receive them. The caption goes with the first item.
-        sendActionState.value = SendActionState.Sending.Uploading(mediaUploadInfos)
+        sendActionState.value = SendActionState.Sending.Uploading(items)
         var firstError: Throwable? = null
-        mediaUploadInfos.forEachIndexed { index, mediaUploadInfo ->
+        items.forEachIndexed { index, mediaUploadInfo ->
             mediaSender.sendPreProcessedMedia(
                 mediaUploadInfo = mediaUploadInfo,
                 caption = caption.takeIf { index == 0 },
@@ -541,14 +542,14 @@ class AttachmentsPreviewPresenter(
                 inReplyToEventId = inReplyToEventId.takeIf { index == 0 },
             ).onFailure { error ->
                 if (error is CancellationException) throw error
-                Timber.e(error, "Failed to send attachment ${index + 1}/${mediaUploadInfos.size}")
+                Timber.e(error, "Failed to send attachment ${index + 1}/${items.size}")
                 if (firstError == null) firstError = error
             }
         }
         firstError?.let { throw it }
     }.fold(
         onSuccess = {
-            mediaUploadInfos.forEach { cleanUp(it) }
+            items.forEach { cleanUp(it) }
             sendActionState.value = SendActionState.Done
             onDoneListener()
         },
@@ -557,8 +558,32 @@ class AttachmentsPreviewPresenter(
             if (error is CancellationException) {
                 throw error
             } else {
-                sendActionState.value = SendActionState.Failure(error, mediaUploadInfos)
+                sendActionState.value = SendActionState.Failure(error, items)
             }
         }
     )
+    }
+}
+
+/**
+ * Element June: when several items are sent, name the files `june-<batch>-<k>of<n>.<ext>` so a receiving bot can wait for the
+ * whole batch and handle it as one request. A single item keeps its original name.
+ */
+private fun withBatchMarker(infos: List<MediaUploadInfo>): List<MediaUploadInfo> {
+    if (infos.size < 2) return infos
+    val batchId = java.util.UUID.randomUUID().toString().replace("-", "").take(10)
+    return infos.mapIndexed { index, info ->
+        val source = info.file
+        val extension = source.extension.takeIf { it.isNotEmpty() }?.let { ".$it" }.orEmpty()
+        val target = File(source.parentFile, "june-$batchId-${index + 1}of${infos.size}$extension")
+        if (source.renameTo(target)) info.withFile(target) else info
+    }
+}
+
+private fun MediaUploadInfo.withFile(newFile: File): MediaUploadInfo = when (this) {
+    is MediaUploadInfo.AnyFile -> copy(file = newFile)
+    is MediaUploadInfo.Audio -> copy(file = newFile)
+    is MediaUploadInfo.Image -> copy(file = newFile)
+    is MediaUploadInfo.Video -> copy(file = newFile)
+    is MediaUploadInfo.VoiceMessage -> copy(file = newFile)
 }
