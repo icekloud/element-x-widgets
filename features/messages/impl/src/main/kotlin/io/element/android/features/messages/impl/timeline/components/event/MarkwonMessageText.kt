@@ -52,35 +52,19 @@ internal fun MarkwonMessageText(
     val codeBackground = ElementTheme.colors.bgSubtleSecondary.toArgb()
     val textSizeSp = ElementTheme.typography.fontBodyLgRegular.fontSize.value
     val currentOnLinkClick by rememberUpdatedState(onLinkClick)
-    val markwon = remember(context, linkColor, codeBackground) {
-        Markwon.builder(context)
-            .usePlugin(StrikethroughPlugin.create())
-            .usePlugin(TablePlugin.create(context))
-            // No phone numbers: digits inside messages must not become links
-            .usePlugin(LinkifyPlugin.create(Linkify.WEB_URLS or Linkify.EMAIL_ADDRESSES))
-            .usePlugin(object : AbstractMarkwonPlugin() {
-                override fun configureTheme(builder: MarkwonTheme.Builder) {
-                    builder
-                        .linkColor(linkColor)
-                        .codeBackgroundColor(codeBackground)
-                        .codeBlockBackgroundColor(codeBackground)
-                        .codeTypeface(Typeface.MONOSPACE)
-                        .codeBlockTypeface(Typeface.MONOSPACE)
-                }
-
-                override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
-                    builder.linkResolver(LinkResolver { _, link -> currentOnLinkClick(Link(url = link, text = link)) })
-                }
-            })
-            .build()
+    // Element June: one shared Markwon instance and a parsed text cache, so opening a room or
+    // scrolling does not rebuild the parser and re-parse every message (source of frame drops).
+    val markwon = remember(linkColor, codeBackground) {
+        MarkwonCache.markwon(context.applicationContext, linkColor, codeBackground)
     }
-    val spanned = remember(markwon, markdown) { markwon.toMarkdown(markdown) }
+    val spanned = remember(markwon, markdown) { MarkwonCache.parse(markwon, markdown) }
     val measure = ContentAvoidingLayout.measureLegacyLastTextLine(onContentLayoutChange = onContentLayoutChange)
     val currentMeasure by rememberUpdatedState(measure)
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
             TextView(ctx).apply {
+                setTag(R_ID_LINK_HANDLER, { link: String -> currentOnLinkClick(Link(url = link, text = link)) })
                 movementMethod = LinkOnlyMovementMethod
                 // Let the message bubble handle clicks and long clicks outside links
                 isClickable = false
@@ -113,5 +97,52 @@ private object LinkOnlyMovementMethod : LinkMovementMethod() {
         val offset = layout.getOffsetForHorizontal(line, x.toFloat())
         val hasLink = buffer.getSpans(offset, offset, ClickableSpan::class.java).isNotEmpty()
         return hasLink && super.onTouchEvent(widget, buffer, event)
+    }
+}
+
+private val R_ID_LINK_HANDLER = io.element.android.features.messages.impl.R.id.june_markwon_link_handler
+
+private object MarkwonCache {
+    private var key: Pair<Int, Int>? = null
+    private var instance: Markwon? = null
+    private val parsed = android.util.LruCache<String, android.text.Spanned>(300)
+
+    @Synchronized
+    fun markwon(context: android.content.Context, linkColor: Int, codeBackground: Int): Markwon {
+        val newKey = linkColor to codeBackground
+        instance?.takeIf { key == newKey }?.let { return it }
+        parsed.evictAll()
+        val built = Markwon.builder(context)
+            .usePlugin(StrikethroughPlugin.create())
+            .usePlugin(TablePlugin.create(context))
+            // No phone numbers: digits inside messages must not become links
+            .usePlugin(LinkifyPlugin.create(Linkify.WEB_URLS or Linkify.EMAIL_ADDRESSES))
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder
+                        .linkColor(linkColor)
+                        .codeBackgroundColor(codeBackground)
+                        .codeBlockBackgroundColor(codeBackground)
+                        .codeTypeface(Typeface.MONOSPACE)
+                        .codeBlockTypeface(Typeface.MONOSPACE)
+                }
+
+                override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
+                    builder.linkResolver(LinkResolver { view, link ->
+                        @Suppress("UNCHECKED_CAST")
+                        (view.getTag(R_ID_LINK_HANDLER) as? (String) -> Unit)?.invoke(link)
+                    })
+                }
+            })
+            .build()
+        key = newKey
+        instance = built
+        return built
+    }
+
+    @Synchronized
+    fun parse(markwon: Markwon, markdown: String): android.text.Spanned {
+        parsed.get(markdown)?.let { return it }
+        return markwon.toMarkdown(markdown).also { parsed.put(markdown, it) }
     }
 }
