@@ -131,6 +131,8 @@ import io.element.android.libraries.matrix.api.user.MatrixUser
 import io.element.android.libraries.matrix.ui.media.contentvalidation.collectOverallState
 import io.element.android.libraries.matrix.ui.media.contentvalidation.rememberEventContentValidationState
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemTextBasedContent
+import io.element.android.features.messages.impl.timeline.model.event.TimelineItemAudioContent
+import io.element.android.features.messages.impl.timeline.model.event.TimelineItemFileContent
 import io.element.android.libraries.matrix.ui.messages.reply.InReplyToDetails
 import io.element.android.libraries.matrix.ui.messages.reply.InReplyToView
 import io.element.android.libraries.matrix.ui.messages.reply.content
@@ -565,8 +567,12 @@ private fun TimelineItemEventRowContent(
                     }
                 },
             state = bubbleState,
-            // Element June: received text messages all use the same (full) width
-            fillWidth = !event.isMine && event.content is TimelineItemTextBasedContent,
+            // Element June: received text, file and audio messages all use the same (full) width
+            fillWidth = !event.isMine && (
+                event.content is TimelineItemTextBasedContent ||
+                    event.content is TimelineItemFileContent ||
+                    event.content is TimelineItemAudioContent
+                ),
             interactionSource = interactionSource,
             onClick = onContentClick,
             onLongClick = onLongClick,
