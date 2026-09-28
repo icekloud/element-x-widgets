@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.constraintlayout.compose.ConstrainScope
 import androidx.constraintlayout.compose.ConstraintLayout
+import androidx.constraintlayout.compose.Dimension
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.features.messages.impl.timeline.TimelineEvent
@@ -544,11 +545,8 @@ private fun TimelineItemEventRowContent(
         MessageEventBubble(
             modifier = Modifier
                 .constrainAs(message) {
-                    val topMargin = if (bubbleState.cutTopStart) {
-                        NEGATIVE_MARGIN_FOR_BUBBLE
-                    } else {
-                        0.dp
-                    }
+                    // Element June: bubble starts below the sender row (no avatar cut-out on outline bubbles)
+                    val topMargin = 2.dp
                     top.linkTo(sender.bottom, margin = topMargin)
                     // Element June: minimal side margins so bubbles use the full screen width
                     if (event.isMine) {
@@ -556,6 +554,14 @@ private fun TimelineItemEventRowContent(
                     } else {
                         val startMargin = if (timelineRoomInfo.isDm) 4.dp else 4.dp + BUBBLE_INCOMING_OFFSET
                         start.linkTo(parent.start, margin = startMargin)
+                        // Keep the bubble inside the screen, whatever the start offset is
+                        end.linkTo(parent.end, margin = 4.dp)
+                        horizontalBias = 0f
+                        width = if (event.content is TimelineItemTextBasedContent) {
+                            Dimension.fillToConstraints
+                        } else {
+                            Dimension.preferredWrapContent
+                        }
                     }
                 },
             state = bubbleState,
