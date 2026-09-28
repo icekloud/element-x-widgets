@@ -132,6 +132,8 @@ fun TextComposer(
     modifier: Modifier = Modifier,
     showTextFormatting: Boolean = false,
     isInThreadTimeline: Boolean = false,
+    // Element June: pictures waiting in the composer can be sent without any text
+    hasPendingAttachments: Boolean = false,
 ) {
     val markdown = when (state) {
         is TextEditorState.Markdown -> state.state.text.value()
@@ -161,7 +163,7 @@ fun TextComposer(
     } else {
         stringResource(id = R.string.rich_text_editor_composer_placeholder)
     }
-    val canSendTextMessage = markdown.isNotBlank() || composerMode is MessageComposerMode.Attachment
+    val canSendTextMessage = markdown.isNotBlank() || composerMode is MessageComposerMode.Attachment || hasPendingAttachments
 
     val textInput: @Composable () -> Unit = when (state) {
         is TextEditorState.Rich -> {

@@ -569,7 +569,7 @@ class AttachmentsPreviewPresenter(
  * Element June: when several items are sent, name the files `june-<batch>-<k>of<n>.<ext>` so a receiving bot can wait for the
  * whole batch and handle it as one request. A single item keeps its original name.
  */
-private fun withBatchMarker(infos: List<MediaUploadInfo>): List<MediaUploadInfo> {
+internal fun withBatchMarker(infos: List<MediaUploadInfo>): List<MediaUploadInfo> {
     if (infos.size < 2) return infos
     val batchId = java.util.UUID.randomUUID().toString().replace("-", "").take(10)
     return infos.mapIndexed { index, info ->

@@ -8,6 +8,7 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEdits
 import android.net.Uri
 import io.element.android.libraries.textcomposer.mentions.ResolvedSuggestion
 import io.element.android.libraries.textcomposer.model.MessageComposerMode
@@ -37,4 +38,11 @@ sealed interface MessageComposerEvent {
     data class InsertSuggestion(val resolvedSuggestion: ResolvedSuggestion) : MessageComposerEvent
     data object SaveDraft : MessageComposerEvent
     data object ClearSlashError : MessageComposerEvent
+
+    // Element June: pictures waiting in the composer (sent with the typed text) and their crop editor
+    data class RemovePendingAttachment(val index: Int) : MessageComposerEvent
+    data class OpenPendingAttachmentEditor(val index: Int) : MessageComposerEvent
+    data class EditPendingAttachment(val transform: (AttachmentImageEdits) -> AttachmentImageEdits) : MessageComposerEvent
+    data object ClosePendingAttachmentEditor : MessageComposerEvent
+    data object ApplyPendingAttachmentEdits : MessageComposerEvent
 }

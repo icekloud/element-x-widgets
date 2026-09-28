@@ -8,6 +8,15 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import kotlinx.collections.immutable.ImmutableList
+import io.element.android.libraries.mediaviewer.api.local.LocalMedia
+import io.element.android.libraries.core.mimetype.MimeTypes.isMimeTypeImage
+import io.element.android.libraries.androidutils.file.safeDelete
+import io.element.android.libraries.mediaupload.api.allFiles
+import io.element.android.features.messages.impl.attachments.preview.withBatchMarker
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEdits
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditorState
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditor
 import android.Manifest
 import android.annotation.SuppressLint
 import android.net.Uri
@@ -145,6 +154,7 @@ class MessageComposerPresenter(
     private val featureFlagService: FeatureFlagService,
     private val contentScannerService: ContentScannerService,
     private val contentValidationCache: EventContentValidationCache,
+    private val attachmentImageEditor: AttachmentImageEditor,
 ) : Presenter<MessageComposerState> {
     @AssistedFactory
     interface Factory {
@@ -168,6 +178,10 @@ class MessageComposerPresenter(
 
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     internal var showTextFormatting: Boolean by mutableStateOf(false)
+
+    // Element June: pictures waiting in the composer, and the crop editor opened on one of them
+    private var pendingAttachments: ImmutableList<LocalMedia> by mutableStateOf(persistentListOf())
+    private var pendingEditor: Pair<Int, AttachmentImageEditorState>? by mutableStateOf(null)
 
     @SuppressLint("UnsafeOptInUsageError")
     @Composable
@@ -278,11 +292,16 @@ class MessageComposerPresenter(
                     }
                 }
                 is MessageComposerEvent.SendMessage -> {
-                    sessionCoroutineScope.sendMessage(
-                        markdownTextEditorState = markdownTextEditorState,
-                        richTextEditorState = richTextEditorState,
-                        slashCommandAction = slashCommandAction,
-                    )
+                    // Element June: pending pictures go out with the typed text as their caption
+                    if (pendingAttachments.isNotEmpty() && !messageComposerContext.composerMode.isEditing) {
+                        sessionCoroutineScope.sendPendingAttachments(markdownTextEditorState, richTextEditorState)
+                    } else {
+                        sessionCoroutineScope.sendMessage(
+                            markdownTextEditorState = markdownTextEditorState,
+                            richTextEditorState = richTextEditorState,
+                            slashCommandAction = slashCommandAction,
+                        )
+                    }
                 }
                 is MessageComposerEvent.SendUri -> {
                     val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
@@ -403,6 +422,43 @@ class MessageComposerPresenter(
                 MessageComposerEvent.ClearSlashError -> {
                     slashCommandAction.value = AsyncAction.Uninitialized
                 }
+                is MessageComposerEvent.RemovePendingAttachment -> {
+                    pendingAttachments = pendingAttachments.filterIndexed { i, _ -> i != event.index }.toImmutableList()
+                }
+                is MessageComposerEvent.OpenPendingAttachmentEditor -> {
+                    val media = pendingAttachments.getOrNull(event.index)
+                    if (media != null && !media.info.mimeType.contains("gif")) {
+                        pendingEditor = event.index to AttachmentImageEditorState(
+                            localMedia = media,
+                            edits = AttachmentImageEdits(),
+                            previewDebug = false,
+                        )
+                    }
+                }
+                is MessageComposerEvent.EditPendingAttachment -> {
+                    pendingEditor?.let { (index, editorState) ->
+                        pendingEditor = index to editorState.copy(edits = event.transform(editorState.edits))
+                    }
+                }
+                MessageComposerEvent.ClosePendingAttachmentEditor -> {
+                    pendingEditor = null
+                }
+                MessageComposerEvent.ApplyPendingAttachmentEdits -> {
+                    val current = pendingEditor
+                    pendingEditor = null
+                    if (current != null && current.second.edits.hasChanges) {
+                        val (index, editorState) = current
+                        localCoroutineScope.launch {
+                            attachmentImageEditor.exportEdits(editorState.localMedia, editorState.edits)
+                                .onSuccess { edited ->
+                                    pendingAttachments = pendingAttachments
+                                        .mapIndexed { i, media -> if (i == index) edited.localMedia else media }
+                                        .toImmutableList()
+                                }
+                                .onFailure { Timber.e(it, "Failed to apply image edits") }
+                        }
+                    }
+                }
             }
         }
 
@@ -437,6 +493,8 @@ class MessageComposerPresenter(
             resolveAtRoomMentionDisplay = resolveAtRoomMentionDisplay,
             slashCommandAction = slashCommandAction.value,
             eventSink = ::handleEvent,
+            pendingAttachments = pendingAttachments,
+            pendingAttachmentEditor = pendingEditor?.second,
         )
     }
 
@@ -652,6 +710,11 @@ class MessageComposerPresenter(
             name = null,
             formattedFileSize = null
         )
+        // Element June: pictures wait in the composer and go out with the typed text (Telegram-like)
+        if (!sendAsFile && localMedia.info.mimeType.isMimeTypeImage() && !messageComposerContext.composerMode.isEditing) {
+            pendingAttachments = (pendingAttachments + localMedia).toImmutableList()
+            return
+        }
         val mediaAttachment = Attachment.Media(localMedia, sendAsFile = sendAsFile)
         val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
         navigator.navigateToPreviewAttachments(persistentListOf(mediaAttachment), inReplyToEventId)
@@ -677,10 +740,51 @@ class MessageComposerPresenter(
             )
             Attachment.Media(localMedia, sendAsFile = sendAsFile)
         }.toImmutableList()
+        // Element June: pictures wait in the composer and go out with the typed text (Telegram-like)
+        if (!sendAsFile && !messageComposerContext.composerMode.isEditing &&
+            attachments.all { it.localMedia.info.mimeType.isMimeTypeImage() }) {
+            pendingAttachments = (pendingAttachments + attachments.map { it.localMedia }).toImmutableList()
+            return
+        }
         val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
         navigator.navigateToPreviewAttachments(attachments, inReplyToEventId)
 
         resetComposerModeAfterAttaching()
+    }
+
+    // Element June: send the pending pictures one by one, the typed text is the caption of the first one
+    private fun CoroutineScope.sendPendingAttachments(
+        markdownTextEditorState: MarkdownTextEditorState,
+        richTextEditorState: RichTextEditorState,
+    ) = launch {
+        val attachments = pendingAttachments
+        pendingAttachments = persistentListOf()
+        pendingEditor = null
+        val caption = currentComposerMessage(markdownTextEditorState, richTextEditorState, withMentions = false)
+            .markdown
+            .takeIf { it.isNotBlank() }
+        val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
+        resetComposer(markdownTextEditorState, richTextEditorState, fromEdit = false)
+        val config = mediaOptimizationConfigProvider.get()
+        val infos = attachments.mapNotNull { media ->
+            mediaSender.preProcessMedia(uri = media.uri, mimeType = media.info.mimeType, mediaOptimizationConfig = config)
+                .onFailure { Timber.e(it, "Failed to process attachment") }
+                .getOrNull()
+        }
+        withBatchMarker(infos).forEachIndexed { index, info ->
+            mediaSender.sendPreProcessedMedia(
+                mediaUploadInfo = info,
+                caption = caption.takeIf { index == 0 },
+                formattedCaption = null,
+                inReplyToEventId = inReplyToEventId.takeIf { index == 0 },
+            ).onFailure { cause ->
+                Timber.e(cause, "Failed to send attachment ${index + 1}/${infos.size}")
+                if (cause !is CancellationException) {
+                    snackbarDispatcher.post(SnackbarMessage(sendAttachmentError(cause)))
+                }
+            }
+            info.allFiles().forEach { it.safeDelete() }
+        }
     }
 
     private fun resetComposerModeAfterAttaching() {

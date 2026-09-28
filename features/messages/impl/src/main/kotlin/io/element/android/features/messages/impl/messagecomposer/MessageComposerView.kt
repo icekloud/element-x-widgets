@@ -8,6 +8,12 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEdits
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditorView
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -95,8 +101,18 @@ internal fun MessageComposerView(
         voiceMessageState.eventSink(VoiceMessageComposerEvent.PlayerEvent(event))
     }
 
+    // Element June: pending pictures above the composer, tap one to crop it
+    Column(modifier = modifier) {
+    if (state.pendingAttachments.isNotEmpty()) {
+        PendingAttachmentsRow(
+            attachments = state.pendingAttachments,
+            onAttachmentClick = { state.eventSink(MessageComposerEvent.OpenPendingAttachmentEditor(it)) },
+            onRemoveClick = { state.eventSink(MessageComposerEvent.RemovePendingAttachment(it)) },
+        )
+    }
     TextComposer(
-        modifier = modifier,
+        modifier = Modifier.fillMaxWidth(),
+        hasPendingAttachments = state.pendingAttachments.isNotEmpty(),
         state = state.textEditorState,
         voiceMessageState = voiceMessageState.voiceMessageState,
         onRequestFocus = ::onRequestFocus,
@@ -118,6 +134,26 @@ internal fun MessageComposerView(
         onTyping = ::onTyping,
         onSelectRichContent = ::sendUri,
     )
+    }
+
+    state.pendingAttachmentEditor?.let { editorState ->
+        Dialog(
+            onDismissRequest = { state.eventSink(MessageComposerEvent.ClosePendingAttachmentEditor) },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            AttachmentImageEditorView(
+                state = editorState,
+                onCropRectChange = { rect -> state.eventSink(MessageComposerEvent.EditPendingAttachment { it.copy(cropRect = rect) }) },
+                onRotateClick = { state.eventSink(MessageComposerEvent.EditPendingAttachment { it.rotateAntiClockwise() }) },
+                onFlipHorizontallyClick = { state.eventSink(MessageComposerEvent.EditPendingAttachment { it.flipHorizontally() }) },
+                onFlipVerticallyClick = { state.eventSink(MessageComposerEvent.EditPendingAttachment { it.flipVertically() }) },
+                onResetClick = { state.eventSink(MessageComposerEvent.EditPendingAttachment { AttachmentImageEdits() }) },
+                onCancelClick = { state.eventSink(MessageComposerEvent.ClosePendingAttachmentEditor) },
+                onDoneClick = { state.eventSink(MessageComposerEvent.ApplyPendingAttachmentEdits) },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
 
     AsyncActionView(
         async = state.slashCommandAction,

@@ -8,6 +8,9 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import kotlinx.collections.immutable.persistentListOf
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditorState
+import io.element.android.libraries.mediaviewer.api.local.LocalMedia
 import androidx.compose.runtime.Stable
 import io.element.android.libraries.architecture.AsyncAction
 import io.element.android.libraries.textcomposer.mentions.ResolvedSuggestion
@@ -30,4 +33,7 @@ data class MessageComposerState(
     val resolveAtRoomMentionDisplay: () -> TextDisplay,
     val slashCommandAction: AsyncAction<Unit>,
     val eventSink: (MessageComposerEvent) -> Unit,
+    // Element June: pictures waiting in the composer, and the crop editor opened on one of them
+    val pendingAttachments: ImmutableList<LocalMedia> = persistentListOf(),
+    val pendingAttachmentEditor: AttachmentImageEditorState? = null,
 )
