@@ -187,7 +187,8 @@ object MessageEventBubbleDefaults {
     }
 
     // Design says: The maximum width of a bubble is still 3/4 of the screen width. But try with 78% now.
-    const val BUBBLE_WIDTH_RATIO = 0.78f
+    // Element June: use (almost) the full width for message bubbles
+    const val BUBBLE_WIDTH_RATIO = 0.97f
 }
 
 @PreviewsDayNight

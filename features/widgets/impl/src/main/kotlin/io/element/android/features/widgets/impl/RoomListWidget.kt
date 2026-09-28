@@ -107,7 +107,7 @@ private fun RoomListContent(
             .appWidgetBackground()
             .cornerRadius(16.dp)
             .background(GlanceTheme.colors.widgetBackground)
-            .padding(horizontal = 10.dp, vertical = if (tiny) 2.dp else 8.dp),
+            .padding(horizontal = 8.dp, vertical = 2.dp),
     ) {
         if (config == null || config.roomIds.isEmpty()) {
             Box(
@@ -126,7 +126,7 @@ private fun RoomListContent(
                     Row(
                         modifier = GlanceModifier
                             .fillMaxWidth()
-                            .padding(vertical = if (tiny) 2.dp else if (compact) 3.dp else 5.dp)
+                            .padding(vertical = if (tiny) 1.dp else 3.dp)
                             .clickable(actionStartActivity(WidgetIntents.openRoom(context, config.sessionId, room.roomId))),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
