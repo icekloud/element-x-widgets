@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -170,13 +171,24 @@ internal fun JuneBackgroundPanel(
     var openId by remember(roomId) { mutableStateOf<String?>(null) }
     var confirm by remember(roomId) { mutableStateOf<JuneBackgroundItem?>(null) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    // Ids the user asked to kill: hidden until the server stops listing them (or 60s), so a poll that
+    // still sees the dying process does not bring the row back.
+    val killed = remember(roomId) { mutableStateMapOf<String, Long>() }
+    fun visible(list: List<JuneBackgroundItem>): List<JuneBackgroundItem> {
+        val nowMs = System.currentTimeMillis()
+        val ids = list.map { it.id }.toSet()
+        killed.keys.toList().forEach { k ->
+            if (k !in ids || nowMs - (killed[k] ?: 0L) > 60_000L) killed.remove(k)
+        }
+        return list.filterNot { it.id in killed }
+    }
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
 
     LaunchedEffect(roomId) {
         while (true) {
             if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                client.fetch(roomId)?.let { items = it }
+                client.fetch(roomId)?.let { items = visible(it) }
             }
             now = System.currentTimeMillis()
             delay(POLL_MILLIS)
@@ -284,11 +296,13 @@ internal fun JuneBackgroundPanel(
             destructiveSubmit = true,
             onSubmitClick = {
                 confirm = null
+                killed[target.id] = System.currentTimeMillis()
+                items = items.filterNot { it.id == target.id }
                 scope.launch {
-                    if (client.kill(roomId, target.id)) {
-                        items = items.filterNot { it.id == target.id }
-                        delay(1_500)
-                        client.fetch(roomId)?.let { items = it }
+                    if (!client.kill(roomId, target.id)) {
+                        // request failed: show it again
+                        killed.remove(target.id)
+                        client.fetch(roomId)?.let { items = visible(it) }
                     }
                 }
             },
