@@ -33,6 +33,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -171,8 +172,8 @@ internal fun JuneBackgroundPanel(
     var openId by remember(roomId) { mutableStateOf<String?>(null) }
     var confirm by remember(roomId) { mutableStateOf<JuneBackgroundItem?>(null) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
-    // Ids the user asked to kill: hidden until the server stops listing them (or 60s), so a poll that
-    // still sees the dying process does not bring the row back.
+    // Ids the user asked to kill: shown greyed out ("종료 중") until the server stops listing them
+    // (then the row disappears) or 60s pass (then it is shown normally again).
     val killed = remember(roomId) { mutableStateMapOf<String, Long>() }
     fun visible(list: List<JuneBackgroundItem>): List<JuneBackgroundItem> {
         val nowMs = System.currentTimeMillis()
@@ -180,7 +181,7 @@ internal fun JuneBackgroundPanel(
         killed.keys.toList().forEach { k ->
             if (k !in ids || nowMs - (killed[k] ?: 0L) > 60_000L) killed.remove(k)
         }
-        return list.filterNot { it.id in killed }
+        return list
     }
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -239,9 +240,11 @@ internal fun JuneBackgroundPanel(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items.forEach { item ->
+                    val dying = item.id in killed
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .alpha(if (dying) 0.4f else 1f)
                             .clickable { openId = if (openId == item.id) null else item.id }
                             .padding(horizontal = 12.dp, vertical = 4.dp),
                     ) {
@@ -250,7 +253,7 @@ internal fun JuneBackgroundPanel(
                                 modifier = Modifier
                                     .size(28.dp)
                                     .clip(RoundedCornerShape(14.dp))
-                                    .clickable { confirm = item }
+                                    .clickable(enabled = !dying) { confirm = item }
                                     .padding(5.dp),
                                 imageVector = CompoundIcons.Close(),
                                 contentDescription = "강제종료",
@@ -259,7 +262,7 @@ internal fun JuneBackgroundPanel(
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 modifier = Modifier.weight(1f),
-                                text = item.title,
+                                text = if (dying) "${item.title} (종료 중…)" else item.title,
                                 style = ElementTheme.typography.fontBodyMdRegular,
                                 color = ElementTheme.colors.textPrimary,
                                 maxLines = 1,
@@ -297,7 +300,6 @@ internal fun JuneBackgroundPanel(
             onSubmitClick = {
                 confirm = null
                 killed[target.id] = System.currentTimeMillis()
-                items = items.filterNot { it.id == target.id }
                 scope.launch {
                     if (!client.kill(roomId, target.id)) {
                         // request failed: show it again
