@@ -12,6 +12,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -27,6 +28,10 @@ object JuneSettings {
     private const val KEY_MENU_ORDER = "composer_menu_order"
     private const val KEY_MENU_HIDDEN = "composer_menu_hidden"
     private const val KEY_QUICK = "quick_commands"
+    private const val KEY_APERTURE_ROOMS = "aperture_rooms"
+
+    /** Default room name keywords that get the Aperture (GLaDOS) chat theme. */
+    const val DEFAULT_APERTURE_ROOMS = "GLaDOS, 글라도스"
     private const val QUICK_SEPARATOR = "\u001F"
 
     /** Default quick commands of the room top bar. */
@@ -65,6 +70,7 @@ object JuneSettings {
     private val menuOrder = mutableStateListOf<ComposerMenuItem>()
     private val menuHidden = mutableStateListOf<ComposerMenuItem>()
     private val quick = mutableStateListOf<String>()
+    private val apertureRooms = mutableStateOf(DEFAULT_APERTURE_ROOMS)
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -86,6 +92,7 @@ object JuneSettings {
             quick.clear()
             val savedQuick = p.getString(KEY_QUICK, null)
             quick.addAll(if (savedQuick == null) DEFAULT_QUICK_COMMANDS else savedQuick.split(QUICK_SEPARATOR).filter { it.isNotBlank() })
+            apertureRooms.value = p.getString(KEY_APERTURE_ROOMS, null) ?: DEFAULT_APERTURE_ROOMS
             loaded = true
         }
     }
@@ -208,5 +215,24 @@ object JuneSettings {
 
     private fun saveQuick(context: Context) {
         prefs(context).edit().putString(KEY_QUICK, quick.joinToString(QUICK_SEPARATOR)).apply()
+    }
+
+    /** Comma separated room name keywords that use the Aperture chat theme (observable). */
+    fun apertureRooms(context: Context): String {
+        ensureLoaded(context)
+        return apertureRooms.value
+    }
+
+    fun setApertureRooms(context: Context, text: String) {
+        ensureLoaded(context)
+        apertureRooms.value = text
+        prefs(context).edit().putString(KEY_APERTURE_ROOMS, text).apply()
+    }
+
+    /** True if [roomName] contains one of the Aperture keywords (case insensitive). */
+    fun isApertureRoom(context: Context, roomName: String?): Boolean {
+        if (roomName.isNullOrBlank()) return false
+        return apertureRooms(context).split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            .any { roomName.contains(it, ignoreCase = true) }
     }
 }

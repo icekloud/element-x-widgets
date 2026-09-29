@@ -52,6 +52,7 @@ import io.element.android.libraries.architecture.NodeInputs
 import io.element.android.libraries.architecture.callback
 import io.element.android.libraries.architecture.inputs
 import io.element.android.libraries.core.coroutine.CoroutineDispatchers
+import io.element.android.libraries.designsystem.june.JuneRoomTheme
 import io.element.android.libraries.designsystem.utils.OnLifecycleEvent
 import io.element.android.libraries.di.RoomScope
 import io.element.android.libraries.di.annotations.ApplicationContext
@@ -289,68 +290,71 @@ class MessagesNode(
                     else -> Unit
                 }
             }
-            MessagesView(
-                state = state,
-                onBackClick = { state.eventSink(MessagesEvent.MarkAsFullyReadAndExit) },
-                onRoomDetailsClick = callback::navigateToRoomDetails,
-                onEventContentClick = { isLive, event ->
-                    if (isLive) {
-                        callback.handleEventClick(timelineController.mainTimelineMode(), event, canUseOverlay)
-                    } else {
-                        val detachedTimelineMode = timelineController.detachedTimelineMode()
-                        if (detachedTimelineMode != null) {
-                            callback.handleEventClick(detachedTimelineMode, event, canUseOverlay)
+            // Element June: per-room theme (Aperture theme for the GLaDOS room)
+            JuneRoomTheme(roomName = state.roomName) {
+                MessagesView(
+                    state = state,
+                    onBackClick = { state.eventSink(MessagesEvent.MarkAsFullyReadAndExit) },
+                    onRoomDetailsClick = callback::navigateToRoomDetails,
+                    onEventContentClick = { isLive, event ->
+                        if (isLive) {
+                            callback.handleEventClick(timelineController.mainTimelineMode(), event, canUseOverlay)
                         } else {
-                            false
+                            val detachedTimelineMode = timelineController.detachedTimelineMode()
+                            if (detachedTimelineMode != null) {
+                                callback.handleEventClick(detachedTimelineMode, event, canUseOverlay)
+                            } else {
+                                false
+                            }
                         }
-                    }
-                },
-                onGalleryEventItemClick = { isLive, event, index ->
-                    if (isLive) {
-                        callback.handleGalleryItemClick(timelineController.mainTimelineMode(), event, index, canUseOverlay)
-                    } else {
-                        val detachedTimelineMode = timelineController.detachedTimelineMode()
-                        if (detachedTimelineMode != null) {
-                            callback.handleGalleryItemClick(detachedTimelineMode, event, index, canUseOverlay)
+                    },
+                    onGalleryEventItemClick = { isLive, event, index ->
+                        if (isLive) {
+                            callback.handleGalleryItemClick(timelineController.mainTimelineMode(), event, index, canUseOverlay)
                         } else {
-                            false
+                            val detachedTimelineMode = timelineController.detachedTimelineMode()
+                            if (detachedTimelineMode != null) {
+                                callback.handleGalleryItemClick(detachedTimelineMode, event, index, canUseOverlay)
+                            } else {
+                                false
+                            }
                         }
-                    }
-                },
-                onUserDataClick = callback::navigateToRoomMemberDetails,
-                onLinkClick = { url, customTab ->
-                    onLinkClick(
-                        activity = activity,
-                        darkTheme = isDark,
-                        url = url,
-                        eventSink = state.timelineState.eventSink,
-                        customTab = customTab,
-                    )
-                },
-                onSendLocationClick = callback::navigateToSendLocation,
-                onCreatePollClick = callback::navigateToCreatePoll,
-                onJoinCallClick = { isAudioCall ->
-                    callback.navigateToRoomCall(room.roomId, isAudioCall)
-                },
-                onViewAllPinnedMessagesClick = callback::navigateToPinnedMessagesList,
-                modifier = modifier,
-                knockRequestsBannerView = {
-                    knockRequestsBannerRenderer.View(
-                        modifier = Modifier,
-                        onViewRequestsClick = callback::navigateToKnockRequestsList,
-                    )
-                },
-                customReactionBottomSheet = {
-                    CustomReactionBottomSheet(
-                        state = state.customReactionState,
-                        onSelectEmoji = { uniqueId, emoji ->
-                            state.eventSink(MessagesEvent.ToggleReaction(emoji.unicode, uniqueId))
-                        },
-                        emojiPickerRenderer = emojiPickerRenderer,
-                    )
-                },
-                onThreadsListClick = callback::navigateToThreadsList,
-            )
+                    },
+                    onUserDataClick = callback::navigateToRoomMemberDetails,
+                    onLinkClick = { url, customTab ->
+                        onLinkClick(
+                            activity = activity,
+                            darkTheme = isDark,
+                            url = url,
+                            eventSink = state.timelineState.eventSink,
+                            customTab = customTab,
+                        )
+                    },
+                    onSendLocationClick = callback::navigateToSendLocation,
+                    onCreatePollClick = callback::navigateToCreatePoll,
+                    onJoinCallClick = { isAudioCall ->
+                        callback.navigateToRoomCall(room.roomId, isAudioCall)
+                    },
+                    onViewAllPinnedMessagesClick = callback::navigateToPinnedMessagesList,
+                    modifier = modifier,
+                    knockRequestsBannerView = {
+                        knockRequestsBannerRenderer.View(
+                            modifier = Modifier,
+                            onViewRequestsClick = callback::navigateToKnockRequestsList,
+                        )
+                    },
+                    customReactionBottomSheet = {
+                        CustomReactionBottomSheet(
+                            state = state.customReactionState,
+                            onSelectEmoji = { uniqueId, emoji ->
+                                state.eventSink(MessagesEvent.ToggleReaction(emoji.unicode, uniqueId))
+                            },
+                            emojiPickerRenderer = emojiPickerRenderer,
+                        )
+                    },
+                    onThreadsListClick = callback::navigateToThreadsList,
+                )
+            }
             roomMemberModerationRenderer.Render(
                 state = state.roomMemberModerationState,
                 onSelectAction = { action, target ->

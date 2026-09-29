@@ -149,6 +149,19 @@ private fun JuneSettingsScreen(onColorsChanged: () -> Unit, onClose: () -> Unit)
         TextButton(onClick = { JuneSettings.resetMenu(context) }) { Text("+ 메뉴 기본값으로") }
 
         HorizontalDivider()
+        SectionTitle("방별 테마 (Aperture · GLaDOS)")
+        Text("방 이름에 아래 단어가 들어가면 그 방은 어두운 Aperture 테마(검정 배경·주황 강조)로 보입니다. 쉼표로 구분합니다.", style = MaterialTheme.typography.bodySmall)
+        var apertureText by remember { mutableStateOf(JuneSettings.apertureRooms(context)) }
+        OutlinedTextField(value = apertureText, onValueChange = { apertureText = it }, label = { Text("방 이름 단어") }, modifier = Modifier.fillMaxWidth())
+        Row {
+            TextButton(onClick = { JuneSettings.setApertureRooms(context, apertureText) }) { Text("저장") }
+            TextButton(onClick = {
+                apertureText = JuneSettings.DEFAULT_APERTURE_ROOMS
+                JuneSettings.setApertureRooms(context, apertureText)
+            }) { Text("기본값으로") }
+        }
+
+        HorizontalDivider()
         SectionTitle("빠른 명령 (상단 바 목록 버튼)")
         Text("누르면 지금 대화방에 그 문구가 그대로 전송됩니다. 문구를 눌러 고칠 수 있습니다.", style = MaterialTheme.typography.bodySmall)
         val quick = JuneSettings.quickCommands(context)
