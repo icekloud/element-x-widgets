@@ -60,6 +60,7 @@ dependencies {
     implementation(projects.libraries.voicerecorder.api)
     implementation(projects.libraries.mediaplayer.api)
     implementation(projects.libraries.push.api)
+    implementation(projects.libraries.sessionStorage.api) // Element June: background panel
     implementation(projects.libraries.uiCommon)
     implementation(projects.libraries.uiUtils)
     implementation(projects.libraries.testtags)

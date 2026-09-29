@@ -68,6 +68,7 @@ import io.element.android.features.messages.impl.actionlist.ActionListEvent
 import io.element.android.features.messages.impl.actionlist.ActionListView
 import io.element.android.features.messages.impl.actionlist.model.TimelineItemAction
 import io.element.android.features.messages.impl.crypto.identity.IdentityChangeStateView
+import io.element.android.features.messages.impl.june.JuneBackgroundPanel
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
 import io.element.android.features.messages.impl.messagecomposer.AttachmentsBottomSheet
@@ -710,6 +711,8 @@ private fun MessagesViewComposerBottomSheetContents(
                 val verificationViolation = state.identityChangeState.roomMemberIdentityStateChanges.firstOrNull {
                     it.identityState == IdentityState.VerificationViolation
                 }
+                // Element June: running background processes of the bot (tap to open, X to force-stop)
+                JuneBackgroundPanel(roomId = state.roomId.value)
                 if (verificationViolation != null) {
                     DisabledComposerView(modifier = Modifier.fillMaxWidth())
                 } else {
