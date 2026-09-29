@@ -37,7 +37,7 @@ class DefaultForwardEntryPointTest {
             ForwardMessagesNode(
                 buildContext = buildContext,
                 plugins = plugins,
-                presenterFactory = { _, _ -> createForwardMessagesPresenter() },
+                presenterFactory = { _, _, _ -> createForwardMessagesPresenter() },
                 roomSelectEntryPoint = FakeRoomSelectEntryPoint(),
             )
         }

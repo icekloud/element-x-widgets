@@ -25,6 +25,8 @@ interface ForwardEntryPoint : FeatureEntryPoint {
     data class Params(
         val eventId: EventId,
         val timelineProvider: TimelineProvider,
+        // Element June: name of the room the message is forwarded from (shown in the forward header)
+        val sourceName: String? = null,
     ) : NodeInputs
 
     fun createNode(

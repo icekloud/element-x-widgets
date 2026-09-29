@@ -10,4 +10,7 @@ package io.element.android.features.forward.impl
 
 sealed interface ForwardMessagesEvent {
     data object ClearError : ForwardMessagesEvent
+    // Element June: forward header dialog
+    data class ConfirmForward(val comment: String) : ForwardMessagesEvent
+    data object CancelForward : ForwardMessagesEvent
 }

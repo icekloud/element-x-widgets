@@ -13,5 +13,8 @@ import io.element.android.libraries.matrix.api.core.RoomId
 
 data class ForwardMessagesState(
     val forwardAction: AsyncAction<List<RoomId>>,
+    // Element June: rooms picked, waiting for the optional context comment
+    val pendingRoomIds: List<RoomId>? = null,
+    val sourceName: String? = null,
     val eventSink: (ForwardMessagesEvent) -> Unit
 )

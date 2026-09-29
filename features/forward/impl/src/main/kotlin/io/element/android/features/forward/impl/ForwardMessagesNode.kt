@@ -54,11 +54,12 @@ class ForwardMessagesNode(
     data class Inputs(
         val eventId: EventId,
         val timelineProvider: TimelineProvider,
+        val sourceName: String? = null,
     ) : NodeInputs
 
     private val inputs = inputs<Inputs>()
     private val callback: ForwardEntryPoint.Callback = callback()
-    private val presenter = presenterFactory.create(inputs.eventId.value, inputs.timelineProvider)
+    private val presenter = presenterFactory.create(inputs.eventId.value, inputs.timelineProvider, inputs.sourceName)
 
     override fun resolve(navTarget: NavTarget, buildContext: BuildContext): Node {
         val callback = object : RoomSelectEntryPoint.Callback {

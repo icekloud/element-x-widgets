@@ -201,7 +201,7 @@ class JoinedRoomLoadedFlowNode(
                 } else {
                     (graph as TimelineBindings).timelineProvider
                 }
-                val params = ForwardEntryPoint.Params(navTarget.eventId, timelineProvider)
+                val params = ForwardEntryPoint.Params(navTarget.eventId, timelineProvider, sourceName = inputs.room.info().name) // Element June: forward header
                 val callback = object : ForwardEntryPoint.Callback {
                     override fun onDone(roomIds: List<RoomId>) {
                         backstack.pop()

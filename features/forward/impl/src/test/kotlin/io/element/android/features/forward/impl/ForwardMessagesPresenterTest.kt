@@ -16,6 +16,7 @@ import io.element.android.libraries.architecture.AsyncAction
 import io.element.android.libraries.matrix.api.core.EventId
 import io.element.android.libraries.matrix.api.core.RoomId
 import io.element.android.libraries.matrix.test.AN_EVENT_ID
+import io.element.android.libraries.matrix.test.FakeMatrixClient
 import io.element.android.libraries.matrix.test.room.FakeJoinedRoom
 import io.element.android.libraries.matrix.test.room.aRoomSummary
 import io.element.android.libraries.matrix.test.timeline.FakeTimeline
@@ -99,5 +100,7 @@ fun TestScope.createForwardMessagesPresenter(
 ) = ForwardMessagesPresenter(
     eventId = eventId.value,
     timelineProvider = LiveTimelineProvider(fakeRoom),
+    sourceName = null,
+    matrixClient = FakeMatrixClient(),
     sessionCoroutineScope = this,
 )
