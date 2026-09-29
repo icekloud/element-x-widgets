@@ -149,7 +149,14 @@ private fun JuneSettingsScreen(onColorsChanged: () -> Unit, onClose: () -> Unit)
         TextButton(onClick = { JuneSettings.resetMenu(context) }) { Text("+ 메뉴 기본값으로") }
 
         HorizontalDivider()
-        SectionTitle("방별 테마 (Aperture · GLaDOS)")
+        SectionTitle("봇 선택 아이콘")
+        Text("홈 화면 \"봇 선택\" 아이콘을 누르면 펼쳐질 대화방과 순서를 고릅니다.", style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = {
+            context.startActivity(android.content.Intent(context, io.element.android.features.widgets.impl.picker.BotPickerConfigActivity::class.java))
+        }) { Text("펼쳐질 봇 고르기") }
+
+        HorizontalDivider()
+                SectionTitle("방별 테마 (Aperture · GLaDOS)")
         Text("방 이름에 아래 단어가 들어가면 그 방은 어두운 Aperture 테마(검정 배경·주황 강조)로 보입니다. 쉼표로 구분합니다.", style = MaterialTheme.typography.bodySmall)
         var apertureText by remember { mutableStateOf(JuneSettings.apertureRooms(context)) }
         OutlinedTextField(value = apertureText, onValueChange = { apertureText = it }, label = { Text("방 이름 단어") }, modifier = Modifier.fillMaxWidth())

@@ -33,6 +33,7 @@ import io.noties.markwon.LinkResolver
 import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.MarkwonVisitor
+import io.noties.markwon.SoftBreakAddsNewLinePlugin
 import io.noties.markwon.core.spans.CodeBlockSpan
 import org.commonmark.node.Code
 import io.noties.markwon.core.MarkwonTheme
@@ -136,6 +137,8 @@ private object MarkwonCache {
         instance?.takeIf { key == newKey }?.let { return it }
         parsed.evictAll()
         val built = Markwon.builder(context)
+            // Element June: a single line break in a message stays a line break (not a space)
+            .usePlugin(SoftBreakAddsNewLinePlugin.create())
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(TablePlugin.create(context))
             // No phone numbers: digits inside messages must not become links

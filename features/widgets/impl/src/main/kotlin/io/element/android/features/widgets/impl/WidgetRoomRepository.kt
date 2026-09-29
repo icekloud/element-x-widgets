@@ -82,6 +82,23 @@ class WidgetRoomRepository(
         return runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
     }
 
+    /**
+     * Element June: rooms of the bot picker. [cacheOnly] reads the local cache only (fast, for the first frame).
+     */
+    suspend fun botPickerRooms(sessionId: String, cacheOnly: Boolean): List<WidgetRoom> {
+        val all = (if (cacheOnly) null else fetchRooms(sessionId)) ?: store.getCachedRooms(sessionId).values.toList()
+        val chosen = store.getBotPickerRoomIds(sessionId) ?: return defaultBotRooms(all)
+        val byId = all.associateBy { it.roomId }
+        return chosen.mapNotNull { byId[it] }
+    }
+
+    /** Default bot picker rooms: one-to-one rooms except home-ops, most recent first, at most 6. */
+    fun defaultBotRooms(all: Collection<WidgetRoom>): List<WidgetRoom> {
+        return all.filter { it.direct && !it.name.contains("home-ops", ignoreCase = true) }
+            .sortedByDescending { it.timestamp ?: 0L }
+            .take(6)
+    }
+
     private suspend fun fetchRooms(sessionId: String): List<WidgetRoom>? {
         val client = getClient(sessionId) ?: return null
         val summaries = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
@@ -132,6 +149,7 @@ class WidgetRoomRepository(
             unread = info.numUnreadNotifications,
             avatarUrl = info.avatarUrl,
             timestamp = latestEventTimestamp,
+            direct = info.isDm || info.joinedMembersCount == 2L,
         )
     }
 

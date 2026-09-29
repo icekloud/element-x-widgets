@@ -41,6 +41,29 @@
             android:exported="false"
             android:label="June 꾸미기"
             android:theme="@android:style/Theme.Material.NoActionBar" />
+
+        <!-- Element June: "봇 선택" launcher icon, bot rooms fan out from it -->
+        <activity
+            android:name=".picker.BotPickerActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:icon="@drawable/june_bot_picker_icon"
+            android:roundIcon="@drawable/june_bot_picker_icon"
+            android:label="@string/june_bot_picker_label"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".picker.BotPickerConfigActivity"
+            android:exported="false"
+            android:label="봇 선택 아이콘"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
     </application>
 
 </manifest>

@@ -22,6 +22,8 @@ data class WidgetRoom(
     val unread: Long,
     val avatarUrl: String?,
     val timestamp: Long?,
+    // Element June: one-to-one room (bot conversation), used by the bot picker
+    val direct: Boolean = false,
 )
 
 /**
@@ -74,6 +76,7 @@ class WidgetStore(context: Context) {
                     unread = o.optLong("unread"),
                     avatarUrl = o.optString("avatar").ifEmpty { null },
                     timestamp = if (o.has("ts")) o.getLong("ts") else null,
+                    direct = o.optBoolean("dm"),
                 )
             }.associateBy { it.roomId }
         }.getOrDefault(emptyMap())
@@ -88,12 +91,28 @@ class WidgetStore(context: Context) {
                 .put("preview", room.preview)
                 .put("unread", room.unread)
                 .put("avatar", room.avatarUrl.orEmpty())
+                .put("dm", room.direct)
             room.timestamp?.let { o.put("ts", it) }
             array.put(o)
         }
         prefs.edit().putString(cacheKey(sessionId), array.toString()).apply()
     }
 
+    /** Element June: rooms shown by the bot picker, in order; null means "not chosen yet" (use the default). */
+    fun getBotPickerRoomIds(sessionId: String): List<String>? {
+        val raw = prefs.getString(botPickerKey(sessionId), null) ?: return null
+        return runCatching { JSONArray(raw).let { array -> List(array.length()) { array.getString(it) } } }.getOrNull()
+    }
+
+    fun saveBotPickerRoomIds(sessionId: String, roomIds: List<String>?) {
+        if (roomIds == null) {
+            prefs.edit().remove(botPickerKey(sessionId)).apply()
+        } else {
+            prefs.edit().putString(botPickerKey(sessionId), JSONArray(roomIds).toString()).apply()
+        }
+    }
+
+    private fun botPickerKey(sessionId: String) = "botpicker_$sessionId"
     private fun configKey(appWidgetId: Int) = "config_$appWidgetId"
     private fun cacheKey(sessionId: String) = "cache_$sessionId"
 }
