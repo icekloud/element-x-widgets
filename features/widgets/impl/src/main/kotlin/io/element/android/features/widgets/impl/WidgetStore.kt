@@ -112,7 +112,31 @@ class WidgetStore(context: Context) {
         }
     }
 
+    /** Element June: bot picker ring radius in dp. */
+    fun getBotPickerRadius(): Float = prefs.getFloat("botpicker_radius", DEFAULT_BOT_PICKER_RADIUS)
+
+    fun saveBotPickerRadius(dp: Float) {
+        prefs.edit().putFloat("botpicker_radius", dp).apply()
+    }
+
+    /** Element June: bot picker centre as screen fractions, or null to use the touched icon. */
+    fun getBotPickerCenter(): Pair<Float, Float>? {
+        val raw = prefs.getString("botpicker_center", null) ?: return null
+        val parts = raw.split(",").mapNotNull { it.toFloatOrNull() }
+        return if (parts.size == 2) parts[0] to parts[1] else null
+    }
+
+    fun saveBotPickerCenter(center: Pair<Float, Float>?) {
+        if (center == null) {
+            prefs.edit().remove("botpicker_center").apply()
+        } else {
+            prefs.edit().putString("botpicker_center", "${center.first},${center.second}").apply()
+        }
+    }
+
     private fun botPickerKey(sessionId: String) = "botpicker_$sessionId"
     private fun configKey(appWidgetId: Int) = "config_$appWidgetId"
     private fun cacheKey(sessionId: String) = "cache_$sessionId"
 }
+
+const val DEFAULT_BOT_PICKER_RADIUS = 170f

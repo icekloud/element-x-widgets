@@ -92,6 +92,8 @@ class BotPickerActivity : ComponentActivity() {
         val repository = bindings<WidgetBindings>().widgetRoomRepository()
         val source = intent?.sourceBounds
         val anchorOnScreen = source?.let { Offset(it.exactCenterX(), it.exactCenterY()) }
+        val savedCenter = repository.store.getBotPickerCenter()
+        val radiusDp = repository.store.getBotPickerRadius()
         setContent {
             val accent = JuneSettings.color(JuneSettings.ColorSlot.Accent)
             var sessionId by remember { mutableStateOf<String?>(null) }
@@ -117,6 +119,9 @@ class BotPickerActivity : ComponentActivity() {
             }
             BotPickerScreen(
                 anchorOnScreen = anchorOnScreen,
+                savedCenter = savedCenter,
+                radiusDp = radiusDp,
+                onCenterMoved = { repository.store.saveBotPickerCenter(it) },
                 rooms = rooms,
                 loaded = loaded,
                 avatars = avatars,
@@ -146,7 +151,7 @@ private class PickerLayout(
  * Put [n] nodes on one arc around [anchor], only where the nodes fit on screen, so they never overlap
  * or get pushed against the screen edge.
  */
-private fun computeLayout(w: Float, h: Float, anchor: Offset, n: Int, px: (Float) -> Float): PickerLayout {
+private fun computeLayout(w: Float, h: Float, anchor: Offset, n: Int, radiusDp: Float, px: (Float) -> Float): PickerLayout {
     val margin = px(46f)
     val spacing = px(84f)
     val maxSweep = (150.0 * PI / 180.0).toFloat()
@@ -158,7 +163,7 @@ private fun computeLayout(w: Float, h: Float, anchor: Offset, n: Int, px: (Float
         return x in margin..(w - margin) && y in margin..(h - margin - px(14f))
     }
     val base = atan2(h / 2 - anchor.y, w / 2 - anchor.x)
-    var r = px(130f)
+    var r = px(radiusDp)
     var start = base
     var sweep = 0f
     var full = false
@@ -231,6 +236,9 @@ private fun nodeForDirection(layout: PickerLayout, angle: Float): Int? {
 @Composable
 private fun BotPickerScreen(
     anchorOnScreen: Offset?,
+    savedCenter: Pair<Float, Float>?,
+    radiusDp: Float,
+    onCenterMoved: (Pair<Float, Float>) -> Unit,
     rooms: List<WidgetRoom>,
     loaded: Boolean,
     avatars: Map<String, Bitmap>,
@@ -248,6 +256,8 @@ private fun BotPickerScreen(
     var highlighted by remember { mutableStateOf<Int?>(null) }
     var dragFrom by remember { mutableStateOf<Offset?>(null) }
     var dragTo by remember { mutableStateOf<Offset?>(null) }
+    var movedAnchor by remember { mutableStateOf<Offset?>(null) }
+    var moving by remember { mutableStateOf(false) }
     val pick by rememberUpdatedState(onPick)
     val dismiss by rememberUpdatedState(onDismiss)
     LaunchedEffect(highlighted) {
@@ -270,20 +280,63 @@ private fun BotPickerScreen(
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         fun px(v: Float) = with(density) { v.dp.toPx() }
-        val anchor = anchorOnScreen?.let { it - origin }?.let { Offset(it.x.coerceIn(0f, w), it.y.coerceIn(0f, h)) }
+        val iconAnchor = anchorOnScreen?.let { it - origin }?.let { Offset(it.x.coerceIn(0f, w), it.y.coerceIn(0f, h)) }
             ?: Offset(w - px(64f), h - px(96f))
-        val layout = remember(w, h, anchor, rooms.size) { computeLayout(w, h, anchor, rooms.size, ::px) }
+        val anchor = movedAnchor ?: savedCenter?.let { Offset(it.first * w, it.second * h) } ?: iconAnchor
+        val layout = remember(w, h, anchor, rooms.size, radiusDp) { computeLayout(w, h, anchor, rooms.size, radiusDp, ::px) }
+        val currentLayout = rememberUpdatedState(layout)
+        val currentRooms = rememberUpdatedState(rooms)
+        val moved by rememberUpdatedState(onCenterMoved)
         val dragThreshold = px(40f)
         val nodeRadius = px(28f)
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(layout, rooms) {
+                .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown()
+                        val startLayout = currentLayout.value
                         var dragging = false
                         dragFrom = down.position
+                        // Long press on the centre: move the centre instead of selecting
+                        if ((down.position - startLayout.anchor).getDistance() <= 32.dp.toPx()) {
+                            val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                var result = -1
+                                while (result < 0) {
+                                    val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                                    result = when {
+                                        c == null || !c.pressed -> 0
+                                        (c.position - down.position).getDistance() > dragThreshold -> 1
+                                        else -> -1
+                                    }
+                                }
+                                result
+                            }
+                            if (outcome == null) {
+                                moving = true
+                                dragFrom = null
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                var last = startLayout.anchor
+                                while (true) {
+                                    val e = awaitPointerEvent()
+                                    val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                                    last = Offset(c.position.x.coerceIn(0f, w), c.position.y.coerceIn(0f, h))
+                                    movedAnchor = last
+                                    c.consume()
+                                    if (!c.pressed) break
+                                }
+                                moving = false
+                                moved(last.x / w to last.y / h)
+                                return@awaitEachGesture
+                            }
+                            if (outcome == 0) {
+                                dragFrom = null
+                                dismiss()
+                                return@awaitEachGesture
+                            }
+                            dragging = true
+                        }
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -291,7 +344,7 @@ private fun BotPickerScreen(
                             if (!dragging && d.getDistance() > dragThreshold) dragging = true
                             if (dragging) {
                                 dragTo = change.position
-                                highlighted = nodeForDirection(layout, atan2(d.y, d.x))
+                                highlighted = nodeForDirection(currentLayout.value, atan2(d.y, d.x))
                             }
                             change.consume()
                             if (!change.pressed) break
@@ -300,13 +353,14 @@ private fun BotPickerScreen(
                         val up = dragTo
                         dragFrom = null
                         dragTo = null
+                        val list = currentRooms.value
                         if (dragging) {
                             highlighted = null
-                            if (chosen != null) pick(rooms[chosen])
+                            if (chosen != null && chosen in list.indices) pick(list[chosen])
                         } else {
                             val tap = up ?: down.position
-                            val hit = layout.centers.indexOfFirst { (it - tap).getDistance() <= nodeRadius + px(12f) }
-                            if (hit >= 0) pick(rooms[hit]) else dismiss()
+                            val hit = currentLayout.value.centers.indexOfFirst { (it - tap).getDistance() <= nodeRadius + 12.dp.toPx() }
+                            if (hit in list.indices) pick(list[hit]) else dismiss()
                         }
                     }
                 },
@@ -395,7 +449,7 @@ private fun BotPickerScreen(
                     .size(44.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF140E24).copy(alpha = 0.85f))
-                    .border(1.5.dp, hud, CircleShape),
+                    .border(if (moving) 3.dp else 1.5.dp, hud, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("✕", color = hud, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -465,14 +519,14 @@ private fun BotPickerScreen(
 
             // Hint under the rings
             Text(
-                "탭 또는 스와이프로 선택",
+                if (moving) "놓으면 이 위치가 중심이 됩니다" else "탭 또는 스와이프로 선택 · ✕ 길게 눌러 위치 이동",
                 color = hud.copy(alpha = 0.7f * pa),
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 1.sp,
                 modifier = Modifier.offset {
                     IntOffset(
-                        (anchor.x - px(70f)).coerceIn(px(8f), w - px(148f)).roundToInt(),
+                        (anchor.x - px(120f)).coerceIn(px(8f), (w - px(248f)).coerceAtLeast(px(8f))).roundToInt(),
                         (anchor.y + px(30f)).coerceAtMost(h - px(20f)).roundToInt(),
                     )
                 },

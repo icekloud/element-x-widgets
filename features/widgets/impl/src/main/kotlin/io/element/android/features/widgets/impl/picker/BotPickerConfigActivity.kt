@@ -25,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,12 +52,16 @@ class BotPickerConfigActivity : ComponentActivity() {
     private val allRooms = mutableStateListOf<WidgetRoom>()
     private val selected = mutableStateListOf<WidgetRoom>()
     private val loading = mutableStateOf(true)
+    private val radius = mutableStateOf(io.element.android.features.widgets.impl.DEFAULT_BOT_PICKER_RADIUS)
+    private val customCenter = mutableStateOf(false)
     private var sessionId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         JuneSettings.ensureLoaded(this)
         val repository = bindings<WidgetBindings>().widgetRoomRepository()
+        radius.value = repository.store.getBotPickerRadius()
+        customCenter.value = repository.store.getBotPickerCenter() != null
         lifecycleScope.launch {
             val sid = repository.defaultSessionId() ?: return@launch finish()
             sessionId = sid
@@ -106,11 +111,29 @@ class BotPickerConfigActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("펼쳐지는 거리: ${radius.value.toInt()}dp", fontWeight = FontWeight.Bold)
+                        Slider(
+                            value = radius.value,
+                            onValueChange = { radius.value = it },
+                            valueRange = 110f..300f,
+                        )
+                        Text("중심 위치", fontWeight = FontWeight.Bold)
+                        Text(
+                            if (customCenter.value) "직접 옮긴 위치를 씁니다. 봇 선택 화면에서 ✕를 길게 눌러 끌면 다시 옮길 수 있습니다."
+                            else "누른 아이콘 위치를 씁니다. 봇 선택 화면에서 ✕를 길게 눌러 끌면 옮길 수 있습니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        TextButton(enabled = customCenter.value, onClick = {
+                            repository.store.saveBotPickerCenter(null)
+                            customCenter.value = false
+                        }) { Text("아이콘 위치로 되돌리기") }
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
                             TextButton(onClick = { reset(repository.defaultBotRooms(allRooms)) }) { Text("기본값으로") }
                             Spacer(Modifier.weight(1f))
                             TextButton(onClick = { finish() }) { Text("취소") }
                             Button(onClick = {
+                                repository.store.saveBotPickerRadius(radius.value)
                                 sessionId?.let { repository.store.saveBotPickerRoomIds(it, selected.map { room -> room.roomId }) }
                                 finish()
                             }) { Text("저장") }
