@@ -333,6 +333,16 @@ private fun AppSettingsSection(
                 )
             },
         )
+        // Element June: logins for the bots' Hermes vaults
+        ListItem(
+            content = { Text("자격증명 관리 (봇 로그인)") },
+            leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Key())),
+            onClick = {
+                juneContext.startActivity(
+                    Intent().setClassName(juneContext, "io.element.android.features.credentials.impl.CredentialsActivity")
+                )
+            },
+        )
         ListItem(
             content = { Text(stringResource(id = CommonStrings.common_media_upload_quality)) },
             leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
