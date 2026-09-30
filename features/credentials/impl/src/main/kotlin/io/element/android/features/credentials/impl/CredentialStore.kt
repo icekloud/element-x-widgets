@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
- * Based on Element X Android, Copyright (c) 2025 Element Creations Ltd.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -10,6 +10,7 @@ package io.element.android.features.credentials.impl
 
 import android.content.Context
 import android.util.Base64
+import io.element.android.libraries.core.data.tryOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -20,15 +21,28 @@ import java.util.UUID
 internal enum class RemoteStatus { PENDING, SENDING, SAVED, FAILED, DELETE_PENDING, DELETING }
 
 internal data class RemoteState(
-    val status: RemoteStatus = RemoteStatus.PENDING,
+    val status: RemoteStatus,
     /** Hermes vault item id on that bot (``vault_…``), known after the first successful put. */
-    val itemId: String? = null,
-    val rid: String? = null,
-    val roomId: String? = null,
-    val eventId: String? = null,
-    val sentAt: Long = 0L,
-    val error: String? = null,
-)
+    val itemId: String?,
+    val rid: String?,
+    val roomId: String?,
+    val eventId: String?,
+    val sentAt: Long,
+    val error: String?,
+) {
+    companion object {
+        /** Nothing sent yet. */
+        val INITIAL = RemoteState(
+            status = RemoteStatus.PENDING,
+            itemId = null,
+            rid = null,
+            roomId = null,
+            eventId = null,
+            sentAt = 0L,
+            error = null,
+        )
+    }
+}
 
 /**
  * One credential. Plain metadata only, except [ciphertext]/[iv] (AES-GCM under the Keystore key, AAD = [id]).
@@ -76,10 +90,17 @@ internal object CredentialFormat {
             val host = uri.host?.lowercase() ?: return null
             if (scheme != "https" && scheme != "http") return null
             val port = uri.port
-            if (port == -1 || (scheme == "https" && port == 443) || (scheme == "http" && port == 80)) "$scheme://$host" else "$scheme://$host:$port"
+            if (isDefaultPort(scheme, port)) "$scheme://$host" else "$scheme://$host:$port"
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun isDefaultPort(scheme: String, port: Int): Boolean = when (port) {
+        -1 -> true
+        443 -> scheme == "https"
+        80 -> scheme == "http"
+        else -> false
     }
 
     fun identifierType(identifier: String): String = when {
@@ -142,24 +163,35 @@ internal class CredentialStore(context: Context) {
     private fun unb64(s: String) = Base64.decode(s, Base64.NO_WRAP)
 
     private fun writeEntry(e: CredentialEntry) = JSONObject()
-        .put("id", e.id).put("origin", e.origin).put("label", e.label)
-        .put("identifier", e.identifier).put("identifier_type", e.identifierType)
-        .put("first", e.firstChar).put("len", e.length)
-        .put("ct", b64(e.ciphertext)).put("iv", b64(e.iv))
-        .put("bots", JSONArray(e.bots)).put("deleted", e.deleted).put("updated", e.updatedAt)
-        .put("remote", JSONObject().apply {
-            e.remote.forEach { (bot, s) ->
-                put(bot, JSONObject().put("status", s.status.name).put("item", s.itemId).put("rid", s.rid).put("room", s.roomId)
-                    .put("event", s.eventId).put("sent", s.sentAt).put("err", s.error))
-            }
-        })
+        .put("id", e.id)
+        .put("origin", e.origin)
+        .put("label", e.label)
+        .put("identifier", e.identifier)
+        .put("identifier_type", e.identifierType)
+        .put("first", e.firstChar)
+        .put("len", e.length)
+        .put("ct", b64(e.ciphertext))
+        .put("iv", b64(e.iv))
+        .put("bots", JSONArray(e.bots))
+        .put("deleted", e.deleted)
+        .put("updated", e.updatedAt)
+        .put("remote", JSONObject().apply { e.remote.forEach { (bot, s) -> put(bot, writeRemote(s)) } })
+
+    private fun writeRemote(s: RemoteState) = JSONObject()
+        .put("status", s.status.name)
+        .put("item", s.itemId)
+        .put("rid", s.rid)
+        .put("room", s.roomId)
+        .put("event", s.eventId)
+        .put("sent", s.sentAt)
+        .put("err", s.error)
 
     private fun readEntry(o: JSONObject): CredentialEntry {
         val remoteJson = o.optJSONObject("remote") ?: JSONObject()
         val remote = remoteJson.keys().asSequence().associateWith { bot ->
             val r = remoteJson.getJSONObject(bot)
             RemoteState(
-                status = runCatching { RemoteStatus.valueOf(r.optString("status")) }.getOrDefault(RemoteStatus.PENDING),
+                status = tryOrNull { RemoteStatus.valueOf(r.optString("status")) } ?: RemoteStatus.PENDING,
                 itemId = r.optStringOrNull("item"),
                 rid = r.optStringOrNull("rid"),
                 roomId = r.optStringOrNull("room"),
@@ -170,11 +202,19 @@ internal class CredentialStore(context: Context) {
         }
         val bots = o.optJSONArray("bots")?.let { a -> List(a.length()) { a.getString(it) } }.orEmpty()
         return CredentialEntry(
-            id = o.getString("id"), origin = o.getString("origin"), label = o.optString("label"),
-            identifier = o.optString("identifier"), identifierType = o.optString("identifier_type", "username"),
-            firstChar = o.optString("first"), length = o.optInt("len"),
-            ciphertext = unb64(o.getString("ct")), iv = unb64(o.getString("iv")),
-            bots = bots, remote = remote, deleted = o.optBoolean("deleted"), updatedAt = o.optLong("updated"),
+            id = o.getString("id"),
+            origin = o.getString("origin"),
+            label = o.optString("label"),
+            identifier = o.optString("identifier"),
+            identifierType = o.optString("identifier_type", "username"),
+            firstChar = o.optString("first"),
+            length = o.optInt("len"),
+            ciphertext = unb64(o.getString("ct")),
+            iv = unb64(o.getString("iv")),
+            bots = bots,
+            remote = remote,
+            deleted = o.optBoolean("deleted"),
+            updatedAt = o.optLong("updated"),
         )
     }
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
- * Based on Element X Android, Copyright (c) 2025 Element Creations Ltd.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -13,6 +13,7 @@ import android.security.keystore.UserNotAuthenticatedException
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.element.android.libraries.core.data.tryOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -35,7 +36,6 @@ internal class CredentialsController(
     private val store: CredentialStore,
     private val client: VaultTransportClient,
 ) {
-
     var entries by mutableStateOf<List<CredentialEntry>>(emptyList())
         private set
     var keys by mutableStateOf<Map<String, KeyView>>(emptyMap())
@@ -63,7 +63,7 @@ internal class CredentialsController(
 
     private fun setRemote(id: String, bot: String, transform: (RemoteState) -> RemoteState?) {
         store.updateEntry(id) { cur ->
-            val next = transform(cur.remote[bot] ?: RemoteState())
+            val next = transform(cur.remote[bot] ?: RemoteState.INITIAL)
             val remote = if (next == null) cur.remote - bot else cur.remote + (bot to next)
             if (cur.deleted && remote.isEmpty()) null else cur.copy(remote = remote)
         }
@@ -126,6 +126,7 @@ internal class CredentialsController(
     }
 
     // ---- add / edit / delete --------------------------------------------------------------------
+
     /** Returns true when saved. [password] empty on edit = keep the stored one. */
     suspend fun save(
         existing: CredentialEntry?,
@@ -177,7 +178,7 @@ internal class CredentialsController(
             remote[bot] = if (!contentChanged && prev != null && prev.status != RemoteStatus.DELETE_PENDING) {
                 prev
             } else {
-                RemoteState(status = RemoteStatus.PENDING, itemId = prev?.itemId)
+                RemoteState.INITIAL.copy(itemId = prev?.itemId)
             }
         }
         for ((bot, state) in old) {
@@ -185,10 +186,17 @@ internal class CredentialsController(
             if (bot !in bots && state.itemId != null) remote[bot] = state.copy(status = RemoteStatus.DELETE_PENDING, rid = null, error = null)
         }
         val entry = CredentialEntry(
-            id = id, origin = origin, label = label, identifier = identifier,
+            id = id,
+            origin = origin,
+            label = label,
+            identifier = identifier,
             identifierType = CredentialFormat.identifierType(identifier),
-            firstChar = first, length = length, ciphertext = ciphertext, iv = iv,
-            bots = bots, remote = remote,
+            firstChar = first,
+            length = length,
+            ciphertext = ciphertext,
+            iv = iv,
+            bots = bots,
+            remote = remote,
         )
         store.update { list -> if (existing == null) list + entry else list.map { if (it.id == id) entry else it } }
         message = null
@@ -217,6 +225,7 @@ internal class CredentialsController(
     }
 
     // ---- send -------------------------------------------------------------------------------------
+
     /** Sends pending work (all entries, or one entry: then every target bot gets the current value again). */
     suspend fun send(onlyId: String? = null) {
         if (busy) return
@@ -268,8 +277,11 @@ internal class CredentialsController(
         val key = keyFor(id, bot) ?: return
         val rid = UUID.randomUUID().toString().replace("-", "")
         val payload = JSONObject()
-            .put("op", "put").put("origin", e.origin).put("label", e.label)
-            .put("identifier", e.identifier).put("identifier_type", e.identifierType)
+            .put("op", "put")
+            .put("origin", e.origin)
+            .put("label", e.label)
+            .put("identifier", e.identifier)
+            .put("identifier_type", e.identifierType)
             .put("password", password)
         e.remote[bot]?.itemId?.let { payload.put("replace_id", it) }
         val envelope = try {
@@ -299,7 +311,7 @@ internal class CredentialsController(
         }
         val key = keyFor(id, bot) ?: return
         val rid = UUID.randomUUID().toString().replace("-", "")
-        val envelope = runCatching { client.seal(key, rid, JSONObject().put("op", "delete").put("id", itemId)) }.getOrNull()
+        val envelope = tryOrNull { client.seal(key, rid, JSONObject().put("op", "delete").put("id", itemId)) }
         val eventId = envelope?.let { client.sendEnvelope(key.roomId, it) }
         setRemote(id, bot) {
             if (eventId == null) {
@@ -315,33 +327,43 @@ internal class CredentialsController(
         val watch = store.entries.flatMap { e ->
             e.remote.filter { (_, s) ->
                 s.rid != null && s.roomId != null &&
-                    (s.status == RemoteStatus.SENDING || s.status == RemoteStatus.DELETING || (s.status == RemoteStatus.FAILED && s.error == "timeout"))
+                    (s.status == RemoteStatus.SENDING || s.status == RemoteStatus.DELETING || s.status == RemoteStatus.FAILED && s.error == "timeout")
             }.map { Triple(e.id, it.key, it.value) }
         }
         if (watch.isEmpty()) return
         val cache = mutableMapOf<Pair<String, String>, List<OpResult>?>()
         for ((id, bot, s) in watch) {
             val roomId = s.roomId ?: continue
-            val results = cache.getOrPut(bot to roomId) { client.fetchResults(bot, roomId) } ?: continue
-            val r = results.firstOrNull { it.rid == s.rid }
-            if (r == null) {
-                if (s.status != RemoteStatus.FAILED && System.currentTimeMillis() - s.sentAt > PUT_TIMEOUT_MILLIS) {
-                    setRemote(id, bot) {
-                        if (it.status == RemoteStatus.DELETING) it.copy(status = RemoteStatus.DELETE_PENDING, rid = null, error = "timeout")
-                        else it.copy(status = RemoteStatus.FAILED, error = "timeout")
+            val results = cache.getOrPut(bot to roomId) { client.fetchResults(bot, roomId) }
+            if (results != null) applyResult(id, bot, s, roomId, results)
+        }
+    }
+
+    private suspend fun applyResult(id: String, bot: String, s: RemoteState, roomId: String, results: List<OpResult>) {
+        val r = results.firstOrNull { it.rid == s.rid }
+        if (r == null) {
+            if (s.status != RemoteStatus.FAILED && System.currentTimeMillis() - s.sentAt > PUT_TIMEOUT_MILLIS) {
+                setRemote(id, bot) {
+                    if (it.status == RemoteStatus.DELETING) {
+                        it.copy(status = RemoteStatus.DELETE_PENDING, rid = null, error = "timeout")
+                    } else {
+                        it.copy(status = RemoteStatus.FAILED, error = "timeout")
                     }
                 }
-                continue
             }
-            if (s.status == RemoteStatus.DELETING) {
-                setRemote(id, bot) { if (r.ok) null else it.copy(status = RemoteStatus.DELETE_PENDING, rid = null, error = r.error ?: "failed") }
-            } else {
-                setRemote(id, bot) {
-                    if (r.ok) it.copy(status = RemoteStatus.SAVED, itemId = r.itemId ?: it.itemId, error = null)
-                    else it.copy(status = RemoteStatus.FAILED, error = r.error ?: "failed")
+            return
+        }
+        if (s.status == RemoteStatus.DELETING) {
+            setRemote(id, bot) { if (r.ok) null else it.copy(status = RemoteStatus.DELETE_PENDING, rid = null, error = r.error ?: "failed") }
+        } else {
+            setRemote(id, bot) {
+                if (r.ok) {
+                    it.copy(status = RemoteStatus.SAVED, itemId = r.itemId ?: it.itemId, error = null)
+                } else {
+                    it.copy(status = RemoteStatus.FAILED, error = r.error ?: "failed")
                 }
             }
-            s.eventId?.let { client.redact(roomId, it) }
         }
+        s.eventId?.let { client.redact(roomId, it) }
     }
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
- * Based on Element X Android, Copyright (c) 2025 Element Creations Ltd.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -9,6 +9,7 @@
 package io.element.android.features.credentials.impl
 
 import android.util.Base64
+import io.element.android.libraries.core.data.tryOrNull
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -91,14 +92,7 @@ internal class VaultTransportClient(private val sessionStore: SessionStore) {
                     if (c.responseCode != 200) continue
                     val events = JSONArray(c.body())
                     for (i in 0 until events.length()) {
-                        val e = events.getJSONObject(i)
-                        if (e.optString("type") != KEY_STATE_TYPE) continue
-                        val content = e.optJSONObject("content") ?: continue
-                        val bot = e.optString("state_key")
-                        val spki = runCatching { Base64.decode(content.optString("spki"), Base64.DEFAULT) }.getOrNull() ?: continue
-                        if (bot.isEmpty() || content.optString("alg") != ENVELOPE_ALG || content.optString("profile") != bot) continue
-                        if (kidOf(spki) != content.optString("kid")) continue
-                        out += BotKey(bot = bot, roomId = room, sender = e.optString("sender"), kid = content.optString("kid"), spki = spki)
+                        parseKey(room, events.getJSONObject(i))?.let { out += it }
                     }
                 } finally {
                     c.disconnect()
@@ -110,6 +104,17 @@ internal class VaultTransportClient(private val sessionStore: SessionStore) {
             Timber.d("June credentials: key discovery failed (%s)", e.javaClass.simpleName)
             null
         }
+    }
+
+    /** A bot key from one state event, or null when the event is not a valid key (the kid must match the key bytes). */
+    private fun parseKey(room: String, e: JSONObject): BotKey? {
+        if (e.optString("type") != KEY_STATE_TYPE) return null
+        val content = e.optJSONObject("content") ?: return null
+        val bot = e.optString("state_key")
+        val spki = tryOrNull { Base64.decode(content.optString("spki"), Base64.DEFAULT) } ?: return null
+        if (bot.isEmpty() || content.optString("alg") != ENVELOPE_ALG || content.optString("profile") != bot) return null
+        if (kidOf(spki) != content.optString("kid")) return null
+        return BotKey(bot = bot, roomId = room, sender = e.optString("sender"), kid = content.optString("kid"), spki = spki)
     }
 
     /** Seals [payload] for [key]. [payload] must already contain `op`; `rid` and `ts` are added here. */
@@ -129,8 +134,14 @@ internal class VaultTransportClient(private val sessionStore: SessionStore) {
             val ek = oaep.doFinal(aesKey)
             fun b64(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)
             return JSONObject()
-                .put("v", 1).put("alg", ENVELOPE_ALG).put("to", key.bot).put("kid", key.kid).put("rid", rid)
-                .put("ek", b64(ek)).put("iv", b64(iv)).put("ct", b64(ct))
+                .put("v", 1)
+                .put("alg", ENVELOPE_ALG)
+                .put("to", key.bot)
+                .put("kid", key.kid)
+                .put("rid", rid)
+                .put("ek", b64(ek))
+                .put("iv", b64(iv))
+                .put("ct", b64(ct))
         } finally {
             plain.fill(0)
             aesKey.fill(0)

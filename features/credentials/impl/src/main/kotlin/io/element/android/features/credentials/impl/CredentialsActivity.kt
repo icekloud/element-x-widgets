@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
- * Based on Element X Android, Copyright (c) 2025 Element Creations Ltd.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -16,17 +16,14 @@ import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager.Authenticators
 import androidx.biometric.BiometricPrompt
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesTo
+import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.coroutines.CompletableDeferred
@@ -58,8 +55,8 @@ class CredentialsActivity : FragmentActivity() {
             client = VaultTransportClient(bindings<CredentialsBindings>().credentialsSessionStore()),
         )
         setContent {
-            val scheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-            MaterialTheme(colorScheme = scheme) {
+            // ElementTheme so the designsystem text fields get their Compound colours (light and dark).
+            ElementTheme(applySystemBarsUpdate = false) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     CredentialsScreen(
                         controller = controller,

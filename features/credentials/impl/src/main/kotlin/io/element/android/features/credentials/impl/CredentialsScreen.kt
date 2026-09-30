@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
- * Based on Element X Android, Copyright (c) 2025 Element Creations Ltd.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -27,7 +27,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import io.element.android.libraries.designsystem.theme.components.TextField
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -119,7 +119,7 @@ internal fun CredentialsScreen(controller: CredentialsController, isDeviceSecure
                     Text("ID: ${e.identifier}", style = MaterialTheme.typography.bodyMedium)
                     Text("비밀번호: ${e.masked}", style = MaterialTheme.typography.bodyMedium)
                     e.bots.forEach { bot ->
-                        Text("· $bot — ${statusText(e.remote[bot] ?: RemoteState())}", style = MaterialTheme.typography.bodySmall)
+                        Text("· $bot — ${statusText(e.remote[bot] ?: RemoteState.INITIAL)}", style = MaterialTheme.typography.bodySmall)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { editing = e }) { Text("수정") }
@@ -179,20 +179,22 @@ internal fun CredentialsScreen(controller: CredentialsController, isDeviceSecure
 @Composable
 private fun KeySection(controller: CredentialsController) {
     val keys = controller.keys
-    Text("봇 키", style = MaterialTheme.typography.titleSmall)
-    if (keys.isEmpty()) {
-        Text("아직 키를 게시한 봇이 없습니다. 봇 게이트웨이에 금고 전송 기능이 켜져 있어야 합니다.", style = MaterialTheme.typography.bodySmall)
-    }
-    keys.values.sortedBy { it.bot }.forEach { k ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "${k.bot} · 키 ${k.key.kid.take(8)} · ${k.key.sender}" + if (k.state == KeyState.CHANGED) " · 키가 바뀌었습니다" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (k.state == KeyState.CHANGED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            if (k.state == KeyState.CHANGED) {
-                TextButton(onClick = { controller.trustNewKey(k.bot) }) { Text("새 키 신뢰") }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("봇 키", style = MaterialTheme.typography.titleSmall)
+        if (keys.isEmpty()) {
+            Text("아직 키를 게시한 봇이 없습니다. 봇 게이트웨이에 금고 전송 기능이 켜져 있어야 합니다.", style = MaterialTheme.typography.bodySmall)
+        }
+        keys.values.sortedBy { it.bot }.forEach { k ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${k.bot} · 키 ${k.key.kid.take(8)} · ${k.key.sender}" + if (k.state == KeyState.CHANGED) " · 키가 바뀌었습니다" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (k.state == KeyState.CHANGED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                if (k.state == KeyState.CHANGED) {
+                    TextButton(onClick = { controller.trustNewKey(k.bot) }) { Text("새 키 신뢰") }
+                }
             }
         }
     }
@@ -220,19 +222,27 @@ private fun EditDialog(
         title = { Text(if (existing == null) "자격증명 추가" else "자격증명 수정") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(
-                    value = origin, onValueChange = { origin = it }, singleLine = true,
-                    label = { Text("사이트 주소") }, placeholder = { Text("https://example.com") },
+                TextField(
+                    value = origin,
+                    onValueChange = { origin = it },
+                    singleLine = true,
+                    label = "사이트 주소",
+                    placeholder = "https://example.com",
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
                 )
-                OutlinedTextField(value = label, onValueChange = { label = it }, singleLine = true, label = { Text("표시 이름(선택)") })
-                OutlinedTextField(
-                    value = identifier, onValueChange = { identifier = it }, singleLine = true, label = { Text("ID(이메일·아이디)") },
+                TextField(value = label, onValueChange = { label = it }, singleLine = true, label = "표시 이름(선택)")
+                TextField(
+                    value = identifier,
+                    onValueChange = { identifier = it },
+                    singleLine = true,
+                    label = "ID(이메일·아이디)",
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, autoCorrectEnabled = false),
                 )
-                OutlinedTextField(
-                    value = password, onValueChange = { password = it }, singleLine = true,
-                    label = { Text(if (existing == null) "비밀번호" else "새 비밀번호(비우면 유지: ${existing.masked})") },
+                TextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    singleLine = true,
+                    label = if (existing == null) "비밀번호" else "새 비밀번호(비우면 유지: ${existing.masked})",
                     // PasswordVisualTransformation also disables copy and cut in Compose text fields.
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
@@ -248,9 +258,12 @@ private fun EditDialog(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = extraBot, onValueChange = { extraBot = it.trim() }, singleLine = true,
-                        label = { Text("다른 봇 이름") }, modifier = Modifier.weight(1f),
+                    TextField(
+                        value = extraBot,
+                        onValueChange = { extraBot = it.trim() },
+                        singleLine = true,
+                        label = "다른 봇 이름",
+                        modifier = Modifier.weight(1f),
                     )
                     TextButton(enabled = extraBot.matches(Regex("[a-z0-9_-]{1,32}")), onClick = {
                         bots = bots + extraBot
