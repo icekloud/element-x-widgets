@@ -83,7 +83,8 @@ internal object CredentialCrypto {
                 }
             } else {
                 @Suppress("DEPRECATION")
-                if (info.isInsideSecureHardware) "보안 하드웨어" else "소프트웨어"
+                val hardware = info.isInsideSecureHardware
+                if (hardware) "보안 하드웨어" else "소프트웨어"
             }
         }
     } catch (e: Exception) {

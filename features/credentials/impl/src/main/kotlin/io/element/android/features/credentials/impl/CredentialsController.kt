@@ -83,6 +83,8 @@ internal class CredentialsController(
             val match = candidates.firstOrNull { it.kid == pin }
             out[bot] = when {
                 match != null -> KeyView(bot, match, KeyState.TRUSTED)
+                // two different keys claim the same bot on first sight: do not guess, let the user check the sender
+                pin == null && candidates.map { it.kid }.distinct().size > 1 -> KeyView(bot, candidates.first(), KeyState.CHANGED)
                 pin == null -> {
                     // trust on first use
                     store.pin(bot, candidates.first().kid)
