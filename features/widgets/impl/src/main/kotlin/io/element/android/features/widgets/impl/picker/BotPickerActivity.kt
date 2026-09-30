@@ -96,6 +96,7 @@ class BotPickerActivity : ComponentActivity() {
         val radiusDp = repository.store.getBotPickerRadius()
         setContent {
             val accent = JuneSettings.color(JuneSettings.ColorSlot.Accent)
+            val badgeColor = JuneSettings.color(JuneSettings.ColorSlot.WidgetBadge)
             var sessionId by remember { mutableStateOf<String?>(null) }
             var rooms by remember { mutableStateOf<List<WidgetRoom>>(emptyList()) }
             var loaded by remember { mutableStateOf(false) }
@@ -126,6 +127,7 @@ class BotPickerActivity : ComponentActivity() {
                 loaded = loaded,
                 avatars = avatars,
                 accent = accent,
+                badgeColor = badgeColor,
                 onPick = { room ->
                     sessionId?.let { startActivity(WidgetIntents.openRoom(this, it, room.roomId)) }
                     finish()
@@ -243,6 +245,7 @@ private fun BotPickerScreen(
     loaded: Boolean,
     avatars: Map<String, Bitmap>,
     accent: Color,
+    badgeColor: Color,
     onPick: (WidgetRoom) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -497,6 +500,22 @@ private fun BotPickerScreen(
                         ) {
                             Text(room.name.trim().take(1), color = hud, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                         }
+                    }
+                    // Element June: notification count of the room, same count as the widget badges
+                    if (room.unread > 0) {
+                        Text(
+                            if (room.unread > 99) "99+" else room.unread.toString(),
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 6.dp, y = (-4).dp)
+                                .background(badgeColor, RoundedCornerShape(10.dp))
+                                .border(1.5.dp, Color(0xFF0B0716), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                        )
                     }
                 }
                 Text(
