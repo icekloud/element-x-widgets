@@ -24,10 +24,12 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -58,8 +60,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -502,20 +507,34 @@ private fun BotPickerScreen(
                         }
                     }
                     // Element June: notification count of the room, same count as the widget badges
+                    // Fixed height and at least as wide as high: a circle for one digit, a pill for more
                     if (room.unread > 0) {
-                        Text(
-                            if (room.unread > 99) "99+" else room.unread.toString(),
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
+                        Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .offset(x = 6.dp, y = (-4).dp)
-                                .background(badgeColor, RoundedCornerShape(10.dp))
-                                .border(1.5.dp, Color(0xFF0B0716), RoundedCornerShape(10.dp))
-                                .padding(horizontal = 6.dp, vertical = 1.dp),
-                        )
+                                .height(20.dp)
+                                .widthIn(min = 20.dp)
+                                .background(badgeColor, CircleShape)
+                                .border(1.5.dp, Color(0xFF0B0716), CircleShape)
+                                .padding(horizontal = 5.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                if (room.unread > 99) "99+" else room.unread.toString(),
+                                maxLines = 1,
+                                style = TextStyle(
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    lineHeight = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    // Drop the font padding so the digits sit in the middle of the badge
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both),
+                                ),
+                            )
+                        }
                     }
                 }
                 Text(
