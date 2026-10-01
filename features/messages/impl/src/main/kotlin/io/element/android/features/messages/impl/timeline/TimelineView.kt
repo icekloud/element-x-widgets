@@ -57,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.TransformOrigin
@@ -480,6 +481,10 @@ private fun BoxScope.TimelineScrollHelper(
         modifier = Modifier
             .align(Alignment.BottomEnd)
             .padding(end = 24.dp, bottom = 16.dp)
+            // Element June: the jump buttons are 70% opaque, so the messages under them stay readable.
+            // alpha() draws the column in one offscreen layer: fill, border, icon and dot fade together
+            // (the icon does not show the fill through it). The mark-as-read menu is a Popup, so it stays opaque.
+            .alpha(0.7f)
     ) {
         // Element June: the unread button keeps its dot but uses an arrow, so it differs from the ▲ below it
         JumpToPositionButton(
