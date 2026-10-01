@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * The server is the only source of truth. The app reads the state when the timeline changes
  * (a message sent, a 👀/✅ reaction, a bot reply) and every 20 s as a safety net, and controls
- * the queue with the room event `app.june.queue_op` ({"rid","op":"steer"|"cancel","id"}).
+ * the queue with the room event `app.june.queue_op` ({"rid","op":"steer"|"cancel"|"detach_photo","id"[,"photo"]}).
  * Nothing here uses /sync, so the device's encryption keys are never touched.
  */
 internal const val JUNE_QUEUE_STATE_TYPE = "app.june.queue"
@@ -45,12 +45,16 @@ private const val STALE_SECONDS = 180L
 /** Placements remembered per room while the app runs. */
 private const val MAX_PLACEMENTS = 500
 
+/** A picture of a queued item: the Matrix event it came from and the gateway's cached file name (for detach_photo). */
+internal data class JuneQueuePhoto(val id: String, val name: String)
+
 internal data class JuneQueueItem(
     val id: String,
     val ids: List<String>,
     val kind: String,
     val editable: Boolean,
     val edited: Boolean,
+    val photos: List<JuneQueuePhoto> = emptyList(),
 )
 
 internal data class JuneQueueResult(val rid: String, val op: String, val id: String, val ok: Boolean, val err: String?)
@@ -113,7 +117,7 @@ internal class JuneQueueClient(private val sessionStore: SessionStore) {
     }
 
     /** Sends a control; returns its request id, or null when it could not be sent. */
-    suspend fun sendOp(roomId: String, op: String, itemId: String): String? = withContext(Dispatchers.IO) {
+    suspend fun sendOp(roomId: String, op: String, itemId: String, photo: String? = null): String? = withContext(Dispatchers.IO) {
         try {
             val s = sessionStore.getLatestSession() ?: return@withContext null
             val room = URLEncoder.encode(roomId, "UTF-8")
@@ -124,6 +128,7 @@ internal class JuneQueueClient(private val sessionStore: SessionStore) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
                 val body = JSONObject().put("v", 1).put("rid", rid).put("op", op).put("id", itemId)
+                if (photo != null) body.put("photo", photo)
                 conn.outputStream.use { it.write(body.toString().toByteArray()) }
                 if (conn.responseCode in 200..299) rid else null
             } finally {
@@ -144,6 +149,15 @@ internal class JuneQueueClient(private val sessionStore: SessionStore) {
         val arr = json.optJSONArray(name) ?: return emptyList()
         return List(arr.length()) { i -> arr.optJSONObject(i) }
             .mapNotNull { o -> o?.optString("id")?.takeIf { it.isNotEmpty() }?.let { JuneHeldItem(it, ids(o)) } }
+    }
+
+    private fun photos(o: JSONObject): List<JuneQueuePhoto> {
+        val arr = o.optJSONArray("photos") ?: return emptyList()
+        return List(arr.length()) { i -> arr.optJSONObject(i) }.mapNotNull { p ->
+            val id = p?.optString("id").orEmpty()
+            val name = p?.optString("name").orEmpty()
+            if (id.isEmpty() || name.isEmpty()) null else JuneQueuePhoto(id, name)
+        }
     }
 
     private fun placed(json: JSONObject): List<JunePlacement> {
@@ -173,6 +187,7 @@ internal class JuneQueueClient(private val sessionStore: SessionStore) {
                     kind = o.optString("kind", "text"),
                     editable = o.optBoolean("editable", false),
                     edited = o.optBoolean("edited", false),
+                    photos = photos(o),
                 )
             }.filter { it.id.isNotEmpty() },
             results = List(results?.length() ?: 0) { i ->
@@ -283,6 +298,9 @@ internal object JuneQueueStore {
         if (queued) editTargets.remove(key)
         return queued
     }
+
+    /** True while [eventId] is being edited from the queue panel: pictures picked then are added to that queued message. */
+    fun isPanelEdit(roomId: String, eventId: String): Boolean = "$roomId|$eventId" in editTargets
 
     fun forgetEdit(roomId: String, eventId: String) {
         editTargets.remove("$roomId|$eventId")
