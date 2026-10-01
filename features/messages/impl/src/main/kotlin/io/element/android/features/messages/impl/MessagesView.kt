@@ -68,7 +68,7 @@ import io.element.android.features.messages.impl.actionlist.ActionListEvent
 import io.element.android.features.messages.impl.actionlist.ActionListView
 import io.element.android.features.messages.impl.actionlist.model.TimelineItemAction
 import io.element.android.features.messages.impl.crypto.identity.IdentityChangeStateView
-import io.element.android.features.messages.impl.june.JuneBackgroundPanel
+import io.element.android.features.messages.impl.june.JuneComposerPanels
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
 import io.element.android.features.messages.impl.messagecomposer.AttachmentsBottomSheet
@@ -137,6 +137,7 @@ import io.element.android.libraries.matrix.api.timeline.item.event.LocalEventSen
 import io.element.android.libraries.matrix.api.user.MatrixUser
 import io.element.android.libraries.matrix.ui.media.contentvalidation.ContentValidationValue
 import io.element.android.libraries.matrix.ui.media.contentvalidation.LocalEventContentValidationState
+import io.element.android.libraries.textcomposer.model.MessageComposerMode
 import io.element.android.libraries.textcomposer.model.TextEditorState
 import io.element.android.libraries.ui.strings.CommonStrings
 import io.element.android.wysiwyg.link.Link
@@ -711,8 +712,12 @@ private fun MessagesViewComposerBottomSheetContents(
                 val verificationViolation = state.identityChangeState.roomMemberIdentityStateChanges.firstOrNull {
                     it.identityState == IdentityState.VerificationViolation
                 }
-                // Element June: running background processes of the bot (tap to open, X to force-stop)
-                JuneBackgroundPanel(roomId = state.roomId.value)
+                // Element June: background processes of the bot, then its busy queue (edit / steer / cancel)
+                JuneComposerPanels(
+                    roomId = state.roomId.value,
+                    editingEventId = (state.composerState.mode as? MessageComposerMode.Edit)?.eventOrTransactionId?.eventId?.value,
+                    onEdit = { event -> state.eventSink(MessagesEvent.HandleAction(TimelineItemAction.Edit, event)) },
+                )
                 if (verificationViolation != null) {
                     DisabledComposerView(modifier = Modifier.fillMaxWidth())
                 } else {

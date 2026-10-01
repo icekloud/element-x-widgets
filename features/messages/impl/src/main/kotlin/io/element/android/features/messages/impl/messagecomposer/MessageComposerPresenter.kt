@@ -56,6 +56,8 @@ import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.core.mimetype.MimeTypes
 import io.element.android.libraries.designsystem.utils.snackbar.SnackbarDispatcher
 import io.element.android.libraries.designsystem.utils.snackbar.SnackbarMessage
+import io.element.android.features.messages.impl.R
+import io.element.android.features.messages.impl.june.JuneQueueStore
 import io.element.android.libraries.di.annotations.SessionCoroutineScope
 import io.element.android.libraries.featureflag.api.FeatureFlagService
 import io.element.android.libraries.featureflag.api.FeatureFlags
@@ -618,6 +620,14 @@ class MessageComposerPresenter(
             }
         }
 
+        // Element June: an edit started from the queue panel is only sent while the message still waits
+        // in the bot's queue (checked with the server right now); otherwise the bot already ran the original.
+        val juneEditTarget = (capturedMode as? MessageComposerMode.Edit)?.eventOrTransactionId?.eventId?.value
+        if (juneEditTarget != null && !JuneQueueStore.allowEdit(room.roomId.value, juneEditTarget)) {
+            JuneQueueStore.forgetEdit(room.roomId.value, juneEditTarget)
+            snackbarDispatcher.post(SnackbarMessage(R.string.june_queue_edit_too_late))
+            return@launch
+        }
         // Reset composer right away
         resetComposer(markdownTextEditorState, richTextEditorState, fromEdit = capturedMode is MessageComposerMode.Edit)
         when (capturedMode) {

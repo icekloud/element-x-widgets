@@ -30,5 +30,8 @@ object TimelineConfig {
         StateEventType.PolicyRuleRoom,
         StateEventType.PolicyRuleServer,
         StateEventType.PolicyRuleUser,
+        // Element June: panel state published by the bot gateway (never a chat line)
+        StateEventType.Custom("app.june.background"),
+        StateEventType.Custom("app.june.queue"),
     )
 }

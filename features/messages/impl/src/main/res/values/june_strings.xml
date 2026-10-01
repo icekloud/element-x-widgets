@@ -2,4 +2,5 @@
 <!-- Element June -->
 <resources>
     <string name="june_action_select_text">텍스트 선택</string>
+    <string name="june_queue_edit_too_late">이미 실행되어 편집하지 않았습니다</string>
 </resources>
