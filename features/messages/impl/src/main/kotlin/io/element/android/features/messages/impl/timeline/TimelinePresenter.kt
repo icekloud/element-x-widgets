@@ -74,11 +74,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import io.element.android.features.messages.impl.june.JuneQueueStore
+import io.element.android.features.messages.impl.june.juneHoldQueued
+import io.element.android.features.messages.impl.june.juneQueueTicker
 
 const val FOCUS_ON_PINNED_EVENT_DEBOUNCE_DURATION_IN_MILLIS = 200L
 
@@ -319,7 +323,11 @@ class TimelinePresenter(
         }
 
         LaunchedEffect(Unit) {
-            timelineItemsFactory.timelineItems
+            // Element June: my messages still waiting in the bot's queue are shown in the queue panel instead
+            combine(timelineItemsFactory.timelineItems, JuneQueueStore.all, juneQueueTicker()) { items, queues, _ ->
+                juneHoldQueued(room.roomId.value, items, queues)
+            }
+                .distinctUntilChanged()
                 .onEach { newTimelineItems ->
                     timelineItemIndexer.process(newTimelineItems)
                     timelineItems = newTimelineItems.toImmutableList()

@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -164,6 +165,7 @@ private fun elapsedText(startedAtSeconds: Long, nowMillis: Long): String {
 internal fun JuneBackgroundPanel(
     roomId: String,
     modifier: Modifier = Modifier,
+    maxListHeight: Dp = 240.dp,
 ) {
     val context: Context = LocalContext.current
     val client = remember(context) { JuneBackgroundClient(context.bindings<JuneBackgroundBindings>().juneSessionStore()) }
@@ -234,7 +236,7 @@ internal fun JuneBackgroundPanel(
         if (expanded) {
             Column(
                 modifier = Modifier
-                    .heightIn(max = 240.dp)
+                    .heightIn(max = maxListHeight)
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
