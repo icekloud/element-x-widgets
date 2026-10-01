@@ -13,10 +13,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -161,6 +164,7 @@ private fun elapsedText(startedAtSeconds: Long, nowMillis: Long): String {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun JuneBackgroundPanel(
     roomId: String,
@@ -170,7 +174,12 @@ internal fun JuneBackgroundPanel(
     val context: Context = LocalContext.current
     val client = remember(context) { JuneBackgroundClient(context.bindings<JuneBackgroundBindings>().juneSessionStore()) }
     var items by remember(roomId) { mutableStateOf<List<JuneBackgroundItem>>(emptyList()) }
-    var expanded by remember(roomId) { mutableStateOf(false) }
+    // The list folds into its header line while the keyboard is up, so the composer keeps its room; a tap on the header
+    // still opens it then. When the keyboard goes away the list is shown again as the user left it.
+    val imeVisible = WindowInsets.isImeVisible
+    var expandedByUser by remember(roomId) { mutableStateOf(false) }
+    var expandedWithIme by remember(roomId, imeVisible) { mutableStateOf(false) }
+    val expanded = if (imeVisible) expandedWithIme else expandedByUser
     var openId by remember(roomId) { mutableStateOf<String?>(null) }
     var confirm by remember(roomId) { mutableStateOf<JuneBackgroundItem?>(null) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -216,7 +225,9 @@ internal fun JuneBackgroundPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickable {
+                    if (imeVisible) expandedWithIme = !expandedWithIme else expandedByUser = !expandedByUser
+                }
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

@@ -12,6 +12,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,10 +41,14 @@ import kotlinx.collections.immutable.ImmutableList
 
 private val THUMBNAIL_SIZE = 88.dp
 
+// Element June: smaller pictures while the keyboard is up, so the text input keeps its room above the keyboard.
+private val THUMBNAIL_SIZE_WITH_KEYBOARD = 64.dp
+
 /**
  * Element June: pictures waiting in the composer (Telegram-like). Tap a picture to crop it, tap the x to remove it.
  * Several pictures scroll horizontally.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun PendingAttachmentsRow(
     attachments: ImmutableList<LocalMedia>,
@@ -50,6 +57,7 @@ internal fun PendingAttachmentsRow(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(12.dp)
+    val thumbnailSize = if (WindowInsets.isImeVisible) THUMBNAIL_SIZE_WITH_KEYBOARD else THUMBNAIL_SIZE
     // A plain scrollable Row (no LazyRow): the composer is measured with intrinsic sizes,
     // which lazy layouts do not support (crash once pictures are shown).
     Row(
@@ -60,13 +68,13 @@ internal fun PendingAttachmentsRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         attachments.forEachIndexed { index, media ->
-            Box(modifier = Modifier.size(THUMBNAIL_SIZE)) {
+            Box(modifier = Modifier.size(thumbnailSize)) {
                 AsyncImage(
                     model = media.uri,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(THUMBNAIL_SIZE)
+                        .size(thumbnailSize)
                         .clip(shape)
                         .border(1.dp, ElementTheme.colors.borderDisabled, shape)
                         .clickable { onAttachmentClick(index) },
