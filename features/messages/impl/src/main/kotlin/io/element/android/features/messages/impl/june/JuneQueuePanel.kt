@@ -81,7 +81,8 @@ internal fun JuneComposerPanels(
 
 private fun errorText(op: String, err: String?): String = when (err) {
     "not_queued" -> "이미 실행되어 처리하지 않았습니다"
-    "not_text" -> "사진·파일 메시지는 스티어링할 수 없습니다"
+    "not_text" -> "사진 외 파일·영상 메시지는 스티어링할 수 없습니다"
+    "media_missing" -> "사진 파일을 찾지 못해 대기열에 그대로 둡니다"
     "starting" -> "봇이 막 시작하는 중이라 대기열에 그대로 둡니다"
     "idle" -> "지금 실행 중인 작업이 없어 대기열에 그대로 둡니다"
     "steer_failed" -> "스티어링하지 못해 대기열에 그대로 둡니다"
@@ -254,7 +255,7 @@ private fun JuneQueuePanel(
                             )
                             DropdownMenuItem(
                                 text = { Text("대신 스티어링으로 보내기") },
-                                enabled = item.kind == "text",
+                                enabled = item.kind == "text" || item.kind == "photo",
                                 leadingIcon = { Icon(imageVector = CompoundIcons.Forward(), contentDescription = null) },
                                 onClick = { send("steer", item) },
                             )

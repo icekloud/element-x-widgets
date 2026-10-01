@@ -42,6 +42,9 @@ private const val OP_TYPE = "app.june.queue_op"
 /** A list whose heartbeat is older than this is ignored (gateway gone): hidden messages show again. */
 private const val STALE_SECONDS = 180L
 
+/** Placements remembered per room while the app runs. */
+private const val MAX_PLACEMENTS = 500
+
 internal data class JuneQueueItem(
     val id: String,
     val ids: List<String>,
@@ -52,6 +55,12 @@ internal data class JuneQueueItem(
 
 internal data class JuneQueueResult(val rid: String, val op: String, val id: String, val ok: Boolean, val err: String?)
 
+/** A message that left the queue but has not taken effect yet (steered, or its turn is starting). */
+internal data class JuneHeldItem(val id: String, val ids: List<String>)
+
+/** The message [id] (and its batch [ids]) took effect right after the bot event [after]. */
+internal data class JunePlacement(val id: String, val ids: List<String>, val after: String)
+
 internal data class JuneQueueSnapshot(
     val enabled: Boolean,
     val rev: Long,
@@ -59,9 +68,17 @@ internal data class JuneQueueSnapshot(
     val results: List<JuneQueueResult>,
     val ts: Long,
     val fetchedAtMillis: Long,
+    val steering: List<JuneHeldItem> = emptyList(),
+    val starting: List<JuneHeldItem> = emptyList(),
+    val placed: List<JunePlacement> = emptyList(),
 ) {
-    fun liveItems(nowMillis: Long): List<JuneQueueItem> =
-        if (enabled && nowMillis / 1000 - ts < STALE_SECONDS) items else emptyList()
+    private fun live(nowMillis: Long) = enabled && nowMillis / 1000 - ts < STALE_SECONDS
+
+    fun liveItems(nowMillis: Long): List<JuneQueueItem> = if (live(nowMillis)) items else emptyList()
+
+    fun liveSteering(nowMillis: Long): List<JuneHeldItem> = if (live(nowMillis)) steering else emptyList()
+
+    fun liveStarting(nowMillis: Long): List<JuneHeldItem> = if (live(nowMillis)) starting else emptyList()
 }
 
 internal class JuneQueueClient(private val sessionStore: SessionStore) {
@@ -118,10 +135,33 @@ internal class JuneQueueClient(private val sessionStore: SessionStore) {
         }
     }
 
+    private fun ids(o: JSONObject): List<String> {
+        val ids = o.optJSONArray("ids")
+        return List(ids?.length() ?: 0) { j -> ids!!.optString(j) }.filter { it.isNotEmpty() }
+    }
+
+    private fun held(json: JSONObject, name: String): List<JuneHeldItem> {
+        val arr = json.optJSONArray(name) ?: return emptyList()
+        return List(arr.length()) { i -> arr.optJSONObject(i) }
+            .mapNotNull { o -> o?.optString("id")?.takeIf { it.isNotEmpty() }?.let { JuneHeldItem(it, ids(o)) } }
+    }
+
+    private fun placed(json: JSONObject): List<JunePlacement> {
+        val arr = json.optJSONArray("placed") ?: return emptyList()
+        return List(arr.length()) { i -> arr.optJSONObject(i) }.mapNotNull { o ->
+            val id = o?.optString("id").orEmpty()
+            val after = o?.optString("after").orEmpty()
+            if (id.isEmpty() || after.isEmpty()) null else JunePlacement(id, ids(o!!), after)
+        }
+    }
+
     private fun parse(json: JSONObject): JuneQueueSnapshot {
         val items = json.optJSONArray("items")
         val results = json.optJSONArray("results")
         return JuneQueueSnapshot(
+            steering = held(json, "steering"),
+            starting = held(json, "starting"),
+            placed = placed(json),
             enabled = json.optBoolean("enabled", false),
             rev = json.optLong("rev"),
             items = List(items?.length() ?: 0) { i ->
@@ -190,8 +230,24 @@ internal object JuneQueueStore {
         editTargets.removeAll { it.startsWith("$roomId|") }
     }
 
+    /** Per room: every placement seen while the app runs (the server keeps only the newest ones). */
+    private val placements = ConcurrentHashMap<String, LinkedHashMap<String, JunePlacement>>()
+
+    fun placedIn(roomId: String): List<JunePlacement> =
+        placements[roomId]?.let { synchronized(it) { it.values.toList() } }.orEmpty()
+
+    private fun rememberPlaced(roomId: String, placed: List<JunePlacement>) {
+        if (placed.isEmpty()) return
+        val map = placements.getOrPut(roomId) { LinkedHashMap() }
+        synchronized(map) {
+            placed.forEach { map[it.id] = it }
+            while (map.size > MAX_PLACEMENTS) map.remove(map.keys.first())
+        }
+    }
+
     suspend fun refresh(roomId: String): JuneQueueSnapshot? {
         val fresh = client?.fetch(roomId) ?: return null
+        rememberPlaced(roomId, fresh.placed) // before the snapshot update that re-runs the timeline
         snapshots.update { map ->
             val old = map[roomId]
             if (old != null && fresh.rev < old.rev) map else map + (roomId to fresh)
@@ -199,9 +255,17 @@ internal object JuneQueueStore {
         return snapshots.value[roomId]
     }
 
-    /** Ids of every Matrix event still waiting in [roomId]'s queue (hidden from the timeline). */
-    fun hiddenIds(map: Map<String, JuneQueueSnapshot>, roomId: String, nowMillis: Long): Set<String> =
-        map[roomId]?.liveItems(nowMillis)?.flatMapTo(HashSet<String>()) { it.ids + it.id }.orEmpty()
+    /**
+     * Ids of every Matrix event of [roomId] that has not taken effect yet (hidden from the timeline):
+     * still queued, steered but not read by the model yet, or out of the queue with its turn starting.
+     */
+    fun hiddenIds(map: Map<String, JuneQueueSnapshot>, roomId: String, nowMillis: Long): Set<String> {
+        val snap = map[roomId] ?: return emptySet()
+        val out = HashSet<String>()
+        snap.liveItems(nowMillis).forEach { out += it.ids; out += it.id }
+        (snap.liveSteering(nowMillis) + snap.liveStarting(nowMillis)).forEach { out += it.ids; out += it.id }
+        return out
+    }
 
     fun markEditing(roomId: String, eventId: String) {
         editTargets.add("$roomId|$eventId")
@@ -237,8 +301,43 @@ internal fun juneHoldQueued(
 ): ImmutableList<TimelineItem> {
     val hidden = JuneQueueStore.hiddenIds(queues, roomId, System.currentTimeMillis())
     JuneQueueStore.onTimeline(roomId, items, hidden)
-    if (hidden.isEmpty()) return items
-    return items.filterNot { it is TimelineItem.Event && it.isMine && it.eventId?.value in hidden }.toImmutableList()
+    val shown = if (hidden.isEmpty()) {
+        items
+    } else {
+        items.filterNot { it is TimelineItem.Event && it.isMine && it.eventId?.value in hidden }
+    }
+    val placed = JuneQueueStore.placedIn(roomId)
+    if (placed.isEmpty()) return if (shown === items) items else shown.toImmutableList()
+    return juneReorderPlaced(shown, placed).toImmutableList()
+}
+
+/**
+ * Element June: show each of my messages that waited in the bot's queue (or was steered) right below
+ * the bot event it took effect after, instead of where it arrived. [items] is newest first. A move
+ * only happens when the anchor and the message are both loaded and the message sits above (older
+ * than) its anchor; anything else keeps the timeline order, so a wrong or missing placement can at
+ * worst leave a message where Matrix put it.
+ */
+internal fun juneReorderPlaced(items: List<TimelineItem>, placed: List<JunePlacement>): List<TimelineItem> {
+    var list = items
+    for (p in placed) {
+        val anchor = list.indexOfFirst { it is TimelineItem.Event && it.eventId?.value == p.after }
+        if (anchor < 0) continue
+        val wanted = p.ids.toHashSet().apply { add(p.id) }
+        val moving = list.indices.filter { i ->
+            val e = list[i]
+            i > anchor && e is TimelineItem.Event && e.isMine && e.eventId?.value in wanted
+        }
+        if (moving.isEmpty()) continue
+        val movingSet = moving.toHashSet()
+        val out = ArrayList<TimelineItem>(list.size)
+        list.forEachIndexed { i, item ->
+            if (i == anchor) moving.forEach { out.add(list[it]) }
+            if (i !in movingSet) out.add(item)
+        }
+        list = out
+    }
+    return list
 }
 
 /** Re-evaluates the hidden set now and then, so a list whose gateway went silent stops hiding messages. */
