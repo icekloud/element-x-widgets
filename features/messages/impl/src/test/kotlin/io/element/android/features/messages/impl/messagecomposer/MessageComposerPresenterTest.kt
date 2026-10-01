@@ -10,6 +10,10 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import io.element.android.libraries.mediaviewer.api.local.LocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.EditedLocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEdits
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditor
 import android.net.Uri
 import androidx.compose.runtime.remember
 import app.cash.molecule.RecompositionMode
@@ -1722,6 +1726,11 @@ class MessageComposerPresenterTest : RobolectricTest() {
         slashCommandService = slashCommandService,
         featureFlagService = featureFlagService,
         contentScannerService = { _, _ -> },
+        attachmentImageEditor = object : AttachmentImageEditor {
+            override suspend fun canEdit(localMedia: LocalMedia) = false
+            override suspend fun exportEdits(localMedia: LocalMedia, edits: AttachmentImageEdits) =
+                Result.failure<EditedLocalMedia>(IllegalStateException("not used"))
+        },
         contentValidationCache = InMemoryEventContentValidationCache(),
     ).apply {
         isTesting = true
