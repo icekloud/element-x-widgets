@@ -69,6 +69,7 @@ import io.element.android.features.messages.impl.actionlist.ActionListView
 import io.element.android.features.messages.impl.actionlist.model.TimelineItemAction
 import io.element.android.features.messages.impl.crypto.identity.IdentityChangeStateView
 import io.element.android.features.messages.impl.june.JuneComposerPanels
+import io.element.android.features.messages.impl.june.JuneComposerStack
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
 import io.element.android.features.messages.impl.messagecomposer.AttachmentsBottomSheet
@@ -696,38 +697,43 @@ private fun MessagesViewComposerBottomSheetContents(
             )
         }
         state.userEventPermissions.canSendMessage -> {
-            Column(
+            val verificationViolation = state.identityChangeState.roomMemberIdentityStateChanges.firstOrNull {
+                it.identityState == IdentityState.VerificationViolation
+            }
+            // Element June: the composer gets its height first, the banners and panels above share the rest (and scroll),
+            // so the input stays visible with the keyboard up, while editing or with pictures waiting.
+            JuneComposerStack(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(contentPadding)
-            ) {
-                // Do not show the identity change if user is composing a Rich message or is seeing suggestion(s).
-                if (state.composerState.suggestions.isEmpty() &&
-                    state.composerState.textEditorState is TextEditorState.Markdown) {
-                    IdentityChangeStateView(
-                        state = state.identityChangeState,
-                        onLinkClick = onLinkClick,
+                    .padding(contentPadding),
+                top = {
+                    // Do not show the identity change if user is composing a Rich message or is seeing suggestion(s).
+                    if (state.composerState.suggestions.isEmpty() &&
+                        state.composerState.textEditorState is TextEditorState.Markdown) {
+                        IdentityChangeStateView(
+                            state = state.identityChangeState,
+                            onLinkClick = onLinkClick,
+                        )
+                    }
+                    // Element June: background processes of the bot, then its busy queue (edit / steer / cancel)
+                    JuneComposerPanels(
+                        roomId = state.roomId.value,
+                        editingEventId = (state.composerState.mode as? MessageComposerMode.Edit)?.eventOrTransactionId?.eventId?.value,
+                        onEdit = { event -> state.eventSink(MessagesEvent.HandleAction(TimelineItemAction.Edit, event)) },
                     )
-                }
-                val verificationViolation = state.identityChangeState.roomMemberIdentityStateChanges.firstOrNull {
-                    it.identityState == IdentityState.VerificationViolation
-                }
-                // Element June: background processes of the bot, then its busy queue (edit / steer / cancel)
-                JuneComposerPanels(
-                    roomId = state.roomId.value,
-                    editingEventId = (state.composerState.mode as? MessageComposerMode.Edit)?.eventOrTransactionId?.eventId?.value,
-                    onEdit = { event -> state.eventSink(MessagesEvent.HandleAction(TimelineItemAction.Edit, event)) },
-                )
-                if (verificationViolation != null) {
-                    DisabledComposerView(modifier = Modifier.fillMaxWidth())
-                } else {
-                    MessageComposerView(
-                        state = state.composerState,
-                        voiceMessageState = state.voiceMessageComposerState,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
+                },
+                bottom = {
+                    if (verificationViolation != null) {
+                        DisabledComposerView(modifier = Modifier.fillMaxWidth())
+                    } else {
+                        MessageComposerView(
+                            state = state.composerState,
+                            voiceMessageState = state.voiceMessageComposerState,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+            )
         }
         else -> {
             CantSendMessageBanner(Modifier.padding(contentPadding))
