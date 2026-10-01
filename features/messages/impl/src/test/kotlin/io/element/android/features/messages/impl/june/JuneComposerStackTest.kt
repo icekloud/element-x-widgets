@@ -114,7 +114,7 @@ class JuneComposerStackTest : RobolectricTest() {
     }
 
     @Test
-    fun `stack reports the whole content as its minimum height`() = runAndroidComposeUiTest {
+    fun `stack reports the whole content as its minimum height`() = runAndroidComposeUiTest<ComponentActivity> {
         setContent {
             Column(modifier = Modifier.height(IntrinsicSize.Min)) {
                 JuneComposerStack(
