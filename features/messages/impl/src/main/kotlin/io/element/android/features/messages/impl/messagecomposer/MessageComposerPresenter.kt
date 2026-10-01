@@ -58,6 +58,9 @@ import io.element.android.libraries.designsystem.utils.snackbar.SnackbarDispatch
 import io.element.android.libraries.designsystem.utils.snackbar.SnackbarMessage
 import io.element.android.features.messages.impl.R
 import io.element.android.features.messages.impl.june.JuneQueueStore
+import io.element.android.features.messages.impl.june.juneAttachFileName
+import io.element.android.features.messages.impl.june.juneEditingEventId
+import io.element.android.features.messages.impl.attachments.preview.withJuneAttachName
 import io.element.android.libraries.di.annotations.SessionCoroutineScope
 import io.element.android.libraries.featureflag.api.FeatureFlagService
 import io.element.android.libraries.featureflag.api.FeatureFlags
@@ -622,7 +625,8 @@ class MessageComposerPresenter(
 
         // Element June: an edit started from the queue panel is only sent while the message still waits
         // in the bot's queue (checked with the server right now); otherwise the bot already ran the original.
-        val juneEditTarget = (capturedMode as? MessageComposerMode.Edit)?.eventOrTransactionId?.eventId?.value
+        // A picture message waiting in the queue is edited through its caption, checked the same way.
+        val juneEditTarget = juneEditingEventId(capturedMode)
         if (juneEditTarget != null && !JuneQueueStore.allowEdit(room.roomId.value, juneEditTarget)) {
             JuneQueueStore.forgetEdit(room.roomId.value, juneEditTarget)
             snackbarDispatcher.post(SnackbarMessage(R.string.june_queue_edit_too_late))
@@ -729,6 +733,11 @@ class MessageComposerPresenter(
             pendingAttachments = (pendingAttachments + localMedia).toImmutableList()
             return
         }
+        // Element June: a picture picked while a queued message is edited from the queue panel joins that message
+        if (!sendAsFile && localMedia.info.mimeType.isMimeTypeImage() && juneAttachTarget() != null) {
+            sessionCoroutineScope.sendJuneAttachments(listOf(localMedia))
+            return
+        }
         val mediaAttachment = Attachment.Media(localMedia, sendAsFile = sendAsFile)
         val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
         navigator.navigateToPreviewAttachments(persistentListOf(mediaAttachment), inReplyToEventId)
@@ -758,6 +767,11 @@ class MessageComposerPresenter(
         if (!sendAsFile && !messageComposerContext.composerMode.isEditing &&
             attachments.all { it.localMedia.info.mimeType.isMimeTypeImage() }) {
             pendingAttachments = (pendingAttachments + attachments.map { it.localMedia }).toImmutableList()
+            return
+        }
+        // Element June: pictures picked while a queued message is edited from the queue panel join that message
+        if (!sendAsFile && juneAttachTarget() != null && attachments.all { it.localMedia.info.mimeType.isMimeTypeImage() }) {
+            sessionCoroutineScope.sendJuneAttachments(attachments.map { it.localMedia })
             return
         }
         val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
@@ -799,6 +813,45 @@ class MessageComposerPresenter(
                 }
             }
             info.allFiles().forEach { it.safeDelete() }
+        }
+    }
+
+    /**
+     * Element June: the queued message being edited from the queue panel (its text or its caption), or null. Also null when
+     * its id cannot be carried in a file name: the picture then takes the usual way (preview screen).
+     */
+    private fun juneAttachTarget(): String? =
+        juneEditingEventId(messageComposerContext.composerMode)
+            ?.takeIf { JuneQueueStore.isPanelEdit(room.roomId.value, it) && juneAttachFileName(it, 1, "jpg") != null }
+
+    // Element June: send pictures for the queued message being edited, no preview and no caption. Their file name
+    // (june-to-<id>.<n>.<ext>) tells the gateway to add them to that message; once it ran they arrive as usual pictures.
+    // The edit mode stays, the typed text still edits the message.
+    private fun CoroutineScope.sendJuneAttachments(medias: List<LocalMedia>) = launch {
+        val target = juneAttachTarget() ?: return@launch
+        val config = mediaOptimizationConfigProvider.get()
+        val infos = medias.mapNotNull { media ->
+            mediaSender.preProcessMedia(uri = media.uri, mimeType = media.info.mimeType, mediaOptimizationConfig = config)
+                .onFailure { Timber.e(it, "Failed to process attachment") }
+                .getOrNull()
+        }
+        withJuneAttachName(infos, target).forEachIndexed { index, info ->
+            mediaSender.sendPreProcessedMedia(
+                mediaUploadInfo = info,
+                caption = null,
+                formattedCaption = null,
+                inReplyToEventId = null,
+            ).onFailure { cause ->
+                Timber.e(cause, "Failed to send attachment ${index + 1}/${infos.size}")
+                if (cause !is CancellationException) {
+                    snackbarDispatcher.post(SnackbarMessage(sendAttachmentError(cause)))
+                }
+            }
+            info.allFiles().forEach { it.safeDelete() }
+        }
+        for (wait in longArrayOf(1_500L, 3_000L)) {
+            delay(wait)
+            JuneQueueStore.refresh(room.roomId.value)
         }
     }
 

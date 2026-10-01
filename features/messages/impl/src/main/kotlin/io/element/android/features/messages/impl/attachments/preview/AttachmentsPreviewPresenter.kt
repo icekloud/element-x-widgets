@@ -59,6 +59,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
+import io.element.android.features.messages.impl.june.juneAttachFileName
 
 @AssistedInject
 class AttachmentsPreviewPresenter(
@@ -580,6 +581,18 @@ internal fun withBatchMarker(infos: List<MediaUploadInfo>): List<MediaUploadInfo
         if (source.renameTo(target)) info.withFile(target) else info
     }
 }
+
+/**
+ * Element June: name pictures picked while the queued message [targetEventId] is edited `june-to-<id>.<n>.<ext>`, so the
+ * gateway adds them to that message (see juneAttachFileName). A file that cannot be renamed keeps its name.
+ */
+internal fun withJuneAttachName(infos: List<MediaUploadInfo>, targetEventId: String): List<MediaUploadInfo> =
+    infos.mapIndexed { index, info ->
+        val source = info.file
+        val name = juneAttachFileName(targetEventId, index + 1, source.extension) ?: return@mapIndexed info
+        val target = File(source.parentFile, name)
+        if (source.renameTo(target)) info.withFile(target) else info
+    }
 
 private fun MediaUploadInfo.withFile(newFile: File): MediaUploadInfo = when (this) {
     is MediaUploadInfo.AnyFile -> copy(file = newFile)

@@ -70,6 +70,9 @@ import io.element.android.features.messages.impl.actionlist.model.TimelineItemAc
 import io.element.android.features.messages.impl.crypto.identity.IdentityChangeStateView
 import io.element.android.features.messages.impl.june.JuneComposerPanels
 import io.element.android.features.messages.impl.june.JuneComposerStack
+import io.element.android.features.messages.impl.june.JuneEditKind
+import io.element.android.features.messages.impl.june.JuneEditPhotosRow
+import io.element.android.features.messages.impl.june.juneEditingEventId
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
 import io.element.android.features.messages.impl.messagecomposer.AttachmentsBottomSheet
@@ -718,14 +721,26 @@ private fun MessagesViewComposerBottomSheetContents(
                     // Element June: background processes of the bot, then its busy queue (edit / steer / cancel)
                     JuneComposerPanels(
                         roomId = state.roomId.value,
-                        editingEventId = (state.composerState.mode as? MessageComposerMode.Edit)?.eventOrTransactionId?.eventId?.value,
-                        onEdit = { event -> state.eventSink(MessagesEvent.HandleAction(TimelineItemAction.Edit, event)) },
+                        editingEventId = juneEditingEventId(state.composerState.mode),
+                        onEdit = { event, kind ->
+                            val action = if (kind == JuneEditKind.Caption) TimelineItemAction.EditCaption else TimelineItemAction.Edit
+                            state.eventSink(MessagesEvent.HandleAction(action, event))
+                        },
                     )
                 },
                 bottom = {
                     if (verificationViolation != null) {
                         DisabledComposerView(modifier = Modifier.fillMaxWidth())
                     } else {
+                        // Element June: the pictures of the queued message being edited, right above the input (x = take it out).
+                        // In the composer slot, so the stack gives it its height first like the input.
+                        JuneEditPhotosRow(
+                            roomId = state.roomId.value,
+                            editingEventId = juneEditingEventId(state.composerState.mode),
+                            // Caption editing has no + button in the composer: offer one here
+                            showAddTile = state.composerState.mode is MessageComposerMode.EditCaption,
+                            onAddPhoto = { state.composerState.eventSink(MessageComposerEvent.AddAttachment) },
+                        )
                         MessageComposerView(
                             state = state.composerState,
                             voiceMessageState = state.voiceMessageComposerState,
