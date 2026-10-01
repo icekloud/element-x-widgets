@@ -110,6 +110,7 @@ object TestTags {
      */
     val jumpToUnreadButton = TestTag("jump-to-unread-button")
     val jumpToBottomButton = TestTag("jump-to-bottom-button")
+    val jumpToPreviousOwnMessageButton = TestTag("jump-to-previous-own-message-button")
 
     /**
      * Timeline.

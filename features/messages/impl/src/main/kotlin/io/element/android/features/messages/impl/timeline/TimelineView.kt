@@ -112,6 +112,7 @@ import io.element.android.libraries.testtags.testTag
 import io.element.android.libraries.ui.strings.CommonStrings
 import io.element.android.wysiwyg.link.Link
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -271,6 +272,9 @@ fun TimelineView(
                     newEventState = state.newEventState,
                     isLive = state.isLive,
                     focusRequestState = state.focusRequestState,
+                    timelineItems = state.timelineItems,
+                    ownMessageTopInset = floatingDateTopOffset + 4.dp,
+                    onLoadOlder = ::prefetchMoreItems,
                     displayJumpToUnread = state.displayJumpToUnread,
                     jumpToUnread = state.jumpToUnread,
                     onScrollFinishAt = ::onScrollFinishAt,
@@ -357,6 +361,9 @@ private fun BoxScope.TimelineScrollHelper(
     forceJumpToBottomVisibility: Boolean,
     forceJumpToReadMarkerVisibility: Boolean,
     focusRequestState: FocusRequestState,
+    timelineItems: ImmutableList<TimelineItem>,
+    ownMessageTopInset: Dp,
+    onLoadOlder: () -> Unit,
     displayJumpToUnread: Boolean,
     jumpToUnread: JumpToUnreadState,
     onScrollFinishAt: (Int) -> Unit,
@@ -387,7 +394,9 @@ private fun BoxScope.TimelineScrollHelper(
             }
         }
     }
-    val isJumpToBottomVisible = !canAutoScroll || forceJumpToBottomVisibility || !isLive
+    // Element June: shown as soon as the list is not exactly at the bottom, not only after a few messages
+    val isAtVeryBottom by remember { derivedStateOf { !lazyListState.canScrollBackward } }
+    val isJumpToBottomVisible = !isAtVeryBottom || forceJumpToBottomVisibility || !isLive
     var jumpToLiveHandled by remember { mutableStateOf(true) }
 
     /**
@@ -423,6 +432,15 @@ private fun BoxScope.TimelineScrollHelper(
             is JumpToUnreadState.OutOfWindow -> onFocusOnEvent(jtu.eventId)
         }
     }
+
+    // Element June: ▲/▼ step through the user's own messages; ▼ ends at the bottom
+    val ownMessageJump = rememberJuneOwnMessageJump(
+        lazyListState = lazyListState,
+        timelineItems = timelineItems,
+        topInset = ownMessageTopInset,
+        onLoadOlder = onLoadOlder,
+        onNoNextMessage = ::jumpToBottom,
+    )
 
     LaunchedEffect(jumpToLiveHandled, isLive) {
         if (!jumpToLiveHandled && isLive) {
@@ -463,8 +481,9 @@ private fun BoxScope.TimelineScrollHelper(
             .align(Alignment.BottomEnd)
             .padding(end = 24.dp, bottom = 16.dp)
     ) {
+        // Element June: the unread button keeps its dot but uses an arrow, so it differs from the ▲ below it
         JumpToPositionButton(
-            icon = CompoundIcons.ChevronUp(),
+            icon = CompoundIcons.ArrowUp(),
             contentDescription = stringResource(id = CommonStrings.a11y_jump_to_unread_messages),
             modifier = Modifier.padding(bottom = 12.dp),
             isVisible = isJumpToUnreadVisible,
@@ -473,15 +492,25 @@ private fun BoxScope.TimelineScrollHelper(
             onMarkAsRead = onMarkAllAsRead,
             testTag = TestTags.jumpToUnreadButton,
         )
-        // Reserves space for the jump to bottom button so the jump to unread button above
-        // stays in the same position regardless of whether the jump to bottom button is visible.
+        // Reserves space for each button so the ones above stay in place when one hides.
+        Box(modifier = Modifier.padding(bottom = 12.dp).size(36.dp)) {
+            JumpToPositionButton(
+                icon = CompoundIcons.ChevronUp(),
+                contentDescription = "이전 내 메시지",
+                isVisible = ownMessageJump.hasPrevious,
+                hasUnread = false,
+                onClick = ownMessageJump.onPrevious,
+                onMarkAsRead = null,
+                testTag = TestTags.jumpToPreviousOwnMessageButton,
+            )
+        }
         Box(modifier = Modifier.size(36.dp)) {
             JumpToPositionButton(
                 icon = CompoundIcons.ChevronDown(),
                 contentDescription = stringResource(id = CommonStrings.a11y_jump_to_bottom),
                 isVisible = isJumpToBottomVisible,
                 hasUnread = displayJumpToUnread && newEventState is NewEventState.FromOther,
-                onClick = ::jumpToBottom,
+                onClick = ownMessageJump.onNext,
                 onMarkAsRead = onMarkAllAsRead,
                 testTag = TestTags.jumpToBottomButton,
                 dotAlignment = Alignment.BottomCenter,
@@ -497,7 +526,7 @@ private fun JumpToPositionButton(
     isVisible: Boolean,
     hasUnread: Boolean,
     onClick: () -> Unit,
-    onMarkAsRead: () -> Unit,
+    onMarkAsRead: (() -> Unit)?,
     testTag: TestTag,
     modifier: Modifier = Modifier,
     dotAlignment: Alignment = Alignment.TopCenter,
@@ -518,7 +547,8 @@ private fun JumpToPositionButton(
                     .border(1.dp, ElementTheme.colors.borderDisabled, CircleShape)
                     .combinedClickable(
                         onClick = onClick,
-                        onLongClick = { menuExpanded = true },
+                        // Element June: no menu for buttons without a mark-as-read action
+                        onLongClick = onMarkAsRead?.let { { menuExpanded = true } },
                         onLongClickLabel = stringResource(CommonStrings.action_open_context_menu),
                     )
                     .testTag(testTag),
@@ -566,7 +596,7 @@ private fun JumpToPositionButton(
                                     .border(1.dp, ElementTheme.colors.borderDisabled, RoundedCornerShape(8.dp))
                                     .clickable {
                                         menuExpanded = false
-                                        onMarkAsRead()
+                                        onMarkAsRead?.invoke()
                                     }
                                     .padding(horizontal = 12.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
