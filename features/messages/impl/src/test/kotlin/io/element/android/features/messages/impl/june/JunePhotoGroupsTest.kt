@@ -116,7 +116,8 @@ class JunePhotoGroupsTest {
         assertThat(group(photo("a", 0), photo("b", 121)).groups()).containsExactly(null, null).inOrder()
         // The window is between neighbours, not from the first picture
         assertThat(group(photo("a", 0), photo("b", 100), photo("c", 200)).groups())
-            .containsExactly(JunePhotoGroup(0, 3), JunePhotoGroup(1, 3), JunePhotoGroup(2, 3)).inOrder()
+            .containsExactly(JunePhotoGroup(0, 3), JunePhotoGroup(1, 3), JunePhotoGroup(2, 3))
+            .inOrder()
     }
 
     @Test
@@ -150,11 +151,13 @@ class JunePhotoGroupsTest {
     fun `reactions end a run, a reply starts one`() {
         val withReaction = photo("b", 1).copy(reactionsState = aTimelineItemReactions(count = 1))
         assertThat(group(photo("a", 0), withReaction, photo("c", 2)).groups())
-            .containsExactly(JunePhotoGroup(0, 2), JunePhotoGroup(1, 2), null).inOrder()
+            .containsExactly(JunePhotoGroup(0, 2), JunePhotoGroup(1, 2), null)
+            .inOrder()
         // A reply's quote is drawn at the top of its bubble: it starts a new run, and can be followed by pictures
         val reply = photo("b", 1).copy(inReplyTo = InReplyToDetails.Loading(EventId("\$quoted")))
         assertThat(group(photo("a", 0), reply, photo("c", 2)).groups())
-            .containsExactly(null, JunePhotoGroup(0, 2), JunePhotoGroup(1, 2)).inOrder()
+            .containsExactly(null, JunePhotoGroup(0, 2), JunePhotoGroup(1, 2))
+            .inOrder()
     }
 
     @Test
