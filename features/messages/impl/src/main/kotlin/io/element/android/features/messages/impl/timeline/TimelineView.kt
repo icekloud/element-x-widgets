@@ -17,10 +17,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -62,10 +64,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
 import androidx.compose.ui.res.stringResource
@@ -434,6 +438,17 @@ private fun BoxScope.TimelineScrollHelper(
         }
     }
 
+    // Element June: holding ▼ goes straight to the newest message. Nothing happens when the list is already at the very bottom.
+    fun jumpToVeryBottom() {
+        if (!isLive) {
+            jumpToLiveHandled = false
+            onJumpToLive()
+        } else if (lazyListState.canScrollBackward) {
+            // force: item 0 can be the first visible one while its bottom is still scrolled off
+            scrollToBottom(force = true)
+        }
+    }
+
     // Element June: ▲/▼ step through the user's own messages; ▼ ends at the bottom
     val ownMessageJump = rememberJuneOwnMessageJump(
         lazyListState = lazyListState,
@@ -516,9 +531,13 @@ private fun BoxScope.TimelineScrollHelper(
                 isVisible = isJumpToBottomVisible,
                 hasUnread = displayJumpToUnread && newEventState is NewEventState.FromOther,
                 onClick = ownMessageJump.onNext,
-                onMarkAsRead = onMarkAllAsRead,
+                // Element June: the long press goes to the bottom instead of opening the mark-as-read menu,
+                // which stays on the unread button above
+                onMarkAsRead = null,
                 testTag = TestTags.jumpToBottomButton,
                 dotAlignment = Alignment.BottomCenter,
+                onJuneLongPress = ::jumpToVeryBottom,
+                juneLongPressLabel = "길게 누르면 맨 아래로 이동",
             )
         }
     }
@@ -535,6 +554,8 @@ private fun JumpToPositionButton(
     testTag: TestTag,
     modifier: Modifier = Modifier,
     dotAlignment: Alignment = Alignment.TopCenter,
+    onJuneLongPress: (() -> Unit)? = null,
+    juneLongPressLabel: String = "",
 ) {
     AnimatedVisibility(
         modifier = modifier,
@@ -550,11 +571,35 @@ private fun JumpToPositionButton(
                     .background(color = ElementTheme.colors.bgCanvasDefault, shape = CircleShape)
                     .clip(CircleShape)
                     .border(1.dp, ElementTheme.colors.borderDisabled, CircleShape)
-                    .combinedClickable(
-                        onClick = onClick,
-                        // Element June: no menu for buttons without a mark-as-read action
-                        onLongClick = onMarkAsRead?.let { { menuExpanded = true } },
-                        onLongClickLabel = stringResource(CommonStrings.action_open_context_menu),
+                    .then(
+                        if (onJuneLongPress != null) {
+                            // Element June: a 1 second long press, longer than the system one, with a haptic tick when it is reached
+                            val haptic = LocalHapticFeedback.current
+                            val latestOnClick by rememberUpdatedState(onClick)
+                            val latestOnLongPress by rememberUpdatedState(onJuneLongPress)
+                            val handler = remember {
+                                JuneLongPressHandler(
+                                    onClick = { latestOnClick() },
+                                    onLongClick = { latestOnLongPress() },
+                                    onLongPressReached = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                                )
+                            }
+                            Modifier.juneLongPressClickable(
+                                handler = handler,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = LocalIndication.current,
+                                onAccessibilityClick = onClick,
+                                onAccessibilityLongClick = onJuneLongPress,
+                                longClickLabel = juneLongPressLabel,
+                            )
+                        } else {
+                            Modifier.combinedClickable(
+                                onClick = onClick,
+                                // Element June: no menu for buttons without a mark-as-read action
+                                onLongClick = onMarkAsRead?.let { { menuExpanded = true } },
+                                onLongClickLabel = stringResource(CommonStrings.action_open_context_menu),
+                            )
+                        }
                     )
                     .testTag(testTag),
                 contentAlignment = Alignment.Center,

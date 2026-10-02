@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.AndroidComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.v2.runAndroidComposeUiTest
 import io.element.android.features.messages.impl.timeline.components.MessageShieldData
 import io.element.android.features.messages.impl.timeline.components.aCriticalShield
@@ -42,6 +44,7 @@ import io.element.android.libraries.matrix.test.AN_EVENT_ID
 import io.element.android.libraries.matrix.test.A_USER_ID
 import io.element.android.libraries.matrix.ui.messages.reply.InReplyToDetails
 import io.element.android.libraries.matrix.ui.messages.reply.aProfileDetailsReady
+import io.element.android.libraries.testtags.TestTags
 import io.element.android.libraries.ui.strings.CommonStrings
 import io.element.android.tests.testutils.EnsureNeverCalledWithParam
 import io.element.android.tests.testutils.EnsureNeverCalledWithTwoParams
@@ -121,6 +124,43 @@ class TimelineViewTest : RobolectricTest() {
         val contentDescription = activity!!.getString(CommonStrings.a11y_jump_to_bottom)
         onNodeWithContentDescription(contentDescription).performClick()
         eventsRecorder.assertSingle(TimelineEvent.JumpToLive)
+    }
+
+    @Test
+    fun `holding jump to bottom for 1 second on detached timeline jumps to live once`() = runAndroidComposeUiTest {
+        val eventsRecorder = EventsRecorder<TimelineEvent>()
+        setTimelineView(
+            state = aTimelineState(
+                timelineItems = persistentListOf(aTimelineItemEvent(content = aTimelineItemTextContent())),
+                isLive = false,
+                eventSink = eventsRecorder,
+            ),
+        )
+        eventsRecorder.assertSingle(TimelineEvent.OnScrollFinished(firstIndex = 0))
+        eventsRecorder.clear()
+
+        onNodeWithTag(TestTags.jumpToBottomButton.value).performTouchInput { longClick(durationMillis = 1_500) }
+        waitForIdle()
+        eventsRecorder.assertSingle(TimelineEvent.JumpToLive)
+    }
+
+    @Test
+    fun `holding jump to bottom when already at the very bottom does nothing`() = runAndroidComposeUiTest {
+        val eventsRecorder = EventsRecorder<TimelineEvent>()
+        setTimelineView(
+            state = aTimelineState(
+                timelineItems = persistentListOf(aTimelineItemEvent(content = aTimelineItemTextContent())),
+                isLive = true,
+                eventSink = eventsRecorder,
+            ),
+            forceJumpToBottomVisibility = true,
+        )
+        eventsRecorder.assertSingle(TimelineEvent.OnScrollFinished(firstIndex = 0))
+        eventsRecorder.clear()
+
+        onNodeWithTag(TestTags.jumpToBottomButton.value).performTouchInput { longClick(durationMillis = 1_500) }
+        waitForIdle()
+        eventsRecorder.assertEmpty()
     }
 
     @Test
