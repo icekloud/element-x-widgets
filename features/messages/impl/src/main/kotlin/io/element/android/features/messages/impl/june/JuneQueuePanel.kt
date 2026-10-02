@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -205,82 +207,87 @@ private fun JuneQueuePanel(
                     )
                 }
             }
+            // Pushing a row from right to left steers it, like "대신 스티어링으로 보내기" in its menu
             items.forEach { item ->
-                val event = heldHere[item.id]
-                val busy = ops.isBusy(item.id)
-                val editing = item.id == editingEventId
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .alpha(if (busy) 0.4f else 1f)
-                        .padding(start = 12.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        modifier = Modifier.size(16.dp),
-                        imageVector = CompoundIcons.Time(),
-                        contentDescription = null,
-                        tint = ElementTheme.colors.iconSecondary,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        modifier = Modifier.weight(1f),
-                        text = buildString {
-                            if (editing) append("[편집 중] ")
-                            append(juneQueueLine(item, event))
-                            if (item.edited) append(" (편집됨)")
+                key(item.id) {
+                    val event = heldHere[item.id]
+                    val busy = ops.isBusy(item.id)
+                    val editing = item.id == editingEventId
+                    JuneSwipeSteerRow(
+                        canSwipe = juneCanSwipeSteer(item, editing = editing, busy = busy),
+                        onSteer = { onDone ->
+                            menuFor = null
+                            ops.send("steer", item.id, onDone = onDone)
                         },
-                        style = ElementTheme.typography.fontBodyMdRegular,
-                        color = ElementTheme.colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Box {
+                        contentPadding = PaddingValues(start = 12.dp, end = 4.dp),
+                        modifier = Modifier.alpha(if (busy) 0.4f else 1f),
+                    ) {
                         Icon(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable(enabled = !busy) { menuFor = item.id }
-                                .padding(10.dp),
-                            imageVector = CompoundIcons.OverflowHorizontal(),
-                            contentDescription = "대기 메시지 메뉴",
+                            modifier = Modifier.size(16.dp),
+                            imageVector = CompoundIcons.Time(),
+                            contentDescription = null,
                             tint = ElementTheme.colors.iconSecondary,
                         )
-                        DropdownMenu(
-                            expanded = menuFor == item.id,
-                            onDismissRequest = { menuFor = null },
-                        ) {
-                            // A picture message edits the caption of its main picture (the gateway reads the text from there)
-                            val editKind = juneEditKind(item, event)
-                            DropdownMenuItem(
-                                text = { Text("메시지 편집") },
-                                enabled = editKind != null,
-                                leadingIcon = { Icon(imageVector = CompoundIcons.Edit(), contentDescription = null) },
-                                onClick = {
-                                    menuFor = null
-                                    if (event != null && editKind != null) {
-                                        JuneQueueStore.markEditing(roomId, item.id)
-                                        onEdit(event, editKind)
-                                    }
-                                },
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = buildString {
+                                if (editing) append("[편집 중] ")
+                                append(juneQueueLine(item, event))
+                                if (item.edited) append(" (편집됨)")
+                            },
+                            style = ElementTheme.typography.fontBodyMdRegular,
+                            color = ElementTheme.colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Box {
+                            Icon(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .clickable(enabled = !busy) { menuFor = item.id }
+                                    .padding(10.dp),
+                                imageVector = CompoundIcons.OverflowHorizontal(),
+                                contentDescription = "대기 메시지 메뉴",
+                                tint = ElementTheme.colors.iconSecondary,
                             )
-                            DropdownMenuItem(
-                                text = { Text("대신 스티어링으로 보내기") },
-                                enabled = item.kind == "text" || item.kind == "photo",
-                                leadingIcon = { Icon(imageVector = CompoundIcons.Forward(), contentDescription = null) },
-                                onClick = { send("steer", item) },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("메시지 취소", color = ElementTheme.colors.textCriticalPrimary) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = CompoundIcons.Close(),
-                                        contentDescription = null,
-                                        tint = ElementTheme.colors.iconCriticalPrimary,
-                                    )
-                                },
-                                onClick = { send("cancel", item) },
-                            )
+                            DropdownMenu(
+                                expanded = menuFor == item.id,
+                                onDismissRequest = { menuFor = null },
+                            ) {
+                                // A picture message edits the caption of its main picture (the gateway reads the text from there)
+                                val editKind = juneEditKind(item, event)
+                                DropdownMenuItem(
+                                    text = { Text("메시지 편집") },
+                                    enabled = editKind != null,
+                                    leadingIcon = { Icon(imageVector = CompoundIcons.Edit(), contentDescription = null) },
+                                    onClick = {
+                                        menuFor = null
+                                        if (event != null && editKind != null) {
+                                            JuneQueueStore.markEditing(roomId, item.id)
+                                            onEdit(event, editKind)
+                                        }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("대신 스티어링으로 보내기") },
+                                    enabled = juneCanSteer(item),
+                                    leadingIcon = { Icon(imageVector = CompoundIcons.Forward(), contentDescription = null) },
+                                    onClick = { send("steer", item) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("메시지 취소", color = ElementTheme.colors.textCriticalPrimary) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = CompoundIcons.Close(),
+                                            contentDescription = null,
+                                            tint = ElementTheme.colors.iconCriticalPrimary,
+                                        )
+                                    },
+                                    onClick = { send("cancel", item) },
+                                )
+                            }
                         }
                     }
                 }

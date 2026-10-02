@@ -99,7 +99,13 @@ internal fun juneEditKind(item: JuneQueueItem, event: TimelineItem.Event?): June
     else -> null
 }
 
-private data class JunePendingOp(val itemId: String, val op: String, val photo: String?, val sentAt: Long)
+private data class JunePendingOp(
+    val itemId: String,
+    val op: String,
+    val photo: String?,
+    val sentAt: Long,
+    val onDone: ((ok: Boolean) -> Unit)?,
+)
 
 /** Queue controls sent to the gateway, greyed out until it reports the result; failures are told with a toast. */
 internal class JuneQueueOps(private val roomId: String, private val scope: CoroutineScope, private val context: Context) {
@@ -108,13 +114,15 @@ internal class JuneQueueOps(private val roomId: String, private val scope: Corou
     fun isBusy(itemId: String, photo: String? = null): Boolean =
         pending.values.any { it.itemId == itemId && (photo == null || it.photo == photo) }
 
-    fun send(op: String, itemId: String, photo: String? = null) {
+    /** [onDone] runs once the gateway answered (ok or not), the request could not be sent, or it timed out (not ok). */
+    fun send(op: String, itemId: String, photo: String? = null, onDone: ((ok: Boolean) -> Unit)? = null) {
         scope.launch {
             val rid = JuneQueueStore.client?.sendOp(roomId, op, itemId, photo)
             if (rid == null) {
                 Toast.makeText(context, "요청을 보내지 못했습니다", Toast.LENGTH_SHORT).show()
+                onDone?.invoke(false)
             } else {
-                pending[rid] = JunePendingOp(itemId, op, photo, System.currentTimeMillis())
+                pending[rid] = JunePendingOp(itemId, op, photo, System.currentTimeMillis(), onDone)
                 for (wait in longArrayOf(800L, 2_000L)) {
                     delay(wait)
                     JuneQueueStore.refresh(roomId)
@@ -130,8 +138,10 @@ internal class JuneQueueOps(private val roomId: String, private val scope: Corou
             if (res != null) {
                 pending.remove(rid)
                 if (!res.ok) Toast.makeText(context, juneQueueErrorText(res.op, res.err), Toast.LENGTH_SHORT).show()
+                info.onDone?.invoke(res.ok)
             } else if (nowMs - info.sentAt > OP_TIMEOUT_MILLIS) {
                 pending.remove(rid)
+                info.onDone?.invoke(false)
             }
         }
     }
