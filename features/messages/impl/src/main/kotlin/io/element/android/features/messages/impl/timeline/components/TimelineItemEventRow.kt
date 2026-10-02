@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.absoluteOffset
@@ -163,6 +164,13 @@ val SENDER_AVATAR_BORDER_WIDTH = 3.dp
 
 private val BUBBLE_INCOMING_OFFSET = 16.dp
 
+// Element June: width of a bubble holding a run of pictures (see juneGroupPhotos), the pictures keep 8 dp inside it
+private val JUNE_PHOTO_GROUP_BUBBLE_WIDTH = 260.dp
+private val JUNE_PHOTO_GROUP_PADDING = 8.dp
+
+// Element June: half of the gap between two pictures in one bubble
+private val JUNE_PHOTO_GROUP_HALF_GAP = 2.dp
+
 @Composable
 fun TimelineItemEventRow(
     event: TimelineItem.Event,
@@ -201,6 +209,7 @@ fun TimelineItemEventRow(
             eventSink = eventSink,
             modifier = contentModifier,
             onContentLayoutChange = onContentLayoutChange,
+            inJunePhotoGroup = event.junePhotoGroup != null,
         )
     },
 ) {
@@ -236,8 +245,8 @@ fun TimelineItemEventRow(
             .fillMaxWidth()
             .semantics { customActions = accessibilityActions }
     ) {
-        if (event.juneBatchPosition()?.let { it.first > 1 } == true) {
-            // Element June: pictures of one batch are stacked without a gap
+        if (event.junePhotoGroup?.isFirst == false) {
+            // Element June: pictures drawn in one bubble are stacked without a gap
         } else if (event.groupPosition.isNew()) {
             Spacer(modifier = Modifier.height(16.dp))
         } else {
@@ -326,15 +335,18 @@ fun TimelineItemEventRow(
         }
 
         // Read receipts / Send state
-        TimelineItemReadReceiptView(
-            state = ReadReceiptViewState(
-                sendState = event.localSendState,
-                isLastOutgoingMessage = isLastOutgoingMessage,
-                receipts = event.readReceiptState.receipts,
-            ),
-            onReadReceiptsClick = { onReadReceiptClick(event) },
-            modifier = Modifier.padding(top = 4.dp)
-        )
+        // Element June: a run of pictures in one bubble shows them once, under its last picture (which carries those of the whole run)
+        if (event.junePhotoGroup?.isLast != false) {
+            TimelineItemReadReceiptView(
+                state = ReadReceiptViewState(
+                    sendState = event.localSendState,
+                    isLastOutgoingMessage = isLastOutgoingMessage,
+                    receipts = event.readReceiptState.receipts,
+                ),
+                onReadReceiptsClick = { onReadReceiptClick(event) },
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
     }
 }
 
@@ -550,8 +562,9 @@ private fun TimelineItemEventRowContent(
         MessageEventBubble(
             modifier = Modifier
                 .constrainAs(message) {
-                    // Element June: bubble starts below the sender row (no avatar cut-out on outline bubbles)
-                    val topMargin = 2.dp
+                    // Element June: bubble starts below the sender row (no avatar cut-out on outline bubbles),
+                    // and right below the picture above it when drawn in one bubble with it
+                    val topMargin = if (event.junePhotoGroup?.isFirst == false) 0.dp else 2.dp
                     top.linkTo(sender.bottom, margin = topMargin)
                     // Element June: minimal side margins so bubbles use the full screen width
                     if (event.isMine) {
@@ -572,9 +585,9 @@ private fun TimelineItemEventRowContent(
             state = bubbleState,
             // Element June: received text, file and audio messages all use the same (full) width
             fillWidth = event.fillsBubbleWidth(),
-            // Element June: stacked batch pictures look like one message block
-            squareTop = event.juneBatchPosition()?.let { it.first > 1 } == true,
-            squareBottom = event.juneBatchPosition()?.let { it.first < it.second } == true,
+            // Element June: pictures drawn in one bubble share it: same width, square corners and no border where they touch
+            squareTop = event.junePhotoGroup?.isFirst == false,
+            squareBottom = event.junePhotoGroup?.isLast == false,
             interactionSource = interactionSource,
             onClick = onContentClick,
             onLongClick = onLongClick,
@@ -589,8 +602,13 @@ private fun TimelineItemEventRowContent(
                 inReplyToClick = inReplyToClick,
                 eventSink = eventSink,
                 eventContentView = eventContentView,
-                // Element June: content (reply box, file row, timestamp) spans the whole bubble
-                bubbleModifier = if (event.fillsBubbleWidth()) Modifier.fillMaxWidth() else Modifier,
+                // Element June: content (reply box, file row, timestamp) spans the whole bubble,
+                // and pictures drawn in one bubble all get the same width, with a caption or not
+                bubbleModifier = when {
+                    event.junePhotoGroup != null -> Modifier.width(JUNE_PHOTO_GROUP_BUBBLE_WIDTH)
+                    event.fillsBubbleWidth() -> Modifier.fillMaxWidth()
+                    else -> Modifier
+                },
             )
         }
 
@@ -827,28 +845,44 @@ private fun MessageEventBubbleContent(
         modifier: Modifier = Modifier,
         canShrinkContent: Boolean = false,
     ) {
-        val timestampLayoutModifier =
-            if (inReplyToDetails != null && timestampPosition == TimestampPosition.Overlay) {
-                Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
-            } else {
-                Modifier
-            // Element June: timestamp sits at the bubble's right edge, not at the end of the content
-            }.then(if (event.fillsBubbleWidth()) Modifier.fillMaxWidth() else Modifier)
-
         val topPadding = if (inReplyToDetails != null) 0.dp else 8.dp
-        val contentModifier = when (paddingBehaviour) {
-            ContentPadding.Textual ->
-                Modifier.padding(start = 12.dp, end = 12.dp, top = topPadding, bottom = 8.dp)
-            ContentPadding.Media -> {
-                if (inReplyToDetails == null) {
-                    Modifier
-                } else {
-                    Modifier.clip(RoundedCornerShape(10.dp))
+        // Element June: a picture drawn in one bubble with others keeps a margin to the bubble and a small gap to its neighbours.
+        // Without a caption the margin goes around the timestamp layout, so that the time stays on the picture.
+        val photoGroup = event.junePhotoGroup
+        val photoGroupPadding = photoGroup?.let {
+            PaddingValues(
+                start = JUNE_PHOTO_GROUP_PADDING,
+                end = JUNE_PHOTO_GROUP_PADDING,
+                top = if (it.isFirst) topPadding else JUNE_PHOTO_GROUP_HALF_GAP,
+                bottom = if (it.isLast) JUNE_PHOTO_GROUP_PADDING else JUNE_PHOTO_GROUP_HALF_GAP,
+            )
+        }
+        val photoGroupPadsContent = photoGroupPadding != null && timestampPosition == TimestampPosition.Aligned
+
+        val timestampLayoutModifier = when {
+            photoGroupPadding != null && !photoGroupPadsContent -> Modifier.padding(photoGroupPadding)
+            inReplyToDetails != null && timestampPosition == TimestampPosition.Overlay -> Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+            else -> Modifier
+            // Element June: timestamp sits at the bubble's right edge, not at the end of the content
+        }.then(if (event.fillsBubbleWidth()) Modifier.fillMaxWidth() else Modifier)
+
+        val contentModifier = if (photoGroupPadding != null) {
+            if (photoGroupPadsContent) Modifier.padding(photoGroupPadding) else Modifier
+        } else {
+            when (paddingBehaviour) {
+                ContentPadding.Textual ->
+                    Modifier.padding(start = 12.dp, end = 12.dp, top = topPadding, bottom = 8.dp)
+                ContentPadding.Media -> {
+                    if (inReplyToDetails == null) {
+                        Modifier
+                    } else {
+                        Modifier.clip(RoundedCornerShape(10.dp))
+                    }
                 }
+                ContentPadding.CaptionedMedia ->
+                    Modifier.padding(start = 8.dp, end = 8.dp, top = topPadding, bottom = 8.dp)
+                ContentPadding.InvalidContent -> Modifier.padding(top = topPadding, bottom = 8.dp)
             }
-            ContentPadding.CaptionedMedia ->
-                Modifier.padding(start = 8.dp, end = 8.dp, top = topPadding, bottom = 8.dp)
-            ContentPadding.InvalidContent -> Modifier.padding(top = topPadding, bottom = 8.dp)
         }
 
         val threadDecoration = @Composable {
@@ -934,8 +968,8 @@ private fun MessageEventBubbleContent(
             event.content !is TimelineItemAttachmentsContent &&
             contentValidationState.hasError()
 
-    val timestampPosition = if (event.juneBatchPosition()?.let { it.first < it.second } == true) {
-        // Element June: only the last picture of a batch shows the timestamp
+    val timestampPosition = if (event.junePhotoGroup?.isLast == false) {
+        // Element June: only the last picture of a run drawn in one bubble shows the timestamp
         TimestampPosition.Hidden
     } else if (needsInvalidContentLayout) {
         // The invalid content view will be displayed in all these cases, independent of the event content
@@ -973,7 +1007,10 @@ private fun MessageEventBubbleContent(
         }
     }
     CommonLayout(
-        showThreadDecoration = timelineMode !is Timeline.Mode.Thread && event.threadInfo is TimelineItemThreadInfo.ThreadResponse,
+        // Element June: a run of pictures in one bubble shows the thread header once, above its first picture
+        showThreadDecoration = timelineMode !is Timeline.Mode.Thread &&
+            event.threadInfo is TimelineItemThreadInfo.ThreadResponse &&
+            event.junePhotoGroup?.isFirst != false,
         timestampPosition = timestampPosition,
         paddingBehaviour = paddingBehaviour,
         inReplyToDetails = event.inReplyTo,

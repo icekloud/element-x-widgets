@@ -105,8 +105,11 @@ sealed interface TimelineItem {
         val forwarder: UserId?,
         /** If [forwarder] is set, the profile of the forwarding user, if it was cached at the time the `EventTimelineItem` was created. */
         val forwarderProfile: ProfileDetails?,
+        /** Element June: set when this picture is drawn in one bubble with the pictures next to it, see juneGroupPhotos. */
+        val junePhotoGroup: JunePhotoGroup? = null,
     ) : TimelineItem {
-        val showSenderInformation = groupPosition.isNew() && !isMine
+        // Element June: a run of pictures in one bubble shows the sender at most once, above its first picture
+        val showSenderInformation = groupPosition.isNew() && !isMine && junePhotoGroup?.isFirst != false
 
         val safeSenderName: String = senderProfile.getDisambiguatedDisplayName(senderId)
 

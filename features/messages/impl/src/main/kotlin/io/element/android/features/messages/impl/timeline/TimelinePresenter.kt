@@ -81,6 +81,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import io.element.android.features.messages.impl.june.JuneQueueStore
+import io.element.android.features.messages.impl.june.juneGroupPhotos
 import io.element.android.features.messages.impl.june.juneHoldQueued
 import io.element.android.features.messages.impl.june.juneQueueTicker
 
@@ -325,7 +326,8 @@ class TimelinePresenter(
         LaunchedEffect(Unit) {
             // Element June: my messages still waiting in the bot's queue are shown in the queue panel instead
             combine(timelineItemsFactory.timelineItems, JuneQueueStore.all, juneQueueTicker()) { items, queues, _ ->
-                juneHoldQueued(room.roomId.value, items, queues)
+                // Element June: then draw runs of pictures as one bubble, on what is actually shown
+                juneGroupPhotos(juneHoldQueued(room.roomId.value, items, queues))
             }
                 .distinctUntilChanged()
                 .onEach { newTimelineItems ->

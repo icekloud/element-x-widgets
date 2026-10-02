@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.LayoutDirection
@@ -61,6 +62,9 @@ private val BUBBLE_RADIUS = 12.dp
 private val avatarRadius = AvatarSize.TimelineSender.dp / 2
 
 private val MIN_BUBBLE_WIDTH = 80.dp
+
+// Element June: how far the border goes past a square (shared) edge, enough for the 1 dp line to be fully clipped
+private val BORDER_SEAM_SHIFT = 2.dp
 
 @Composable
 fun MessageEventBubble(
@@ -114,6 +118,15 @@ fun MessageEventBubble(
             .drawWithCache {
                 // Calculate the outline of the background and cache it
                 val outline = bubbleShape.createOutline(size, layoutDirection, this)
+                // Element June: where pictures drawn in one bubble touch, the border is pushed out of the clip so that
+                // only the outer sides of the shared bubble get a line
+                val borderTopShift = if (squareTop) BORDER_SEAM_SHIFT.toPx() else 0f
+                val borderBottomShift = if (squareBottom) BORDER_SEAM_SHIFT.toPx() else 0f
+                val borderOutline = if (borderTopShift == 0f && borderBottomShift == 0f) {
+                    outline
+                } else {
+                    bubbleShape.createOutline(size.copy(height = size.height + borderTopShift + borderBottomShift), layoutDirection, this)
+                }
 
                 onDrawWithContent {
                     // Draw the contents in a layer to be able to clip them with the same outline
@@ -130,7 +143,11 @@ fun MessageEventBubble(
                         drawContent()
 
                         // Draw border color, if any
-                        updatedBorderColor?.let { drawOutline(outline, it, style = Stroke(width = 1.dp.toPx())) }
+                        updatedBorderColor?.let { color ->
+                            translate(top = -borderTopShift) {
+                                drawOutline(borderOutline, color, style = Stroke(width = 1.dp.toPx()))
+                            }
+                        }
 
                         // And then clip the top start corner if needed to make room for the avatar
                         if (cutTopStart) {

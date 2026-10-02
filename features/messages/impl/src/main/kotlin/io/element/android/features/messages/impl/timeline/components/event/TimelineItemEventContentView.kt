@@ -77,6 +77,8 @@ fun TimelineItemEventContentView(
     eventSink: (TimelineEvent.TimelineItemEvent) -> Unit,
     modifier: Modifier = Modifier,
     onContentLayoutChange: (ContentAvoidingLayoutData) -> Unit = {},
+    // Element June: a picture drawn in one bubble with the pictures next to it, see juneGroupPhotos
+    inJunePhotoGroup: Boolean = false,
 ) {
     val hideMediaContent = remember(eventId, timelineProtectionState.protectionState) {
         timelineProtectionState.hideMediaContent(eventId)
@@ -163,6 +165,7 @@ fun TimelineItemEventContentView(
                         onLongClick = onLongClick,
                         onShowContentClick = onShowContentClick,
                         contentValidationState = contentValidationState,
+                        inJunePhotoGroup = inJunePhotoGroup,
                     )
                 }
                 is TimelineItemStickerContent -> {

@@ -89,6 +89,7 @@ internal fun TimelineItemRow(
                 eventSink = eventSink,
                 modifier = contentModifier,
                 onContentLayoutChange = onContentLayoutChange,
+                inJunePhotoGroup = event.junePhotoGroup != null,
             )
         },
 ) {

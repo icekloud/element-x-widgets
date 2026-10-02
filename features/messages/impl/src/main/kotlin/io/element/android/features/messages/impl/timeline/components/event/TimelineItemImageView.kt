@@ -63,21 +63,20 @@ fun TimelineItemImageView(
     onShowContentClick: () -> Unit,
     contentValidationState: ContentValidationState,
     modifier: Modifier = Modifier,
+    // Element June: drawn in one bubble with the pictures next to it, see juneGroupPhotos
+    inJunePhotoGroup: Boolean = false,
 ) {
     val a11yLabel = stringResource(CommonStrings.common_image)
     val description = content.caption?.let { "$a11yLabel: $it" } ?: a11yLabel
-    // Element June: every picture of a batch gets the same width so the stack looks like one block,
+    // Element June: every picture of a run gets the same width so the stack looks like one block,
     // whatever its own aspect ratio and whether it carries the caption
-    val batchSize = content.juneBatchPosition()?.let {
-        val ratio = (content.aspectRatio ?: DEFAULT_ASPECT_RATIO).coerceIn(MIN_ASPECT_RATIO, MAX_ASPECT_RATIO)
-        DpSize(JUNE_BATCH_WIDTH_DP.dp, (JUNE_BATCH_WIDTH_DP / ratio).coerceIn(MIN_HEIGHT_IN_DP.toFloat(), MAX_HEIGHT_IN_DP / 2f).dp)
-    }
+    val batchSize = if (inJunePhotoGroup) junePhotoGroupPictureSize(content.aspectRatio) else null
     Column(
         modifier = modifier
             .then(if (batchSize != null) Modifier.width(batchSize.width) else Modifier)
             .wrapContentWidth(Alignment.CenterHorizontally)
     ) {
-        val containerModifier = if (content.showCaption) {
+        val containerModifier = if (content.showCaption || inJunePhotoGroup) {
             Modifier.clip(RoundedCornerShape(10.dp))
         } else {
             Modifier
@@ -91,8 +90,8 @@ fun TimelineItemImageView(
                 .blurHashBackground(content.blurhash, alpha = 0.9f)
                 .align(Alignment.CenterHorizontally),
             aspectRatio = coerceRatioWhenHidingContent(content.aspectRatio, hideMediaContent),
-            // Element June: pictures sent together are shown at half height, stacked
-            maxHeight = if (content.juneBatchPosition() != null) MAX_HEIGHT_IN_DP / 2 else MAX_HEIGHT_IN_DP,
+            // Element June: pictures drawn in one bubble are shown at half height, stacked
+            maxHeight = if (batchSize != null) MAX_HEIGHT_IN_DP / 2 else MAX_HEIGHT_IN_DP,
         ) {
             if (isContentBeingValidated) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -202,7 +201,18 @@ internal fun ATimelineItemEventRowPreview() = ElementPreview {
     }
 }
 
-private const val JUNE_BATCH_WIDTH_DP = 260f
+// Element June: width of a picture drawn in one bubble with the pictures next to it (260 dp bubble minus 8 dp padding on each side)
+private const val JUNE_GROUP_PICTURE_WIDTH_DP = 244f
+
+/**
+ * Element June: size of a picture drawn in one bubble with others: the same width for all, the height follows the picture
+ * but stays between the usual minimum and half the usual maximum.
+ */
+internal fun junePhotoGroupPictureSize(aspectRatio: Float?): DpSize {
+    val ratio = (aspectRatio ?: DEFAULT_ASPECT_RATIO).takeUnless { it.isNaN() }?.coerceIn(MIN_ASPECT_RATIO, MAX_ASPECT_RATIO) ?: DEFAULT_ASPECT_RATIO
+    val height = (JUNE_GROUP_PICTURE_WIDTH_DP / ratio).coerceIn(MIN_HEIGHT_IN_DP.toFloat(), MAX_HEIGHT_IN_DP / 2f)
+    return DpSize(JUNE_GROUP_PICTURE_WIDTH_DP.dp, height.dp)
+}
 
 private val JUNE_BATCH_FILENAME = Regex("^june-[0-9a-f]{6,32}-(\\d{1,3})of(\\d{1,3})\\.[A-Za-z0-9]{1,5}$")
 
