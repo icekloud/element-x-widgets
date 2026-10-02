@@ -77,7 +77,7 @@ class JuneSettingsTest : RobolectricTest() {
     }
 
     @Test
-    fun `reading the saved value: broken values are ignored`() {
+    fun `reading the saved value ignores broken values`() {
         assertThat(setting.read(prefs())).isNull()
         prefs().edit().putInt(setting.key, 55).commit()
         assertThat(setting.read(prefs())).isEqualTo(55)

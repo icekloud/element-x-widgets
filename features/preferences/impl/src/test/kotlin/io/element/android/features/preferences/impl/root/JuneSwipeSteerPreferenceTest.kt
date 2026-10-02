@@ -10,6 +10,7 @@
 package io.element.android.features.preferences.impl.root
 
 import android.content.Context
+import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsEnabled
@@ -47,7 +48,7 @@ class JuneSwipeSteerPreferenceTest : RobolectricTest() {
     }
 
     @Test
-    fun `the default value is shown and cannot be reset`() = runAndroidComposeUiTest {
+    fun `the default value is shown and cannot be reset`() = runAndroidComposeUiTest<ComponentActivity> {
         setContent { JuneSwipeSteerPreference() }
         onNodeWithText("밀어서 스티어링 감도").assertExists()
         onNodeWithText("행 너비의 40% (기본값)").assertExists()
@@ -56,7 +57,7 @@ class JuneSwipeSteerPreferenceTest : RobolectricTest() {
     }
 
     @Test
-    fun `moving the slider saves the value and shows it`() = runAndroidComposeUiTest {
+    fun `moving the slider saves the value and shows it`() = runAndroidComposeUiTest<ComponentActivity> {
         setContent { JuneSwipeSteerPreference() }
         // Slider position 0..1 over 20..70 %: 0.1 is 25 %
         onNode(hasContentDescription("밀어서 스티어링 감도")).performSemanticsAction(SemanticsActions.SetProgress) { it(0.1f) }
@@ -74,7 +75,7 @@ class JuneSwipeSteerPreferenceTest : RobolectricTest() {
     }
 
     @Test
-    fun `back to the default button restores 40 percent`() = runAndroidComposeUiTest {
+    fun `back to the default button restores 40 percent`() = runAndroidComposeUiTest<ComponentActivity> {
         JuneSettings.setInt(context, setting, 60)
         setContent { JuneSwipeSteerPreference() }
         onNodeWithText("행 너비의 60%").assertExists()
@@ -86,7 +87,7 @@ class JuneSwipeSteerPreferenceTest : RobolectricTest() {
     }
 
     @Test
-    fun `the item is in the app settings of the settings screen`() = runAndroidComposeUiTest {
+    fun `the item is in the app settings of the settings screen`() = runAndroidComposeUiTest<ComponentActivity> {
         setContent {
             PreferencesRootView(
                 state = aPreferencesRootState(eventSink = {}),

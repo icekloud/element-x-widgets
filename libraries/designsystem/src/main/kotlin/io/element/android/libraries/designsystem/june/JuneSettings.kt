@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import io.element.android.libraries.core.data.tryOrNull
 
 /**
  * Element June: user customisation kept on the device only (colours of the app and the widgets,
@@ -87,7 +88,7 @@ object JuneSettings {
 
         /** The saved value, or null when there is none or it is broken (outside the range, saved with another type). */
         fun read(prefs: SharedPreferences): Int? {
-            val raw = runCatching { if (prefs.contains(key)) prefs.getInt(key, default) else null }.getOrNull() ?: return null
+            val raw = tryOrNull { if (prefs.contains(key)) prefs.getInt(key, default) else null } ?: return null
             return raw.takeIf { it in min..max }
         }
 
