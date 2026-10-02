@@ -47,6 +47,7 @@ import io.element.android.features.messages.impl.timeline.model.TimelineItem
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemEventContentWithAttachment
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemTextBasedContent
 import io.element.android.libraries.architecture.bindings
+import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.theme.components.DropdownMenu
 import io.element.android.libraries.designsystem.theme.components.DropdownMenuItem
 import io.element.android.libraries.designsystem.theme.components.Icon
@@ -161,6 +162,8 @@ private fun JuneQueuePanel(
         }
     }
     val header = juneQueueHeader(items.size, steering.size) ?: return
+    // "밀어서 스티어링 감도" setting (observable: a change in the settings applies from the next push)
+    val swipeFraction = JuneSettings.swipeSteerFraction(context)
 
     fun send(op: String, item: JuneQueueItem) {
         menuFor = null
@@ -215,6 +218,7 @@ private fun JuneQueuePanel(
                     val editing = item.id == editingEventId
                     JuneSwipeSteerRow(
                         canSwipe = juneCanSwipeSteer(item, editing = editing, busy = busy),
+                        fraction = swipeFraction,
                         onSteer = { onDone ->
                             menuFor = null
                             ops.send("steer", item.id, onDone = onDone)

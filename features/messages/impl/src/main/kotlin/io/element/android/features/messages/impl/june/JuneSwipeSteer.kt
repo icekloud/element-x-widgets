@@ -42,12 +42,21 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.element.android.compound.theme.ElementTheme
+import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.theme.components.Text
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-/** Element June: how far (part of the row width) a queued row has to be pushed to the left to steer it. */
-internal const val JUNE_SWIPE_STEER_FRACTION = 0.4f
+/**
+ * Element June: how far (part of the row width) a queued row has to be pushed to the left to steer it, from the
+ * "밀어서 스티어링 감도" setting. Anything outside 20..70 % (or not a number) gives the default 40 %.
+ */
+internal fun juneSwipeFraction(fraction: Float): Float {
+    val setting = JuneSettings.SWIPE_STEER_PERCENT
+    val min = setting.min / 100f
+    val max = setting.max / 100f
+    return if (fraction.isNaN() || fraction < min || fraction > max) setting.default / 100f else fraction
+}
 
 /** The gateway steers text messages and messages with pictures; other files and videos cannot be steered. */
 internal fun juneCanSteer(item: JuneQueueItem): Boolean = item.kind == "text" || item.kind == "photo"
@@ -60,9 +69,9 @@ internal fun juneCanSwipeSteer(item: JuneQueueItem, editing: Boolean, busy: Bool
 internal fun juneSwipeOffset(current: Float, delta: Float, widthPx: Float): Float =
     if (widthPx <= 0f) 0f else (current + delta).coerceIn(-widthPx, 0f)
 
-/** True when the row at [offsetPx] is pushed far enough to the left to steer when let go. */
-internal fun juneSwipeReached(offsetPx: Float, widthPx: Float): Boolean =
-    widthPx > 0f && -offsetPx >= widthPx * JUNE_SWIPE_STEER_FRACTION
+/** True when the row at [offsetPx] is pushed at least [fraction] of its width to the left, so it steers when let go. */
+internal fun juneSwipeReached(offsetPx: Float, widthPx: Float, fraction: Float): Boolean =
+    widthPx > 0f && -offsetPx >= widthPx * juneSwipeFraction(fraction)
 
 /** Words shown behind the pushed row. */
 internal fun juneSwipeHint(reached: Boolean, sent: Boolean): String = when {
@@ -75,7 +84,8 @@ internal fun juneSwipeHint(reached: Boolean, sent: Boolean): String = when {
  * Element June: the state of a queued row pushed to the left to steer it ("slide to unlock").
  *
  * - [onDrag]: the finger moves the row (only to the left). [onThresholdReached] (haptic feedback) runs once each time
- *   the row gets past [JUNE_SWIPE_STEER_FRACTION] of its width.
+ *   the row gets past [fraction] of its width (see [juneSwipeFraction]). The row updates [fraction] from the setting
+ *   while it is at rest, so a changed setting applies from the next push on.
  * - [onRelease]: the finger is lifted. Returns true when the row has to be steered: it is far enough and [allowed].
  *   The row then stays [isSent] until [onSettled] (the gateway answered), otherwise it goes back.
  */
@@ -85,9 +95,10 @@ internal class JuneSwipeSteerHandler(private val onThresholdReached: () -> Unit)
     var isSent by mutableStateOf(false)
         private set
     var widthPx = 0f
+    var fraction = JuneSettings.SWIPE_STEER_PERCENT.default / 100f
     private var wasReached = false
 
-    val isReached: Boolean get() = juneSwipeReached(offset, widthPx)
+    val isReached: Boolean get() = juneSwipeReached(offset, widthPx, fraction)
 
     fun onDrag(delta: Float) {
         offset = juneSwipeOffset(offset, delta, widthPx)
@@ -134,12 +145,14 @@ private suspend fun JuneSwipeSteerHandler.animateOffsetTo(target: Float, draggab
  * Element June: a queued row that can be pushed from right to left to steer the message. Behind it, "⏩ 스티어링" shows up.
  * Only horizontal drags are taken, so the panel still scrolls vertically and the buttons in the row still work.
  *
+ * [fraction] is the part of the row width it has to be pushed (the "밀어서 스티어링 감도" setting).
  * [onSteer] sends the request and calls the given callback once the gateway answered (or the request failed). A failed
  * request brings the row back to its place; a steered message leaves the queue, and its row with it.
  */
 @Composable
 internal fun JuneSwipeSteerRow(
     canSwipe: Boolean,
+    fraction: Float,
     onSteer: (onDone: (ok: Boolean) -> Unit) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -151,6 +164,8 @@ internal fun JuneSwipeSteerRow(
     val draggableState = rememberDraggableState { delta -> handler.onDrag(delta) }
     val currentCanSwipe by rememberUpdatedState(canSwipe)
     val currentOnSteer by rememberUpdatedState(onSteer)
+    // Only while the row is at rest: the threshold does not move under a finger that is pushing
+    if (handler.offset == 0f) handler.fraction = fraction
 
     fun steer() = currentOnSteer { _ -> handler.onSettled() }
 
@@ -184,7 +199,7 @@ internal fun JuneSwipeSteerRow(
                         if (handler.onRelease(currentCanSwipe)) {
                             // Send first, then rest at the threshold while waiting for the gateway
                             steer()
-                            handler.animateOffsetTo(-handler.widthPx * JUNE_SWIPE_STEER_FRACTION, draggableState)
+                            handler.animateOffsetTo(-handler.widthPx * juneSwipeFraction(handler.fraction), draggableState)
                         }
                         // Not sent, or already answered while settling
                         if (!handler.isSent) handler.animateOffsetTo(0f, draggableState)

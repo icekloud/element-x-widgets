@@ -31,17 +31,63 @@ class JuneSwipeSteerTest {
     }
 
     @Test
-    fun `the threshold is 40 percent of the row width, inclusive`() {
-        assertThat(juneSwipeReached(offsetPx = -399f, widthPx = 1000f)).isFalse()
-        assertThat(juneSwipeReached(offsetPx = -400f, widthPx = 1000f)).isTrue()
-        assertThat(juneSwipeReached(offsetPx = -1000f, widthPx = 1000f)).isTrue()
+    fun `the default threshold is 40 percent of the row width, inclusive`() {
+        assertThat(juneSwipeReached(offsetPx = -399f, widthPx = 1000f, fraction = 0.4f)).isFalse()
+        assertThat(juneSwipeReached(offsetPx = -400f, widthPx = 1000f, fraction = 0.4f)).isTrue()
+        assertThat(juneSwipeReached(offsetPx = -1000f, widthPx = 1000f, fraction = 0.4f)).isTrue()
+    }
+
+    @Test
+    fun `the threshold follows the setting, inclusive at both ends of its range`() {
+        // 20 %, the most sensitive
+        assertThat(juneSwipeReached(offsetPx = -199f, widthPx = 1000f, fraction = 0.2f)).isFalse()
+        assertThat(juneSwipeReached(offsetPx = -200f, widthPx = 1000f, fraction = 0.2f)).isTrue()
+        // 70 %, the least sensitive
+        assertThat(juneSwipeReached(offsetPx = -699f, widthPx = 1000f, fraction = 0.7f)).isFalse()
+        assertThat(juneSwipeReached(offsetPx = -700f, widthPx = 1000f, fraction = 0.7f)).isTrue()
+        // In between
+        assertThat(juneSwipeReached(offsetPx = -549f, widthPx = 1000f, fraction = 0.55f)).isFalse()
+        assertThat(juneSwipeReached(offsetPx = -550f, widthPx = 1000f, fraction = 0.55f)).isTrue()
+    }
+
+    @Test
+    fun `a threshold outside 20 to 70 percent falls back to 40 percent`() {
+        for (bad in listOf(0f, 0.19f, 0.71f, 1f, -0.5f, Float.NaN, Float.POSITIVE_INFINITY)) {
+            assertThat(juneSwipeFraction(bad)).isEqualTo(0.4f)
+            assertThat(juneSwipeReached(offsetPx = -399f, widthPx = 1000f, fraction = bad)).isFalse()
+            assertThat(juneSwipeReached(offsetPx = -400f, widthPx = 1000f, fraction = bad)).isTrue()
+        }
+        assertThat(juneSwipeFraction(0.2f)).isEqualTo(0.2f)
+        assertThat(juneSwipeFraction(0.7f)).isEqualTo(0.7f)
     }
 
     @Test
     fun `only a push to the left counts, and nothing before the row is measured`() {
-        assertThat(juneSwipeReached(offsetPx = 400f, widthPx = 1000f)).isFalse()
-        assertThat(juneSwipeReached(offsetPx = 0f, widthPx = 1000f)).isFalse()
-        assertThat(juneSwipeReached(offsetPx = -400f, widthPx = 0f)).isFalse()
+        assertThat(juneSwipeReached(offsetPx = 400f, widthPx = 1000f, fraction = 0.4f)).isFalse()
+        assertThat(juneSwipeReached(offsetPx = 0f, widthPx = 1000f, fraction = 0.2f)).isFalse()
+        assertThat(juneSwipeReached(offsetPx = -400f, widthPx = 0f, fraction = 0.4f)).isFalse()
+    }
+
+    @Test
+    fun `the handler uses the threshold it was given`() {
+        var haptics = 0
+        val handler = JuneSwipeSteerHandler { haptics++ }.apply {
+            widthPx = 1000f
+            fraction = 0.2f
+        }
+        handler.onDrag(-199f)
+        assertThat(handler.isReached).isFalse()
+        handler.onDrag(-1f)
+        assertThat(handler.isReached).isTrue()
+        assertThat(haptics).isEqualTo(1)
+        assertThat(handler.onRelease(allowed = true)).isTrue()
+        handler.onSettled()
+        handler.moveTo(0f)
+        // The setting changed to 70 %: 50 % is not enough anymore
+        handler.fraction = 0.7f
+        handler.onDrag(-500f)
+        assertThat(handler.isReached).isFalse()
+        assertThat(handler.onRelease(allowed = true)).isFalse()
     }
 
     @Test

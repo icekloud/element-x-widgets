@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
@@ -138,11 +139,55 @@ class JuneSwipeSteerRowTest : RobolectricTest() {
         )
     }
 
-    private fun AndroidComposeUiTest<ComponentActivity>.setRow(canSwipe: Boolean = true) {
+    @Test
+    fun `a sensitive setting (20 percent) steers with a short push`() = runAndroidComposeUiTest<ComponentActivity> {
+        setRow(fraction = 0.2f)
+        // 10 %: not enough
+        onNodeWithTag(ROW).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.1f) }
+        waitForIdle()
+        assertThat(steers).isEqualTo(0)
+        // 35 %: enough at 20 % (it would not be at the default 40 %)
+        onNodeWithTag(ROW).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.35f) }
+        waitForIdle()
+        assertThat(steers).isEqualTo(1)
+    }
+
+    @Test
+    fun `a hard setting (70 percent) needs a long push`() = runAndroidComposeUiTest<ComponentActivity> {
+        setRow(fraction = 0.7f)
+        // 55 %: enough at the default 40 %, not at 70 %
+        onNodeWithTag(ROW).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.55f) }
+        waitForIdle()
+        assertThat(steers).isEqualTo(0)
+        // 90 %: enough
+        onNodeWithTag(ROW).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.9f) }
+        waitForIdle()
+        assertThat(steers).isEqualTo(1)
+    }
+
+    @Test
+    fun `a changed setting applies from the next push, without a new row`() = runAndroidComposeUiTest<ComponentActivity> {
+        val fraction = mutableFloatStateOf(0.7f)
+        setRowLive(fraction = { fraction.floatValue })
+        onNodeWithTag(ROW).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.35f) }
+        waitForIdle()
+        assertThat(steers).isEqualTo(0)
+        fraction.floatValue = 0.2f
+        waitForIdle()
+        onNodeWithTag(ROW).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.35f) }
+        waitForIdle()
+        assertThat(steers).isEqualTo(1)
+    }
+
+    private fun AndroidComposeUiTest<ComponentActivity>.setRow(canSwipe: Boolean = true, fraction: Float = 0.4f) =
+        setRowLive(canSwipe = canSwipe, fraction = { fraction })
+
+    private fun AndroidComposeUiTest<ComponentActivity>.setRowLive(canSwipe: Boolean = true, fraction: () -> Float) {
         setContent {
             Column(modifier = Modifier.width(360.dp).heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
                 JuneSwipeSteerRow(
                     canSwipe = canSwipe,
+                    fraction = fraction(),
                     onSteer = { onDone ->
                         steers++
                         answer = onDone

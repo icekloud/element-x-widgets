@@ -65,7 +65,53 @@ object JuneSettings {
         TextFormatting("text_formatting", "텍스트 서식"),
     }
 
+    /**
+     * A whole number setting with a default and an allowed range ([min]..[max], moved by [step]). A saved value outside
+     * the range, or saved with another type, is replaced by [default]. More gesture settings can be added the same way.
+     */
+    class IntSetting(val key: String, val default: Int, val min: Int, val max: Int, val step: Int = 1) {
+        init {
+            require(min <= default && default <= max && step > 0)
+        }
+
+        /** The value to use for a saved [raw] value: missing or outside the range gives the default. */
+        fun sanitize(raw: Int?): Int = if (raw == null || raw < min || raw > max) default else raw
+
+        /** A value picked by the user (for instance on a slider), rounded to [step] and kept in the range. */
+        fun clamp(value: Float): Int {
+            if (value.isNaN()) return default
+            val inRange = value.coerceIn(min.toFloat(), max.toFloat())
+            val rounded = min + Math.round((inRange - min) / step) * step
+            return rounded.coerceIn(min, max)
+        }
+
+        /** The saved value, or null when there is none or it is broken (outside the range, saved with another type). */
+        fun read(prefs: SharedPreferences): Int? {
+            val raw = runCatching { if (prefs.contains(key)) prefs.getInt(key, default) else null }.getOrNull() ?: return null
+            return raw.takeIf { it in min..max }
+        }
+
+        fun write(prefs: SharedPreferences, value: Int) {
+            prefs.edit().putInt(key, clamp(value.toFloat())).apply()
+        }
+
+        /** Position (0..1) of [value] on a slider going from [min] to [max]. */
+        fun toSlider(value: Int): Float = (sanitize(value) - min).toFloat() / (max - min)
+
+        /** The value for a slider position (0..1), rounded to [step]. */
+        fun fromSlider(position: Float): Int = clamp(min + position.coerceIn(0f, 1f) * (max - min))
+
+        /** Number of stops between both ends of the slider, one for each [step]. */
+        val sliderSteps: Int get() = (max - min) / step - 1
+    }
+
+    /** How far (percent of the row width) a queued message has to be pushed to the left to steer it. */
+    val SWIPE_STEER_PERCENT = IntSetting(key = "swipe_steer_percent", default = 40, min = 20, max = 70, step = 5)
+
+    private val INT_SETTINGS = listOf(SWIPE_STEER_PERCENT)
+
     @Volatile private var loaded = false
+    private val ints = mutableStateMapOf<String, Int>()
     private val colors = mutableStateMapOf<ColorSlot, Color>()
     private val menuOrder = mutableStateListOf<ComposerMenuItem>()
     private val menuHidden = mutableStateListOf<ComposerMenuItem>()
@@ -93,6 +139,9 @@ object JuneSettings {
             val savedQuick = p.getString(KEY_QUICK, null)
             quick.addAll(if (savedQuick == null) DEFAULT_QUICK_COMMANDS else savedQuick.split(QUICK_SEPARATOR).filter { it.isNotBlank() })
             apertureRooms.value = p.getString(KEY_APERTURE_ROOMS, null) ?: DEFAULT_APERTURE_ROOMS
+            INT_SETTINGS.forEach { setting ->
+                setting.read(p)?.let { ints[setting.key] = it }
+            }
             loaded = true
         }
     }
@@ -228,6 +277,30 @@ object JuneSettings {
         apertureRooms.value = text
         prefs(context).edit().putString(KEY_APERTURE_ROOMS, text).apply()
     }
+
+    /** Current value of [setting] (observable): the saved one, or the default. */
+    fun intValue(context: Context, setting: IntSetting): Int {
+        ensureLoaded(context)
+        return setting.sanitize(ints[setting.key])
+    }
+
+    fun isCustomised(setting: IntSetting): Boolean = ints.containsKey(setting.key)
+
+    fun setInt(context: Context, setting: IntSetting, value: Int) {
+        ensureLoaded(context)
+        val v = setting.clamp(value.toFloat())
+        ints[setting.key] = v
+        setting.write(prefs(context), v)
+    }
+
+    fun resetInt(context: Context, setting: IntSetting) {
+        ensureLoaded(context)
+        ints.remove(setting.key)
+        prefs(context).edit().remove(setting.key).apply()
+    }
+
+    /** Part of the row width (0.2..0.7) a queued message has to be pushed to the left to steer it (observable). */
+    fun swipeSteerFraction(context: Context): Float = intValue(context, SWIPE_STEER_PERCENT) / 100f
 
     /** True if [roomName] contains one of the Aperture keywords (case insensitive). */
     fun isApertureRoom(context: Context, roomName: String?): Boolean {

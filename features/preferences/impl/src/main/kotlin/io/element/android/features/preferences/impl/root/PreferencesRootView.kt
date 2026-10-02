@@ -333,6 +333,8 @@ private fun AppSettingsSection(
                 )
             },
         )
+        // Element June: how far a queued message has to be pushed to steer it
+        JuneSwipeSteerPreference()
         ListItem(
             content = { Text(stringResource(id = CommonStrings.common_media_upload_quality)) },
             leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
