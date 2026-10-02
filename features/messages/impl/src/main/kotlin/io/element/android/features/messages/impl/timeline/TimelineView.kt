@@ -573,7 +573,7 @@ private fun JumpToPositionButton(
                     .border(1.dp, ElementTheme.colors.borderDisabled, CircleShape)
                     .then(
                         if (onJuneLongPress != null) {
-                            // Element June: a 1 second long press, longer than the system one, with a haptic tick when it is reached
+                            // Element June: a 0.5 second long press, with a haptic tick when it is reached
                             val haptic = LocalHapticFeedback.current
                             val latestOnClick by rememberUpdatedState(onClick)
                             val latestOnLongPress by rememberUpdatedState(onJuneLongPress)

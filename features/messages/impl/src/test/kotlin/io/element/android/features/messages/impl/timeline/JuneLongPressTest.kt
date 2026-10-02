@@ -21,12 +21,12 @@ class JuneLongPressTest {
     )
 
     @Test
-    fun `the long press lasts 1 second`() {
-        assertThat(JUNE_LONG_PRESS_MILLIS).isEqualTo(1_000L)
+    fun `the long press lasts half a second`() {
+        assertThat(JUNE_LONG_PRESS_MILLIS).isEqualTo(500L)
         assertThat(juneIsLongPress(0)).isFalse()
-        assertThat(juneIsLongPress(999)).isFalse()
-        assertThat(juneIsLongPress(1_000)).isTrue()
-        assertThat(juneIsLongPress(1_001)).isTrue()
+        assertThat(juneIsLongPress(499)).isFalse()
+        assertThat(juneIsLongPress(500)).isTrue()
+        assertThat(juneIsLongPress(501)).isTrue()
     }
 
     @Test
@@ -39,33 +39,33 @@ class JuneLongPressTest {
     }
 
     @Test
-    fun `a press released at 999 ms is still a tap`() {
+    fun `a press released at 499 ms is still a tap`() {
         handler.onDown()
-        assertThat(handler.onHeld(999)).isFalse()
-        handler.onRelease(heldMillis = 999)
+        assertThat(handler.onHeld(499)).isFalse()
+        handler.onRelease(heldMillis = 499)
         assertThat(clicks).isEqualTo(1)
         assertThat(longClicks).isEqualTo(0)
         assertThat(haptics).isEqualTo(0)
     }
 
     @Test
-    fun `holding 1000 ms runs the long press once with one haptic tick, and the release does not click`() {
+    fun `holding 500 ms runs the long press once with one haptic tick, and the release does not click`() {
         handler.onDown()
-        assertThat(handler.onHeld(1_000)).isTrue()
+        assertThat(handler.onHeld(500)).isTrue()
         assertThat(longClicks).isEqualTo(1)
         assertThat(haptics).isEqualTo(1)
         // Still holding: nothing more
-        assertThat(handler.onHeld(1_500)).isTrue()
-        handler.onRelease(heldMillis = 2_000)
+        assertThat(handler.onHeld(750)).isTrue()
+        handler.onRelease(heldMillis = 1_000)
         assertThat(clicks).isEqualTo(0)
         assertThat(longClicks).isEqualTo(1)
         assertThat(haptics).isEqualTo(1)
     }
 
     @Test
-    fun `a release at exactly 1000 ms before the timer fired is a long press, not a tap`() {
+    fun `a release at exactly 500 ms before the timer fired is a long press, not a tap`() {
         handler.onDown()
-        handler.onRelease(heldMillis = 1_000)
+        handler.onRelease(heldMillis = 500)
         assertThat(clicks).isEqualTo(0)
         assertThat(longClicks).isEqualTo(1)
         assertThat(haptics).isEqualTo(1)
@@ -83,13 +83,13 @@ class JuneLongPressTest {
     @Test
     fun `each press is decided on its own`() {
         handler.onDown()
-        handler.onHeld(1_000)
-        handler.onRelease(1_200)
+        handler.onHeld(500)
+        handler.onRelease(600)
         handler.onDown()
         handler.onRelease(100)
         handler.onDown()
-        handler.onHeld(1_000)
-        handler.onRelease(1_100)
+        handler.onHeld(500)
+        handler.onRelease(550)
         assertThat(clicks).isEqualTo(1)
         assertThat(longClicks).isEqualTo(2)
         assertThat(haptics).isEqualTo(2)

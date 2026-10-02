@@ -22,8 +22,8 @@ import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 
-/** Element June: how long ▼ has to be held to go straight to the newest message. Longer than the system long press on purpose. */
-internal const val JUNE_LONG_PRESS_MILLIS = 1_000L
+/** Element June: how long ▼ has to be held to go straight to the newest message (0.5 s). */
+internal const val JUNE_LONG_PRESS_MILLIS = 500L
 
 /** True when a press held for [heldMillis] is a long press. */
 internal fun juneIsLongPress(heldMillis: Long): Boolean = heldMillis >= JUNE_LONG_PRESS_MILLIS

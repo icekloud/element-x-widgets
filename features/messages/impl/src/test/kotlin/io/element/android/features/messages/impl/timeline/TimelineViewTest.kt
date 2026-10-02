@@ -127,7 +127,7 @@ class TimelineViewTest : RobolectricTest() {
     }
 
     @Test
-    fun `holding jump to bottom for 1 second on detached timeline jumps to live once`() = runAndroidComposeUiTest {
+    fun `holding jump to bottom for half a second on detached timeline jumps to live once`() = runAndroidComposeUiTest {
         val eventsRecorder = EventsRecorder<TimelineEvent>()
         setTimelineView(
             state = aTimelineState(
@@ -139,7 +139,7 @@ class TimelineViewTest : RobolectricTest() {
         eventsRecorder.assertSingle(TimelineEvent.OnScrollFinished(firstIndex = 0))
         eventsRecorder.clear()
 
-        onNodeWithTag(TestTags.jumpToBottomButton.value).performTouchInput { longClick(durationMillis = 1_500) }
+        onNodeWithTag(TestTags.jumpToBottomButton.value).performTouchInput { longClick(durationMillis = 800) }
         waitForIdle()
         eventsRecorder.assertSingle(TimelineEvent.JumpToLive)
     }
@@ -158,7 +158,7 @@ class TimelineViewTest : RobolectricTest() {
         eventsRecorder.assertSingle(TimelineEvent.OnScrollFinished(firstIndex = 0))
         eventsRecorder.clear()
 
-        onNodeWithTag(TestTags.jumpToBottomButton.value).performTouchInput { longClick(durationMillis = 1_500) }
+        onNodeWithTag(TestTags.jumpToBottomButton.value).performTouchInput { longClick(durationMillis = 800) }
         waitForIdle()
         eventsRecorder.assertEmpty()
     }

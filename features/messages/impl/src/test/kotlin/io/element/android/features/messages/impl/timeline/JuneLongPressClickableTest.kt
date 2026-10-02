@@ -51,11 +51,11 @@ class JuneLongPressClickableTest : RobolectricTest() {
     }
 
     @Test
-    fun `holding 900 ms is still a tap`() = runAndroidComposeUiTest<ComponentActivity> {
+    fun `holding 450 ms is still a tap`() = runAndroidComposeUiTest<ComponentActivity> {
         setButton()
         onNodeWithTag(TAG).performTouchInput {
             down(center)
-            advanceEventTime(900)
+            advanceEventTime(450)
             up()
         }
         waitForIdle()
@@ -65,19 +65,23 @@ class JuneLongPressClickableTest : RobolectricTest() {
     }
 
     @Test
-    fun `the system long press time is not enough`() = runAndroidComposeUiTest<ComponentActivity> {
+    fun `releasing at exactly 500 ms is a long press, not a tap`() = runAndroidComposeUiTest<ComponentActivity> {
         setButton()
-        // Default longClick() lasts the system long press timeout + 100 ms, about 0.5 s
-        onNodeWithTag(TAG).performTouchInput { longClick() }
+        onNodeWithTag(TAG).performTouchInput {
+            down(center)
+            advanceEventTime(500)
+            up()
+        }
         waitForIdle()
-        assertThat(clicks).isEqualTo(1)
-        assertThat(longClicks).isEqualTo(0)
+        assertThat(clicks).isEqualTo(0)
+        assertThat(longClicks).isEqualTo(1)
+        assertThat(haptics).isEqualTo(1)
     }
 
     @Test
-    fun `holding 1 second runs the long press once and no click`() = runAndroidComposeUiTest<ComponentActivity> {
+    fun `holding 800 ms runs the long press once and no click`() = runAndroidComposeUiTest<ComponentActivity> {
         setButton()
-        onNodeWithTag(TAG).performTouchInput { longClick(durationMillis = 1_500) }
+        onNodeWithTag(TAG).performTouchInput { longClick(durationMillis = 800) }
         waitForIdle()
         assertThat(clicks).isEqualTo(0)
         assertThat(longClicks).isEqualTo(1)
