@@ -47,7 +47,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -114,14 +113,11 @@ import io.element.android.libraries.designsystem.components.ExpandableBottomShee
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.components.rememberExpandableBottomSheetLayoutState
-import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.text.toAnnotatedString
 import io.element.android.libraries.designsystem.text.toDp
 import io.element.android.libraries.designsystem.theme.components.BottomSheetDragHandle
-import io.element.android.libraries.designsystem.theme.components.DropdownMenu
-import io.element.android.libraries.designsystem.theme.components.DropdownMenuItem
 import io.element.android.libraries.designsystem.theme.components.Icon
 import io.element.android.libraries.designsystem.theme.components.Scaffold
 import io.element.android.libraries.designsystem.theme.components.Text
@@ -165,6 +161,7 @@ fun MessagesView(
     onThreadsListClick: () -> Unit,
     knockRequestsBannerView: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    onBotFilesClick: () -> Unit = {},
     forceJumpToBottomVisibility: Boolean = false,
     customReactionBottomSheet: @Composable () -> Unit,
 ) {
@@ -282,6 +279,7 @@ fun MessagesView(
                                     onJoinCallClick = onJoinCallClick,
                                     onThreadsListClick = onThreadsListClick,
                                     onSendQuickText = { state.eventSink(MessagesEvent.SendQuickText(it)) },
+                                    onBotFilesClick = { hidingKeyboard { onBotFilesClick() } },
                                 )
                             }
                         )
@@ -501,34 +499,21 @@ internal fun RowScope.MessagesMenuActions(
     onJoinCallClick: (isAudioCall: Boolean) -> Unit,
     onThreadsListClick: () -> Unit,
     onSendQuickText: (String) -> Unit = {},
+    onBotFilesClick: () -> Unit = {},
 ) {
-    // Element June: stop the bot's current task, and quick commands (edited in Settings > June 꾸미기)
+    // Element June: stop the bot's current task, and the list of files the bot sent in this room
     var showStopConfirm by remember { mutableStateOf(false) }
-    var showQuick by remember { mutableStateOf(false) }
     Icon(
         modifier = Modifier.clickable { showStopConfirm = true },
         imageVector = CompoundIcons.Stop(),
         contentDescription = "중단",
     )
     Spacer(Modifier.width(12.dp))
-    Box {
-        Icon(
-            modifier = Modifier.clickable { showQuick = true },
-            imageVector = CompoundIcons.ListBulleted(),
-            contentDescription = "빠른 명령",
-        )
-        DropdownMenu(expanded = showQuick, onDismissRequest = { showQuick = false }) {
-            JuneSettings.quickCommands(LocalContext.current).forEach { text ->
-                DropdownMenuItem(
-                    text = { Text(text) },
-                    onClick = {
-                        showQuick = false
-                        onSendQuickText(text)
-                    },
-                )
-            }
-        }
-    }
+    Icon(
+        modifier = Modifier.clickable(onClick = onBotFilesClick),
+        imageVector = CompoundIcons.ListBulleted(),
+        contentDescription = "봇이 보낸 파일",
+    )
     Spacer(Modifier.width(12.dp))
     if (showStopConfirm) {
         ConfirmationDialog(
