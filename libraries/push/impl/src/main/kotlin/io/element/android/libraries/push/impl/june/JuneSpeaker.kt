@@ -13,21 +13,31 @@ import dev.zacsweers.metro.SingleIn
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.di.annotations.AppCoroutineScope
 import io.element.android.libraries.push.impl.notifications.model.NotifiableEvent
+import io.element.android.libraries.push.impl.notifications.model.NotifiableMessageEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 private const val TAG = "JuneSpeaker"
 
 /** Longest time spent reading one line aloud. */
 internal val JUNE_SPEAK_LINE_TIMEOUT = 60.seconds
+
+/** Number of audio focus requests before giving up, and the wait between two of them. */
+internal const val JUNE_SPEAK_FOCUS_ATTEMPTS = 3
+internal val JUNE_SPEAK_FOCUS_RETRY_DELAY = 300.milliseconds
+
+/** Wait after getting the audio focus, so the music of other apps is already lowered when the first syllable is read. */
+internal val JUNE_SPEAK_DUCK_DELAY = 500.milliseconds
 
 /**
  * Element June: reads aloud the 🔊 line of incoming messages when a Bluetooth audio output is connected.
@@ -47,14 +57,24 @@ interface JuneSpeechEngine {
     /** The reason not to read aloud now, or null if it can be read. */
     fun currentBlock(): JuneSpeakBlock?
 
-    /** Prepares the speech (engine in Korean, audio focus). Returns false if nothing can be read. */
-    suspend fun open(): Boolean
+    /** Asks for the audio focus (other audio is lowered) if not held yet. Returns true if it is held. Released by [close]. */
+    fun requestFocus(): Boolean
+
+    /** Prepares the text to speech engine in Korean. Returns null when ready, else the reason why nothing can be read. */
+    suspend fun open(): JuneSpeakResult?
 
     /** Reads [text] aloud and suspends until it is done. Returns false on failure. */
     suspend fun speak(text: String): Boolean
 
-    /** Releases what [open] took. */
+    /** Releases the audio focus and the engine. Can be called at any time, even if nothing was taken. */
     fun close()
+}
+
+/**
+ * Element June: keeps the outcome of the last attempt to read a 🔊 line, to show it in the settings. Never the message text.
+ */
+fun interface JuneSpeakStatusStore {
+    fun record(result: JuneSpeakResult)
 }
 
 @ContributesBinding(AppScope::class)
@@ -62,6 +82,7 @@ interface JuneSpeechEngine {
 class DefaultJuneSpeaker(
     private val engine: JuneSpeechEngine,
     private val keepAlive: JuneSpeakKeepAlive,
+    private val statusStore: JuneSpeakStatusStore,
     @AppCoroutineScope
     private val coroutineScope: CoroutineScope,
 ) : JuneSpeaker {
@@ -73,11 +94,19 @@ class DefaultJuneSpeaker(
 
     override fun onNotifiableEvents(events: List<NotifiableEvent>) {
         runCatchingExceptions {
-            val items = events.mapNotNull { event -> juneSpeakableLine(event)?.let { JuneSpeakItem(event.eventId, it) } }
-            if (items.isEmpty()) return
+            val candidates = events.filterIsInstance<NotifiableMessageEvent>().filter { juneIsSpeakCandidate(it) }
+            val items = candidates.mapNotNull { event -> juneSpeakableLine(event)?.let { JuneSpeakItem(event.eventId, it) } }
+            if (items.isEmpty()) {
+                // A 🔊 that is not at the start of one of the first lines: say why it was not read. Other messages leave the status as is.
+                if (candidates.any { it.body.orEmpty().contains(JUNE_SPEAKER_EMOJI) }) {
+                    record(JuneSpeakResult.NoSpeakerLine)
+                }
+                return
+            }
             val block = engine.currentBlock()
             if (block != null) {
                 Timber.tag(TAG).d("Not reading ${items.map { it.eventId }}: $block")
+                record(block.toResult())
                 return
             }
             synchronized(lock) {
@@ -92,12 +121,15 @@ class DefaultJuneSpeaker(
                             wakeUp.receive()
                             runCatchingExceptions { readQueue() }.onFailure {
                                 Timber.tag(TAG).e(it, "Failed to read the lines")
-                                dropAll("failure")
+                                dropAll(JuneSpeakResult.Failed)
                             }
                         }
                     }
                 }
             }
+            // Ask for the audio focus right away, while the push is being handled: from Android 15 on, an app in the background only gets
+            // it while it runs a foreground service (the one of the push handling when the screen is off). Released by the reading loop.
+            runCatchingExceptions { engine.requestFocus() }
             wakeUp.trySend(Unit)
             keepAlive.start()
         }.onFailure { Timber.tag(TAG).e(it, "Failed to queue the lines to read") }
@@ -109,11 +141,15 @@ class DefaultJuneSpeaker(
         }
     }
 
+    private fun record(result: JuneSpeakResult) {
+        runCatchingExceptions { statusStore.record(result) }.onFailure { Timber.tag(TAG).e(it, "Cannot save the reading status") }
+    }
+
     /** The next line to read, or null when the queue is empty or nothing can be read anymore (then the queue is emptied). */
     private fun nextReadable(): JuneSpeakItem? {
         val block = engine.currentBlock()
         if (block != null) {
-            dropAll(block.name)
+            dropAll(block.toResult())
             return null
         }
         return synchronized(lock) {
@@ -121,26 +157,50 @@ class DefaultJuneSpeaker(
         }
     }
 
-    private fun dropAll(reason: String) = synchronized(lock) {
-        if (!queue.isEmpty()) Timber.tag(TAG).d("Dropping ${queue.size} lines: $reason")
-        queue.clear()
-        busy.value = false
+    /** Empties the queue, [result] is recorded if lines were waiting. */
+    private fun dropAll(result: JuneSpeakResult) {
+        val dropped = synchronized(lock) {
+            val size = queue.size
+            queue.clear()
+            busy.value = false
+            size
+        }
+        if (dropped > 0) {
+            Timber.tag(TAG).d("Dropping $dropped lines: $result")
+            record(result)
+        }
+    }
+
+    /** Asks for the audio focus, a few times if refused (it may be refused for a moment, for instance while another sound ends). */
+    private suspend fun acquireFocus(): Boolean {
+        repeat(JUNE_SPEAK_FOCUS_ATTEMPTS) { attempt ->
+            if (runCatchingExceptions { engine.requestFocus() }.getOrDefault(false)) return true
+            if (attempt < JUNE_SPEAK_FOCUS_ATTEMPTS - 1) delay(JUNE_SPEAK_FOCUS_RETRY_DELAY)
+        }
+        Timber.tag(TAG).w("Audio focus refused")
+        return false
     }
 
     private suspend fun readQueue() {
-        if (synchronized(lock) { queue.isEmpty() }) return
-        val opened = runCatchingExceptions { engine.open() }.getOrDefault(false)
-        if (!opened) {
-            dropAll("speech not available")
-            runCatchingExceptions { engine.close() }
-            return
-        }
+        // Whatever happens below (failure, cancellation), the audio focus is released so the music never stays lowered or paused
         try {
+            if (synchronized(lock) { queue.isEmpty() }) return
+            val failure = runCatchingExceptions { engine.open() }.getOrDefault(JuneSpeakResult.EngineNotReady)
+            if (failure != null) {
+                dropAll(failure)
+                return
+            }
+            if (!acquireFocus()) {
+                dropAll(JuneSpeakResult.FocusRefused)
+                return
+            }
+            delay(JUNE_SPEAK_DUCK_DELAY)
             var item = nextReadable()
             while (item != null) {
                 val text = item.text
                 val spoken = withTimeoutOrNull(JUNE_SPEAK_LINE_TIMEOUT) { runCatchingExceptions { engine.speak(text) }.getOrDefault(false) }
                 Timber.tag(TAG).d("Read ${item.eventId}: ${spoken ?: "timeout"}")
+                record(if (spoken == true) JuneSpeakResult.Read else JuneSpeakResult.Failed)
                 item = nextReadable()
             }
         } finally {

@@ -11,6 +11,9 @@ import io.element.android.libraries.matrix.api.core.EventId
 import io.element.android.libraries.matrix.api.timeline.item.event.EventType
 import io.element.android.libraries.push.impl.notifications.model.NotifiableEvent
 import io.element.android.libraries.push.impl.notifications.model.NotifiableMessageEvent
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /** The speaker emoji (U+1F50A) that starts the line to read aloud. */
 internal const val JUNE_SPEAKER_EMOJI = "\uD83D\uDD0A"
@@ -19,19 +22,33 @@ private const val VARIATION_SELECTOR = "\uFE0F"
 /** Longest line read aloud. The server writes at most 120 characters, this leaves some room. */
 internal const val JUNE_SPEAK_MAX_LENGTH = 150
 
+/**
+ * Number of non blank lines, from the top of the message, in which the 🔊 line is looked for. The scheduled messages of the server start
+ * with a 3 line header ("Cronjob Response: …", "(job_id: …)", "-------------") before the 🔊 line, this leaves some room.
+ */
+internal const val JUNE_SPEAK_MAX_LINES = 6
+
 private const val SENTENCE_ENDS = ".?!。"
+
+/** Invisible characters that may come before the emoji: byte order mark and zero width space. */
+private val INVISIBLE_PREFIX = charArrayOf('\uFEFF', '\u200B')
 
 /**
  * Element June: the text to read aloud for a message [body], or null if there is none.
  *
- * Only the first non blank line is looked at, and only when it starts with 🔊. The emoji and the spaces around the text are removed.
- * A line longer than [JUNE_SPEAK_MAX_LENGTH] is shortened, see [juneShortenSpeakLine].
+ * The first line starting with 🔊 among the first [JUNE_SPEAK_MAX_LINES] non blank lines is read, the lines before it (a header) are
+ * skipped. Only that line is read. A 🔊 in the middle of a line, or on a later line, is not read. The emoji and the spaces around the text
+ * are removed. A line longer than [JUNE_SPEAK_MAX_LENGTH] is shortened, see [juneShortenSpeakLine].
  */
 internal fun juneExtractSpeakLine(body: String?): String? {
     if (body == null) return null
-    val firstLine = body.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: return null
-    if (!firstLine.startsWith(JUNE_SPEAKER_EMOJI)) return null
-    val text = firstLine.removePrefix(JUNE_SPEAKER_EMOJI).removePrefix(VARIATION_SELECTOR).trim()
+    val line = body.lineSequence()
+        .map { it.trim().trimStart(*INVISIBLE_PREFIX).trim() }
+        .filter { it.isNotEmpty() }
+        .take(JUNE_SPEAK_MAX_LINES)
+        .firstOrNull { it.startsWith(JUNE_SPEAKER_EMOJI) }
+        ?: return null
+    val text = line.removePrefix(JUNE_SPEAKER_EMOJI).removePrefix(VARIATION_SELECTOR).trim()
     if (text.isEmpty()) return null
     return juneShortenSpeakLine(text)
 }
@@ -55,11 +72,16 @@ internal fun juneShortenSpeakLine(text: String, maxLength: Int = JUNE_SPEAK_MAX_
  * else are read, never my own messages (including the replies sent from the notification), edits or redacted messages.
  */
 internal fun juneSpeakableLine(event: NotifiableEvent): String? {
-    if (event !is NotifiableMessageEvent) return null
-    if (event.type != EventType.MESSAGE) return null
-    if (event.senderId == event.sessionId || event.outGoingMessage) return null
-    if (event.isRedacted || event.isUpdated || event.editedEventId != null) return null
+    if (event !is NotifiableMessageEvent || !juneIsSpeakCandidate(event)) return null
     return juneExtractSpeakLine(event.body)
+}
+
+/** Element June: true if [event] is a text message from someone else, the only events whose 🔊 line can be read. */
+internal fun juneIsSpeakCandidate(event: NotifiableMessageEvent): Boolean {
+    if (event.type != EventType.MESSAGE) return false
+    if (event.senderId == event.sessionId || event.outGoingMessage) return false
+    if (event.isRedacted || event.isUpdated || event.editedEventId != null) return false
+    return true
 }
 
 // Values of the android.media.AudioDeviceInfo TYPE_ constants, some of them only exist from API 31 on.
@@ -97,6 +119,38 @@ internal fun juneSpeakBlock(enabled: Boolean, hasBluetoothOutput: Boolean, isInC
     isInCall -> JuneSpeakBlock.InCall
     mediaVolume <= 0 -> JuneSpeakBlock.MediaMuted
     else -> null
+}
+
+/**
+ * Element June: outcome of the last attempt to read a 🔊 line, shown in the settings so the reason why nothing was heard can be seen on the
+ * phone. Never contains the message text.
+ */
+enum class JuneSpeakResult(val label: String) {
+    Read("읽음"),
+    NoSpeakerLine("🔊 줄 없음"),
+    Disabled("설정 꺼짐"),
+    NoBluetooth("블루투스 아님"),
+    InCall("통화 중"),
+    MediaMuted("음량 0"),
+    FocusRefused("포커스 거부"),
+    NoKoreanVoice("한국어 음성 없음"),
+    EngineNotReady("음성 엔진 준비 실패"),
+    Failed("읽기 실패"),
+}
+
+internal fun JuneSpeakBlock.toResult(): JuneSpeakResult = when (this) {
+    JuneSpeakBlock.Disabled -> JuneSpeakResult.Disabled
+    JuneSpeakBlock.NoBluetooth -> JuneSpeakResult.NoBluetooth
+    JuneSpeakBlock.InCall -> JuneSpeakResult.InCall
+    JuneSpeakBlock.MediaMuted -> JuneSpeakResult.MediaMuted
+}
+
+private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+/** Element June: the line saved for [result] at [epochMillis], for instance "읽음 19:36" or "🔊 줄 없음 19:36". */
+internal fun juneSpeakResultText(result: JuneSpeakResult, epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+    val time = Instant.ofEpochMilli(epochMillis).atZone(zone).format(TIME_FORMAT)
+    return "${result.label} $time"
 }
 
 internal data class JuneSpeakItem(val eventId: EventId, val text: String)
