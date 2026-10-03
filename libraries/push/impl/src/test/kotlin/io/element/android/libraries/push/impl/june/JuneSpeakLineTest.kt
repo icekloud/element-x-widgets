@@ -10,11 +10,17 @@ package io.element.android.libraries.push.impl.june
 import android.media.AudioDeviceInfo
 import com.google.common.truth.Truth.assertThat
 import io.element.android.libraries.matrix.api.core.EventId
+import io.element.android.libraries.matrix.api.timeline.item.event.FormattedBody
+import io.element.android.libraries.matrix.api.timeline.item.event.MessageFormat
+import io.element.android.libraries.matrix.api.timeline.item.event.TextMessageType
 import io.element.android.libraries.matrix.test.AN_EVENT_ID
 import io.element.android.libraries.matrix.test.A_SESSION_ID
+import io.element.android.libraries.matrix.test.permalink.FakePermalinkParser
+import io.element.android.libraries.matrix.ui.messages.toPlainText
 import io.element.android.libraries.push.impl.notifications.fixtures.aNotifiableMessageEvent
 import io.element.android.libraries.push.impl.notifications.fixtures.aSimpleNotifiableEvent
 import org.junit.Test
+import java.time.ZoneId
 
 class JuneSpeakLineTest {
     private val line = "지금 야사카 신사 오타비쇼 앞이에요. 가까운 곳에 포케몬센타가 백이십 미터 거리에 있어요."
@@ -41,9 +47,102 @@ class JuneSpeakLineTest {
     }
 
     @Test
-    fun `only the first line counts, a speaker line further down is not read`() {
-        assertThat(juneExtractSpeakLine("안녕하세요\n🔊 $line")).isNull()
+    fun `a speaker emoji in the middle of a line is not read`() {
         assertThat(juneExtractSpeakLine("메시지 중간에 🔊 이모지")).isNull()
+        assertThat(juneExtractSpeakLine("안녕하세요\n오늘은 🔊 $line")).isNull()
+    }
+
+    private val footer = "To stop or manage this job, send me a new message (e.g. \"stop reminder 동선 알림 발송(5분)\")."
+
+    private fun header(name: String = "동선 알림 발송(5분)") = "Cronjob Response: $name\n(job_id: e9d0db134e2d)\n-------------\n\n"
+
+    @Test
+    fun `the speaker line after the 3 line header of a scheduled message is read`() {
+        val body = header() + "🔊 $line\n\n📍 롬 시어터 남쪽 → 가모강 쪽으로 이동 중\n⏰ 일곱 시 사십 분\n\n$footer"
+        assertThat(juneExtractSpeakLine(body)).isEqualTo(line)
+    }
+
+    @Test
+    fun `the speaker line of a message without header is read`() {
+        assertThat(juneExtractSpeakLine("🔊 $line\n\n📍 상세 본문\n\n$footer")).isEqualTo(line)
+        assertThat(juneExtractSpeakLine("안녕하세요\n🔊 $line")).isEqualTo(line)
+    }
+
+    @Test
+    fun `the speaker line is looked for in the first 6 non blank lines only`() {
+        // Lines 1 to 5, then the speaker line as 6th non blank line, blank lines do not count
+        val sixth = "1\n\n2\n3\n\n\n4\n5\n\n🔊 $line\n본문"
+        assertThat(juneExtractSpeakLine(sixth)).isEqualTo(line)
+        assertThat(JUNE_SPEAK_MAX_LINES).isEqualTo(6)
+    }
+
+    @Test
+    fun `a speaker line as 7th non blank line is not read`() {
+        val seventh = "1\n2\n3\n\n4\n5\n6\n\n🔊 $line\n본문"
+        assertThat(juneExtractSpeakLine(seventh)).isNull()
+    }
+
+    @Test
+    fun `only the first speaker line is read when several notifications follow each other`() {
+        val body = header() + "🔊 첫 알림이에요.\n\n📍 첫 본문\n\n---\n\n🔊 둘째 알림이에요.\n\n📍 둘째 본문\n\n$footer"
+        assertThat(juneExtractSpeakLine(body)).isEqualTo("첫 알림이에요.")
+    }
+
+    @Test
+    fun `a scheduled message with header and footer but no speaker line is not read`() {
+        assertThat(juneExtractSpeakLine(header() + "📍 롬 시어터 남쪽\n⏰ 일곱 시 사십 분\n\n$footer")).isNull()
+        assertThat(juneExtractSpeakLine(header() + footer)).isNull()
+        assertThat(juneExtractSpeakLine(footer)).isNull()
+    }
+
+    @Test
+    fun `the header is never read, even if it contains a speaker emoji`() {
+        // The job name line starts with "Cronjob Response:", not with the emoji: the real speaker line is read
+        assertThat(juneExtractSpeakLine(header(name = "🔊 알림") + "🔊 $line\n\n본문")).isEqualTo(line)
+        assertThat(juneExtractSpeakLine(header(name = "동선 🔊 알림") + "🔊 $line")).isEqualTo(line)
+    }
+
+    @Test
+    fun `full width spaces, variation selector and invisible characters around the emoji are handled`() {
+        assertThat(juneExtractSpeakLine(header() + "🔊\uFE0F $line")).isEqualTo(line)
+        assertThat(juneExtractSpeakLine(header() + "\u3000🔊\u3000$line\u3000")).isEqualTo(line)
+        assertThat(juneExtractSpeakLine(header() + "\u00A0🔊\uFE0F\u00A0$line")).isEqualTo(line)
+        assertThat(juneExtractSpeakLine("\uFEFF🔊 $line")).isEqualTo(line)
+        assertThat(juneExtractSpeakLine("\u200B🔊 $line")).isEqualTo(line)
+        // A line made of the emoji, the selector and spaces only gives nothing
+        assertThat(juneExtractSpeakLine(header() + "🔊\uFE0F\u3000\n본문")).isNull()
+    }
+
+    @Test
+    fun `the speaker line of a scheduled message sent as html by the server is read`() {
+        // The server converts the markdown of the message to html: the "-------------" line becomes a rule, which is dropped
+        val html = "<p>Cronjob Response: 동선 알림 발송(5분)<br>\n(job_id: e9d0db134e2d)</p>\n<hr>\n" +
+            "<p>🔊 $line</p>\n<p>📍 롬 시어터 남쪽 → 가모강<br>\n⏰ 7:40</p>\n<hr>\n<p>🔊 둘째 알림</p>\n<p>📍 x</p>\n" +
+            "<p>To stop or manage this job, send me a new message (e.g. &quot;stop reminder 동선 알림 발송(5분)&quot;).</p>"
+        val body = TextMessageType(body = "", formatted = FormattedBody(MessageFormat.HTML, html)).toPlainText(FakePermalinkParser())
+        assertThat(juneExtractSpeakLine(body)).isEqualTo(line)
+    }
+
+    @Test
+    fun `the result line shows the outcome and the time, never the text`() {
+        val zone = ZoneId.of("Asia/Seoul")
+        // 2026-10-03 10:36:00 UTC = 19:36 KST
+        val millis = 1_791_023_760_000L
+        assertThat(juneSpeakResultText(JuneSpeakResult.Read, millis, zone)).isEqualTo("읽음 19:36")
+        assertThat(juneSpeakResultText(JuneSpeakResult.NoSpeakerLine, millis, zone)).isEqualTo("🔊 줄 없음 19:36")
+        assertThat(juneSpeakResultText(JuneSpeakResult.FocusRefused, millis, zone)).isEqualTo("포커스 거부 19:36")
+        assertThat(JuneSpeakResult.entries.map { it.label }).containsExactly(
+            "읽음",
+            "🔊 줄 없음",
+            "설정 꺼짐",
+            "블루투스 아님",
+            "통화 중",
+            "음량 0",
+            "포커스 거부",
+            "한국어 음성 없음",
+            "음성 엔진 준비 실패",
+            "읽기 실패",
+        )
     }
 
     @Test

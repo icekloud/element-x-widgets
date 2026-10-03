@@ -49,6 +49,33 @@ class JuneBtSpeakPreferenceTest : RobolectricTest() {
     }
 
     @Test
+    fun `the last reading status is saved on the device`() {
+        JuneSettings.setBtSpeakStatus(context, "블루투스 아님 19:36")
+        assertThat(JuneSettings.btSpeakStatus(context)).isEqualTo("블루투스 아님 19:36")
+        assertThat(prefs().getString("bt_speak_status", null)).isEqualTo("블루투스 아님 19:36")
+        JuneSettings.setBtSpeakStatus(context, null)
+        assertThat(JuneSettings.btSpeakStatus(context)).isNull()
+    }
+
+    @Test
+    fun `the supporting text shows the last status below the description`() {
+        assertThat(juneBtSpeakSupportingText(null)).isEqualTo(JUNE_BT_SPEAK_DESCRIPTION)
+        assertThat(juneBtSpeakSupportingText(" ")).isEqualTo(JUNE_BT_SPEAK_DESCRIPTION)
+        assertThat(juneBtSpeakSupportingText("읽음 19:36")).isEqualTo("$JUNE_BT_SPEAK_DESCRIPTION\n마지막 판정: 읽음 19:36")
+    }
+
+    @Test
+    fun `the last status is shown under the setting and follows its changes`() = runAndroidComposeUiTest<ComponentActivity> {
+        JuneSettings.setBtSpeakStatus(context, "포커스 거부 19:36")
+        setContent { JuneBtSpeakPreference() }
+        onNode(hasText("마지막 판정: 포커스 거부 19:36", substring = true), useUnmergedTree = true).assertExists()
+        JuneSettings.setBtSpeakStatus(context, "읽음 19:40")
+        waitForIdle()
+        onNode(hasText("마지막 판정: 읽음 19:40", substring = true), useUnmergedTree = true).assertExists()
+        JuneSettings.setBtSpeakStatus(context, null)
+    }
+
+    @Test
     fun `the switch is on and clicking it turns the reading off and on again`() = runAndroidComposeUiTest<ComponentActivity> {
         setContent { JuneBtSpeakPreference() }
         val switch = onNode(hasText(JUNE_BT_SPEAK_TITLE, substring = true) and isToggleable(), useUnmergedTree = false)
