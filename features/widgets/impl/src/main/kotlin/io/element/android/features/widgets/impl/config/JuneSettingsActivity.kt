@@ -93,7 +93,6 @@ private val PRESETS = listOf(
 private fun JuneSettingsScreen(onColorsChanged: () -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     var editing by remember { mutableStateOf<JuneSettings.ColorSlot?>(null) }
-    var editingQuick by remember { mutableStateOf<Pair<Int, String>?>(null) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -168,43 +167,6 @@ private fun JuneSettingsScreen(onColorsChanged: () -> Unit, onClose: () -> Unit)
             }) { Text("기본값으로") }
         }
 
-        HorizontalDivider()
-        SectionTitle("빠른 명령 (상단 바 목록 버튼)")
-        Text("누르면 지금 대화방에 그 문구가 그대로 전송됩니다. 문구를 눌러 고칠 수 있습니다.", style = MaterialTheme.typography.bodySmall)
-        val quick = JuneSettings.quickCommands(context)
-        quick.forEachIndexed { index, text ->
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text,
-                    modifier = Modifier.weight(1f).clickable { editingQuick = index to text }.padding(vertical = 8.dp),
-                )
-                TextButton(enabled = index > 0, onClick = { JuneSettings.moveQuickCommand(context, index, -1) }) { Text("▲") }
-                TextButton(enabled = index < quick.size - 1, onClick = { JuneSettings.moveQuickCommand(context, index, 1) }) { Text("▼") }
-                TextButton(onClick = { JuneSettings.removeQuickCommand(context, index) }) { Text("삭제") }
-            }
-        }
-        Row {
-            TextButton(onClick = { editingQuick = -1 to "" }) { Text("+ 문구 추가") }
-            TextButton(onClick = { JuneSettings.resetQuickCommands(context) }) { Text("기본값으로") }
-        }
-    }
-
-    editingQuick?.let { (index, initial) ->
-        var value by remember(index) { mutableStateOf(initial) }
-        AlertDialog(
-            onDismissRequest = { editingQuick = null },
-            title = { Text(if (index < 0) "빠른 명령 추가" else "빠른 명령 수정") },
-            text = {
-                OutlinedTextField(value = value, onValueChange = { value = it }, label = { Text("보낼 문구") })
-            },
-            confirmButton = {
-                TextButton(enabled = value.isNotBlank(), onClick = {
-                    if (index < 0) JuneSettings.addQuickCommand(context, value) else JuneSettings.updateQuickCommand(context, index, value)
-                    editingQuick = null
-                }) { Text("저장") }
-            },
-            dismissButton = { TextButton(onClick = { editingQuick = null }) { Text("취소") } },
-        )
     }
 
     editing?.let { slot ->
