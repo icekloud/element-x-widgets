@@ -16,7 +16,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -32,6 +31,8 @@ import androidx.core.content.PermissionChecker
 import androidx.core.net.toFile
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
+import io.element.android.libraries.androidutils.file.juneDownloadRelativePath
+import io.element.android.libraries.androidutils.file.juneLegacyDownloadDir
 import io.element.android.libraries.androidutils.file.saveWithUniqueFileName
 import io.element.android.libraries.androidutils.system.startInstallFromSourceIntent
 import io.element.android.libraries.core.coroutine.CoroutineDispatchers
@@ -179,7 +180,7 @@ class AndroidLocalMediaActions(
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
                 put(MediaStore.MediaColumns.MIME_TYPE, localMedia.info.mimeType)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, juneDownloadRelativePath)
             }
             resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
         } ?: throw IOException("Unable to create the destination file")
@@ -192,7 +193,7 @@ class AndroidLocalMediaActions(
 
     private fun saveOnDiskUsingExternalStorageApi(localMedia: LocalMedia) {
         val target = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            juneLegacyDownloadDir(),
             localMedia.info.filename
         )
         localMedia.openStream()?.use { input ->
