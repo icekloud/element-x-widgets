@@ -12,6 +12,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import io.element.android.features.widgets.api.WidgetUpdater
 import io.element.android.libraries.di.annotations.AppCoroutineScope
+import io.element.android.libraries.push.impl.june.JuneSpeaker
 import io.element.android.libraries.push.impl.notifications.DefaultNotificationDrawerManager
 import io.element.android.libraries.push.impl.notifications.model.NotifiableEvent
 import io.element.android.libraries.push.impl.notifications.model.NotifiableRingingCallEvent
@@ -28,8 +29,11 @@ class DefaultOnNotifiableEventReceived(
     @AppCoroutineScope
     private val coroutineScope: CoroutineScope,
     private val widgetUpdater: WidgetUpdater,
+    private val juneSpeaker: JuneSpeaker,
 ) : OnNotifiableEventReceived {
     override fun onNotifiableEventsReceived(notifiableEvents: List<NotifiableEvent>) {
+        // Element June: read the 🔊 line aloud when a Bluetooth audio output is connected (on top of the notification, never instead of it)
+        juneSpeaker.onNotifiableEvents(notifiableEvents)
         coroutineScope.launch {
             defaultNotificationDrawerManager.onNotifiableEventsReceived(notifiableEvents.filter { it !is NotifiableRingingCallEvent })
             // Element June: refresh the home screen widgets on new messages

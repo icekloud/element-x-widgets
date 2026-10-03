@@ -30,6 +30,7 @@ object JuneSettings {
     private const val KEY_MENU_HIDDEN = "composer_menu_hidden"
     private const val KEY_QUICK = "quick_commands"
     private const val KEY_APERTURE_ROOMS = "aperture_rooms"
+    private const val KEY_BT_SPEAK = "bt_speak"
 
     /** Default room name keywords that get the Aperture (GLaDOS) chat theme. */
     const val DEFAULT_APERTURE_ROOMS = "GLaDOS, 글라도스"
@@ -118,6 +119,7 @@ object JuneSettings {
     private val menuHidden = mutableStateListOf<ComposerMenuItem>()
     private val quick = mutableStateListOf<String>()
     private val apertureRooms = mutableStateOf(DEFAULT_APERTURE_ROOMS)
+    private val btSpeak = mutableStateOf(true)
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -143,6 +145,7 @@ object JuneSettings {
             INT_SETTINGS.forEach { setting ->
                 setting.read(p)?.let { ints[setting.key] = it }
             }
+            btSpeak.value = tryOrNull { p.getBoolean(KEY_BT_SPEAK, true) } ?: true
             loaded = true
         }
     }
@@ -302,6 +305,18 @@ object JuneSettings {
 
     /** Part of the row width (0.2..0.7) a queued message has to be pushed to the left to steer it (observable). */
     fun swipeSteerFraction(context: Context): Float = intValue(context, SWIPE_STEER_PERCENT) / 100f
+
+    /** Whether the 🔊 line of incoming messages is read aloud when a Bluetooth audio output is connected (observable, on by default). */
+    fun btSpeakEnabled(context: Context): Boolean {
+        ensureLoaded(context)
+        return btSpeak.value
+    }
+
+    fun setBtSpeakEnabled(context: Context, enabled: Boolean) {
+        ensureLoaded(context)
+        btSpeak.value = enabled
+        prefs(context).edit().putBoolean(KEY_BT_SPEAK, enabled).apply()
+    }
 
     /** True if [roomName] contains one of the Aperture keywords (case insensitive). */
     fun isApertureRoom(context: Context, roomName: String?): Boolean {

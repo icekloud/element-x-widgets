@@ -335,6 +335,8 @@ private fun AppSettingsSection(
         )
         // Element June: how far a queued message has to be pushed to steer it
         JuneSwipeSteerPreference()
+        // Element June: read the 🔊 line of incoming messages aloud when a Bluetooth audio output is connected
+        JuneBtSpeakPreference()
         ListItem(
             content = { Text(stringResource(id = CommonStrings.common_media_upload_quality)) },
             leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
