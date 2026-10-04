@@ -100,7 +100,7 @@ class WidgetRoomRepository(
     }
 
     private suspend fun fetchRooms(sessionId: String): List<WidgetRoom>? {
-        val client = getClient(sessionId) ?: return null
+        val client = restoredClient(sessionId) ?: return null
         val summaries = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
             client.roomListService.allRooms.summaries.first { it.isNotEmpty() }
         } ?: return null
@@ -109,7 +109,10 @@ class WidgetRoomRepository(
         return rooms
     }
 
-    private suspend fun getClient(sessionId: String): MatrixClient? {
+    /**
+     * The Matrix client of the session, restoring it when the app was not running (used by the voice shortcut).
+     */
+    suspend fun restoredClient(sessionId: String): MatrixClient? {
         val id = SessionId(sessionId)
         return matrixClientProvider.getOrNull(id)
             ?: withTimeoutOrNull(RESTORE_TIMEOUT_MS) {
@@ -125,7 +128,7 @@ class WidgetRoomRepository(
         val dir = File(context.cacheDir, "june_widget_avatars").apply { mkdirs() }
         val file = File(dir, avatarUrl.sha1())
         if (!file.exists()) {
-            val client = getClient(sessionId) ?: return null
+            val client = restoredClient(sessionId) ?: return null
             val bytes = withTimeoutOrNull(AVATAR_TIMEOUT_MS) {
                 client.matrixMediaLoader.loadMediaThumbnail(MediaSource(avatarUrl), AVATAR_SIZE, AVATAR_SIZE).getOrNull()
             } ?: return null
