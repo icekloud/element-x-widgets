@@ -8,8 +8,22 @@
 
 package io.element.android.libraries.textcomposer.model
 
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+
 sealed interface VoiceMessageRecorderEvent {
     data object Start : VoiceMessageRecorderEvent
     data object Stop : VoiceMessageRecorderEvent
     data object Cancel : VoiceMessageRecorderEvent
+
+    /**
+     * Element June: stop the recording and send it at once, without the preview step.
+     * A recording shorter than [minDuration] is treated as a mistaken tap and discarded without sending.
+     */
+    data object Send : VoiceMessageRecorderEvent {
+        val minDuration: Duration = 700.milliseconds
+
+        /** Whether a recording of [duration] is long enough to be sent rather than discarded. */
+        fun isLongEnough(duration: Duration): Boolean = duration >= minDuration
+    }
 }

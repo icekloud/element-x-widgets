@@ -82,6 +82,7 @@ import io.element.android.libraries.testtags.TestTags
 import io.element.android.libraries.testtags.testTag
 import io.element.android.libraries.textcomposer.components.SendButtonIcon
 import io.element.android.libraries.textcomposer.components.TextFormatting
+import io.element.android.libraries.textcomposer.components.VoiceMessageCancelButtonIcon
 import io.element.android.libraries.textcomposer.components.VoiceMessageDeleteButtonIcon
 import io.element.android.libraries.textcomposer.components.VoiceMessagePreview
 import io.element.android.libraries.textcomposer.components.VoiceMessageRecorderButtonIcon
@@ -275,11 +276,12 @@ fun TextComposer(
                             )
                         }
                     )
+                    // Element June: pressing the record button again stops the recording and sends it at once
                     is VoiceMessageState.Recording -> EndButtonParams(
-                        endButtonContentDescriptionResId = CommonStrings.a11y_voice_message_stop_recording,
+                        endButtonContentDescriptionResId = R.string.june_a11y_voice_message_stop_and_send,
                         endButtonClick = {
                             performHapticFeedback()
-                            onVoiceRecorderEvent.invoke(VoiceMessageRecorderEvent.Stop)
+                            onVoiceRecorderEvent.invoke(VoiceMessageRecorderEvent.Send)
                         },
                         endButtonContent = @Composable {
                             VoiceMessageRecorderButtonIcon(
@@ -518,8 +520,9 @@ private fun StandardLayout(
                             when (voiceMessageState) {
                                 is VoiceMessageState.Preview ->
                                     VoiceMessageDeleteButtonIcon(enabled = !voiceMessageState.isSending)
+                                // Element June: an X discards the recording without sending anything
                                 is VoiceMessageState.Recording ->
-                                    VoiceMessageDeleteButtonIcon(enabled = true)
+                                    VoiceMessageCancelButtonIcon()
                             }
                         }
                     }

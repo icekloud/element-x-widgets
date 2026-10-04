@@ -78,6 +78,10 @@ class DefaultVoiceMessageComposerPresenter(
     private var pendingEvent: VoiceMessageRecorderEvent.Start? = null
     private val mediaSender = mediaSenderFactory.create(timelineMode)
 
+    // Element June: the reply target of a voice message that failed to send, so that sending it again from the preview
+    // still replies, although the composer already left the reply mode when it was first sent.
+    private var replyToOfFailedSend: EventId? = null
+
     @Composable
     override fun present(): VoiceMessageComposerState {
         val localCoroutineScope = rememberCoroutineScope()
@@ -116,11 +120,59 @@ class DefaultVoiceMessageComposerPresenter(
             }
         }
 
+        fun onSendResult(inReplyToEventId: EventId?, result: Result<Unit>) {
+            if (result.isFailure) {
+                replyToOfFailedSend = inReplyToEventId
+                showSendFailureDialog = true
+            } else {
+                replyToOfFailedSend = null
+            }
+        }
+
+        // Element June: stop the recording and send it at once, without the preview step.
+        fun sendRecordingNow(inReplyToEventId: EventId?, composerMode: MessageComposerMode) {
+            val recording = recorderState as? VoiceRecorderState.Recording
+            if (recording == null) {
+                Timber.w("Voice message send now pressed while not recording")
+                return
+            }
+            if (isSending) {
+                return
+            }
+            if (!VoiceMessageRecorderEvent.Send.isLongEnough(recording.elapsedTime)) {
+                Timber.i("Voice message too short to be sent, discarding it")
+                localCoroutineScope.cancelRecording()
+                return
+            }
+            isSending = true
+            replyToOfFailedSend = null
+            analyticsService.captureComposerEvent(composerMode)
+            sessionCoroutineScope.launch {
+                voiceRecorder.stopRecord()
+                audioFocus.releaseAudioFocus()
+                val finishedState = voiceRecorder.state.value as? VoiceRecorderState.Finished
+                if (finishedState == null) {
+                    Timber.w("Voice message was discarded before it could be sent")
+                    return@launch
+                }
+                val result = sendMessage(
+                    file = finishedState.file,
+                    mimeType = finishedState.mimeType,
+                    waveform = finishedState.waveform,
+                    inReplyToEventId = inReplyToEventId,
+                )
+                onSendResult(inReplyToEventId, result)
+            }.invokeOnCompletion {
+                isSending = false
+            }
+        }
+
         fun handleVoiceMessageRecorderEvent(event: VoiceMessageRecorderEvent) {
             pendingEvent = null
             when (event) {
                 VoiceMessageRecorderEvent.Start -> {
                     Timber.v("Voice message record button pressed")
+                    replyToOfFailedSend = null
                     when {
                         permissionState.permissionGranted -> {
                             localCoroutineScope.startRecording()
@@ -138,7 +190,21 @@ class DefaultVoiceMessageComposerPresenter(
                 }
                 VoiceMessageRecorderEvent.Cancel -> {
                     Timber.v("Voice message cancel button tapped")
+                    if (isSending) {
+                        // Element June: the recording is being stopped to be sent, it must not be deleted under the upload
+                        return
+                    }
+                    replyToOfFailedSend = null
                     localCoroutineScope.cancelRecording()
+                }
+                VoiceMessageRecorderEvent.Send -> {
+                    Timber.v("Voice message send now button pressed")
+                    // Capture reply info eagerly, since the composer leaves the reply mode right after this event.
+                    val composerMode = messageComposerContext.composerMode
+                    sendRecordingNow(
+                        inReplyToEventId = (composerMode as? MessageComposerMode.Reply)?.eventId,
+                        composerMode = composerMode,
+                    )
                 }
             }
         }
@@ -174,9 +240,7 @@ class DefaultVoiceMessageComposerPresenter(
                     waveform = finishedState.waveform,
                     inReplyToEventId = inReplyToEventId,
                 )
-                if (result.isFailure) {
-                    showSendFailureDialog = true
-                }
+                onSendResult(inReplyToEventId, result)
             }.invokeOnCompletion {
                 isSending = false
             }
@@ -189,12 +253,15 @@ class DefaultVoiceMessageComposerPresenter(
                 is VoiceMessageComposerEvent.SendVoiceMessage -> {
                     // Capture reply info eagerly before any coroutine dispatch, since CloseSpecialMode
                     // may reset composerMode before the coroutine runs.
+                    // Element June: a voice message sent again after a failure keeps its first reply target.
                     val inReplyToEventId = (messageComposerContext.composerMode as? MessageComposerMode.Reply)?.eventId
+                        ?: replyToOfFailedSend
                     localCoroutineScope.launch {
                         sendVoiceMessage(inReplyToEventId)
                     }
                 }
                 VoiceMessageComposerEvent.DeleteVoiceMessage -> {
+                    replyToOfFailedSend = null
                     player.pause()
                     localCoroutineScope.deleteRecording()
                 }
@@ -311,12 +378,14 @@ class DefaultVoiceMessageComposerPresenter(
         return result
     }
 
-    private fun AnalyticsService.captureComposerEvent() =
+    private fun AnalyticsService.captureComposerEvent(
+        composerMode: MessageComposerMode = messageComposerContext.composerMode,
+    ) =
         capture(
             Composer(
-                inThread = messageComposerContext.composerMode.inThread,
-                isEditing = messageComposerContext.composerMode.isEditing,
-                isReply = messageComposerContext.composerMode.isReply,
+                inThread = composerMode.inThread,
+                isEditing = composerMode.isEditing,
+                isReply = composerMode.isReply,
                 messageType = Composer.MessageType.VoiceMessage,
             )
         )
