@@ -11,6 +11,7 @@ package io.element.android.libraries.textcomposer.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -62,9 +63,12 @@ private fun StopButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
+        // Element June: pressing it while recording sends the recording at once, so it shows a send arrow
         Icon(
-            modifier = Modifier.size(24.dp),
-            imageVector = CompoundIcons.StopSolid(),
+            modifier = Modifier
+                .padding(start = 2.dp)
+                .size(24.dp),
+            imageVector = CompoundIcons.SendSolid(),
             // Note: accessibility is managed in TextComposer.
             contentDescription = null,
             tint = ElementTheme.colors.iconOnSolidPrimary,
