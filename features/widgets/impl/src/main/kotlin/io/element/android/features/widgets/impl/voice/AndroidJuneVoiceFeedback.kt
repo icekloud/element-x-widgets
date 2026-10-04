@@ -8,6 +8,7 @@
 
 package io.element.android.features.widgets.impl.voice
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -109,6 +110,8 @@ class AndroidJuneVoiceFeedback(
         }.onFailure { Timber.tag(TAG).w(it, "Cannot play the start tone") }
     }
 
+    // VIBRATE is declared by libraries/androidutils and merged into the app; this module alone does not see it
+    @SuppressLint("MissingPermission")
     @Suppress("DEPRECATION")
     private fun vibrate(durationMs: Long) {
         runCatchingExceptions {
