@@ -64,6 +64,32 @@
             android:exported="false"
             android:label="봇 선택 아이콘"
             android:theme="@android:style/Theme.Material.NoActionBar" />
+
+        <!--
+          Element June: "커맨더 음성" launcher icon. Tapping it starts the recording without any app screen,
+          tapping it again sends the recording to the commander room. Same shape as the bot picker icon above.
+        -->
+        <activity
+            android:name=".voice.JuneVoiceShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:icon="@drawable/june_voice_shortcut_icon"
+            android:roundIcon="@drawable/june_voice_shortcut_icon"
+            android:label="@string/june_voice_shortcut_label"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- Records and sends while no screen of the app is shown; the microphone permissions already exist in the app -->
+        <service
+            android:name=".voice.JuneVoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
     </application>
 
 </manifest>
