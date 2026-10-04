@@ -134,9 +134,82 @@ class WidgetStore(context: Context) {
         }
     }
 
+    /** Element June: room the "커맨더 음성" shortcut records for. */
+    fun getVoiceShortcutRoomId(): String = prefs.getString("voice_shortcut_room", null) ?: DEFAULT_VOICE_SHORTCUT_ROOM_ID
+
+    fun saveVoiceShortcutRoomId(roomId: String?) {
+        if (roomId.isNullOrBlank()) {
+            prefs.edit().remove("voice_shortcut_room").apply()
+        } else {
+            prefs.edit().putString("voice_shortcut_room", roomId.trim()).apply()
+        }
+    }
+
+    /** Element June: short beep when the voice shortcut starts recording. */
+    fun isVoiceShortcutToneEnabled(): Boolean = prefs.getBoolean("voice_shortcut_tone", true)
+
+    fun saveVoiceShortcutToneEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("voice_shortcut_tone", enabled).apply()
+    }
+
+    /** Element June: length at which the voice shortcut stops recording by itself, without sending. */
+    fun getVoiceShortcutMaxSeconds(): Int = prefs.getInt("voice_shortcut_max_seconds", DEFAULT_VOICE_SHORTCUT_MAX_SECONDS)
+
+    fun saveVoiceShortcutMaxSeconds(seconds: Int) {
+        prefs.edit().putInt("voice_shortcut_max_seconds", seconds.coerceIn(MIN_VOICE_SHORTCUT_MAX_SECONDS, MAX_VOICE_SHORTCUT_MAX_SECONDS)).apply()
+    }
+
+    /** Element June: the recording of the voice shortcut waiting to be sent again, or null when there is none. */
+    fun getVoiceShortcutPending(): PendingVoiceRecording? {
+        val raw = prefs.getString("voice_shortcut_pending", null) ?: return null
+        return runCatching {
+            val json = JSONObject(raw)
+            val levels = json.optJSONArray("waveform")
+            PendingVoiceRecording(
+                path = json.getString("path"),
+                mimeType = json.getString("mime"),
+                durationMs = json.getLong("duration"),
+                waveform = if (levels == null) emptyList() else List(levels.length()) { levels.getDouble(it).toFloat() },
+            )
+        }.getOrNull()
+    }
+
+    fun saveVoiceShortcutPending(path: String, mimeType: String, durationMs: Long, waveform: List<Float>) {
+        val json = JSONObject()
+            .put("path", path)
+            .put("mime", mimeType)
+            .put("duration", durationMs)
+            .put("waveform", JSONArray(waveform.map { it.toDouble() }))
+        prefs.edit().putString("voice_shortcut_pending", json.toString()).apply()
+    }
+
+    fun saveVoiceShortcutPending(pending: PendingVoiceRecording?) {
+        if (pending == null) {
+            prefs.edit().remove("voice_shortcut_pending").apply()
+        } else {
+            saveVoiceShortcutPending(pending.path, pending.mimeType, pending.durationMs, pending.waveform)
+        }
+    }
+
     private fun botPickerKey(sessionId: String) = "botpicker_$sessionId"
     private fun configKey(appWidgetId: Int) = "config_$appWidgetId"
     private fun cacheKey(sessionId: String) = "cache_$sessionId"
 }
 
+/**
+ * Element June: a voice shortcut recording kept on the device after a failed send.
+ */
+data class PendingVoiceRecording(
+    val path: String,
+    val mimeType: String,
+    val durationMs: Long,
+    val waveform: List<Float>,
+)
+
 const val DEFAULT_BOT_PICKER_RADIUS = 170f
+
+/** Element June: the commander room, where the voice shortcut sends its recordings by default. */
+const val DEFAULT_VOICE_SHORTCUT_ROOM_ID = "!prKGIRoFJdYIfmejlv:kloud123.i234.me:6881"
+const val DEFAULT_VOICE_SHORTCUT_MAX_SECONDS = 300
+const val MIN_VOICE_SHORTCUT_MAX_SECONDS = 30
+const val MAX_VOICE_SHORTCUT_MAX_SECONDS = 1_800

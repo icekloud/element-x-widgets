@@ -156,6 +156,43 @@ private fun JuneSettingsScreen(onColorsChanged: () -> Unit, onClose: () -> Unit)
         }) { Text("펼쳐질 봇 고르기") }
 
         HorizontalDivider()
+        SectionTitle("커맨더 음성 아이콘")
+        Text(
+            "홈 화면 \"커맨더 음성\" 아이콘을 한 번 누르면 녹음이 시작되고, 다시 누르면 커맨더에게 바로 보냅니다.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        val voiceStore = remember { runCatching { context.bindings<WidgetBindings>().widgetRoomRepository().store }.getOrNull() }
+        if (voiceStore != null) {
+            var toneEnabled by remember { mutableStateOf(voiceStore.isVoiceShortcutToneEnabled()) }
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = toneEnabled,
+                    onCheckedChange = {
+                        toneEnabled = it
+                        voiceStore.saveVoiceShortcutToneEnabled(it)
+                    },
+                )
+                Text("녹음 시작할 때 짧은 알림음 (진동은 항상)", modifier = Modifier.weight(1f))
+            }
+            var maxMinutes by remember { mutableStateOf((voiceStore.getVoiceShortcutMaxSeconds() / 60).coerceAtLeast(1).toString()) }
+            OutlinedTextField(
+                value = maxMinutes,
+                onValueChange = { value ->
+                    maxMinutes = value.filter { it.isDigit() }.take(2)
+                    maxMinutes.toIntOrNull()?.let { voiceStore.saveVoiceShortcutMaxSeconds(it * 60) }
+                },
+                label = { Text("최대 녹음 길이 (분)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "최대 길이에 닿으면 녹음을 멈추고 보내지 않습니다. 알림에서 보내거나 지울 수 있습니다.\n보낼 방: " +
+                    voiceStore.getVoiceShortcutRoomId(),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        HorizontalDivider()
                 SectionTitle("방별 테마 (Aperture · GLaDOS)")
         Text("방 이름에 아래 단어가 들어가면 그 방은 어두운 Aperture 테마(검정 배경·주황 강조)로 보입니다. 쉼표로 구분합니다.", style = MaterialTheme.typography.bodySmall)
         var apertureText by remember { mutableStateOf(JuneSettings.apertureRooms(context)) }

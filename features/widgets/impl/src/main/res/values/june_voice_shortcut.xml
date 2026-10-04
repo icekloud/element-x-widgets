@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="june_voice_shortcut_bg">#26A69A</color>
+    <string name="june_voice_shortcut_label">커맨더 음성</string>
+</resources>
