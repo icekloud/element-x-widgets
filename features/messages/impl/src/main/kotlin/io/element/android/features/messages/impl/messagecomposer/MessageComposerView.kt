@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.tooling.preview.PreviewParameter
@@ -35,6 +37,7 @@ import io.element.android.libraries.textcomposer.TextComposer
 import io.element.android.libraries.textcomposer.model.Suggestion
 import io.element.android.libraries.textcomposer.model.VoiceMessagePlayerEvent
 import io.element.android.libraries.textcomposer.model.VoiceMessageRecorderEvent
+import io.element.android.libraries.textcomposer.model.VoiceMessageState
 import kotlinx.coroutines.launch
 
 @Composable
@@ -84,8 +87,17 @@ internal fun MessageComposerView(
         }
     }
 
+    // Element June: TextComposer remembers its button clicks per kind of voice state, so read the latest recording state here
+    val latestVoiceMessageState by rememberUpdatedState(voiceMessageState.voiceMessageState)
     val onVoiceRecorderEvent = { press: VoiceMessageRecorderEvent ->
+        // Element June: a recording sent at once leaves the reply mode like the send button of the preview does.
+        // A mistaken tap (too short recording) is discarded without sending, so the reply mode stays.
+        val recording = latestVoiceMessageState as? VoiceMessageState.Recording
+        val closeReply = press == VoiceMessageRecorderEvent.Send && recording != null && VoiceMessageRecorderEvent.Send.isLongEnough(recording.duration)
         voiceMessageState.eventSink(VoiceMessageComposerEvent.RecorderEvent(press))
+        if (closeReply) {
+            state.eventSink(MessageComposerEvent.CloseSpecialMode)
+        }
     }
 
     val onSendVoiceMessage = {
