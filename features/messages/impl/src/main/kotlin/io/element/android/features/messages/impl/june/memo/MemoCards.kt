@@ -149,7 +149,7 @@ internal fun buildMemoCards(entries: List<MemoEntry>): List<MemoCard> {
             val lastInput = last?.inputs?.lastOrNull()
             val joins = last != null && last.replies.isEmpty() && e.kind == MemoEntryKind.Photo &&
                 lastInput?.kind == MemoEntryKind.Photo && e.timeMillis - lastInput.timeMillis in 0..PHOTO_GROUP_WINDOW_MILLIS
-            val card = if (joins) last!! else Building(e.key, mutableListOf(), mutableListOf()).also { cards += it }
+            val card = if (joins) last else Building(e.key, mutableListOf(), mutableListOf()).also { cards += it }
             card.inputs += e
             e.eventId?.let { byEvent[it] = card }
         } else {

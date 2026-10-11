@@ -84,6 +84,7 @@ internal class MemoRoomBackend(
         waiting[response.requestId]?.complete(response)
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     override suspend fun call(op: MemoOp, requestId: String): MemoResponse {
         val answer = CompletableDeferred<MemoResponse>()
         waiting[requestId] = answer
