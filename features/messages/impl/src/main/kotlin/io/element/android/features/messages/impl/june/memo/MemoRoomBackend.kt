@@ -167,6 +167,4 @@ internal class MemoRoomBackend(
     }
 }
 
-internal class MemoSendException(message: String) : Exception(message)
-
 internal val MEMO_ANSWER_TYPES = listOf(MEMO_LIST_TYPE, MEMO_NOTE_TYPE, MEMO_SEARCH_TYPE, MEMO_TAGS_TYPE, MEMO_OK_TYPE, MEMO_ERROR_TYPE)

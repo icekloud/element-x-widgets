@@ -29,6 +29,9 @@ internal sealed interface MemoResult {
     data class Failed(val reason: String, val timedOut: Boolean = false) : MemoResult
 }
 
+/** The op could not be sent (no session, HTTP error, network): the message is shown as is. */
+internal class MemoSendException(message: String) : Exception(message)
+
 internal const val MEMO_PAGE_SIZE = 30
 internal const val MEMO_PREFETCH_DISTANCE = 5
 internal const val MEMO_TIMEOUT_MILLIS = 15_000L
