@@ -394,9 +394,9 @@ internal fun MemoCardView(
                         controller.sheet = MemoSheet.Actions(
                             card.headline(),
                             listOf(
-                                "📌 고정" to { memoCardOp(card, MemoCardAction.Pin)?.let(controller::run); Unit },
-                                "고정 해제" to { memoCardOp(card, MemoCardAction.Unpin)?.let(controller::run); Unit },
-                                "🗑 휴지통" to { memoCardOp(card, MemoCardAction.Trash)?.let(controller::run); Unit },
+                                "📌 고정" to cardAction(controller, card, MemoCardAction.Pin),
+                                "고정 해제" to cardAction(controller, card, MemoCardAction.Unpin),
+                                "🗑 휴지통" to cardAction(controller, card, MemoCardAction.Trash),
                             ),
                         )
                     }
@@ -456,6 +456,10 @@ internal fun MemoCardView(
             }
         }
     }
+}
+
+private fun cardAction(controller: MemoController, card: MemoCard, action: MemoCardAction): () -> Unit = {
+    memoCardOp(card, action)?.let { op -> controller.run(op) }
 }
 
 // ---------------------------------------------------------------- 시트·대화상자
