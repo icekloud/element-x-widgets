@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -35,20 +36,21 @@ class MemoScreenUiTest : RobolectricTest() {
         onNodeWithText("기록").assertIsDisplayed()
         onNodeWithText("폴더").assertIsDisplayed()
         onNodeWithText("검색").assertIsDisplayed()
-        onNodeWithTag(MemoTags.FOLDER_BADGE).assertIsDisplayed()
-        onNodeWithText("2").assertIsDisplayed()
+        // The clickable tab merges its children: the badge is a node of the unmerged tree only.
+        onNodeWithTag(MemoTags.FOLDER_BADGE, useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("2", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithTag(MemoTags.TAB_SEARCH).performClick()
         assertThat(tab).isEqualTo(MemoTab.Search)
         onNodeWithTag(MemoTags.TAB_FOLDERS).performClick()
         assertThat(tab).isEqualTo(MemoTab.Folders)
         // Only the tab changed: nothing to go back to inside the folder tab root but the record tab.
-        assertThat(MemoNavState(tab = tab).back()).isEqualTo(MemoBack.To(MemoNavState(tab = MemoTab.Record)))
+        assertThat(MemoLocation(tab = tab).back()).isEqualTo(MemoBack.To(MemoLocation(tab = MemoTab.Record)))
     }
 
     @Test
     fun `no badge without pending proposals`() = runAndroidComposeUiTest<ComponentActivity> {
         setContent { ElementTheme { MemoTabBar(selected = MemoTab.Record, pendingProposals = 0, onSelect = {}) } }
-        onAllNodesWithTag(MemoTags.FOLDER_BADGE).assertCountEquals(0)
+        onAllNodesWithTag(MemoTags.FOLDER_BADGE, useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test
@@ -57,7 +59,7 @@ class MemoScreenUiTest : RobolectricTest() {
         setContent {
             ElementTheme {
                 val scope = rememberCoroutineScope()
-                val controller = MemoController(MemoStore(FakeMemoBackend()), scope, mutableStateOf(MemoNavState()))
+                val controller = MemoController(MemoStore(FakeMemoBackend()), scope, mutableStateOf(MemoLocation()))
                 androidx.compose.foundation.layout.Column {
                     MemoProposalCard(controller, MemoProposal("p1", "일정추가", "10/5 빵집", "대기", noteId = "n1"))
                     MemoProposalCard(controller, MemoProposal("p2", "폴더생성", "영상 5건", "대기", folder = "영상"))
@@ -90,7 +92,7 @@ class MemoScreenUiTest : RobolectricTest() {
         setContent {
             ElementTheme {
                 val scope = rememberCoroutineScope()
-                MemoTile(MemoController(MemoStore(FakeMemoBackend()), scope, mutableStateOf(MemoNavState())), item)
+                MemoTile(MemoController(MemoStore(FakeMemoBackend()), scope, mutableStateOf(MemoLocation())), item)
             }
         }
         onNodeWithTag(MemoTags.TILE_PREVIEW, useUnmergedTree = true).assertIsDisplayed()

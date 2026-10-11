@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -52,6 +53,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.designsystem.theme.components.Text
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -185,7 +188,7 @@ private fun MemoFolderView(controller: MemoController, path: String) {
     val lists by store.lists.collectAsState()
     val tags = controller.folderTags[path].orEmpty()
     val key = MemoListKey.of(path, tags)
-    val list = lists[key] ?: MemoListState()
+    val list = lists[key] ?: MemoListCache()
     var asList by remember(path) { mutableStateOf(false) }
     var pinsFolded by remember(path) { mutableStateOf(false) }
 
@@ -207,7 +210,8 @@ private fun MemoFolderView(controller: MemoController, path: String) {
 
     val folder = index.folder(path)
     val subfolders = memoSubfolders(index, path)
-    val folderTags = remember(list.items) { list.items.flatMap { it.tags }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }.take(20) }
+    val folderTags =
+        remember(list.items) { list.items.flatMap { it.tags }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }.take(20) }
     val pinned = list.items.filter { it.pinned }
     val band = memoFolderBand(index, path, list.items.map { it.id }.toSet())
     val newCount = store.newCount(key)
@@ -218,7 +222,14 @@ private fun MemoFolderView(controller: MemoController, path: String) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("‹ " + (folder?.name ?: path.substringAfterLast('/')), style = ElementTheme.typography.fontBodyLgMedium, modifier = Modifier.weight(1f).clickable { controller.go { s -> (s.back() as? MemoBack.To)?.state ?: s } })
+            Text("‹ " + (folder?.name ?: path.substringAfterLast(
+                '/'
+            )), style = ElementTheme.typography.fontBodyLgMedium, modifier = Modifier.weight(1f).clickable {
+                controller.go { s ->
+                    (s.back() as? MemoBack.To)?.state
+                ?: s
+                }
+            })
             Text(if (asList) "⊞" else "≡", modifier = Modifier.clickable { asList = !asList }.padding(8.dp))
             Text(
                 "⋮",
@@ -227,7 +238,8 @@ private fun MemoFolderView(controller: MemoController, path: String) {
                         path,
                         listOf(
                             "하위 폴더 만들기" to { controller.sheet = MemoSheet.AskText("하위 폴더 이름", "") { n -> controller.run(MemoOp.mkdir("$path/$n", null)) } },
-                            "이름 바꾸기" to { controller.sheet = MemoSheet.AskText("새 이름", folder?.name.orEmpty()) { n -> controller.run(MemoOp.renameDir(path, n)) } },
+                            "이름 바꾸기" to
+                                { controller.sheet = MemoSheet.AskText("새 이름", folder?.name.orEmpty()) { n -> controller.run(MemoOp.renameDir(path, n)) } },
                             "폴더 지우기 (비어 있을 때)" to {
                                 controller.sheet = MemoSheet.Confirm("'$path' 폴더를 지울까요? 비어 있어야 지워집니다.", "지우기") {
                                     controller.run(MemoOp.rmdir(path)) { controller.go { s -> (s.back() as? MemoBack.To)?.state ?: s } }
@@ -245,7 +257,12 @@ private fun MemoFolderView(controller: MemoController, path: String) {
                     .align(Alignment.CenterHorizontally)
                     .clip(RoundedCornerShape(10.dp))
                     .background(ElementTheme.colors.bgActionPrimaryRest)
-                    .clickable { controller.scope.launch { store.reloadTop(key); gridState.scrollToItem(0) } }
+                    .clickable {
+                        controller.scope.launch {
+                        store.reloadTop(key)
+                        gridState.scrollToItem(0)
+                    }
+                    }
                     .padding(horizontal = 10.dp, vertical = 2.dp),
                 color = ElementTheme.colors.textOnSolidPrimary,
                 style = ElementTheme.typography.fontBodySmMedium,
@@ -290,7 +307,16 @@ private fun MemoFolderView(controller: MemoController, path: String) {
                     ) {
                         Text("📌 고정 ${pinned.size}" + if (pinsFolded) " ▸" else " ▾", style = ElementTheme.typography.fontBodySmMedium)
                         if (!pinsFolded) {
-                            pinned.take(3).forEach { item -> Text("· " + item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable { controller.go { it.openNote(item.id) } }) }
+                            pinned.take(
+                                3
+                            ).forEach { item ->
+                                Text(
+                                "· " + item.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.clickable { controller.go { it.openNote(item.id) } }
+                            )
+                            }
                             if (pinned.size > 3) Text("+${pinned.size - 3}", color = ElementTheme.colors.textSecondary)
                         }
                     }
@@ -299,24 +325,36 @@ private fun MemoFolderView(controller: MemoController, path: String) {
             items(list.items, key = { "n-" + it.id }) { item ->
                 if (asList) MemoListRow(controller, item) else MemoTile(controller, item)
             }
-            if (list.loading) item(key = "loading", span = { GridItemSpan(maxLineSpan) }) { Text("불러오는 중…", color = ElementTheme.colors.textSecondary, modifier = Modifier.padding(12.dp)) }
+            if (list.loading) {
+                item(
+                    key = "loading",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) { Text("불러오는 중…", color = ElementTheme.colors.textSecondary, modifier = Modifier.padding(12.dp)) }
+            }
             list.error?.let { e ->
                 item(key = "error", span = { GridItemSpan(maxLineSpan) }) {
                     Row(Modifier.testTag(MemoTags.ERROR).padding(12.dp)) {
                         Text(e, color = ElementTheme.colors.textCriticalPrimary, modifier = Modifier.weight(1f))
-                        Text("다시", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable { controller.scope.launch { store.retry(key) } }.padding(horizontal = 8.dp))
+                        Text(
+                            "다시",
+                            color = ElementTheme.colors.textActionAccent,
+                            modifier = Modifier.clickable { controller.scope.launch { store.retry(key) } }.padding(horizontal = 8.dp)
+                        )
                     }
                 }
             }
             if (list.loaded && list.items.isEmpty() && list.error == null) {
-                item(key = "empty", span = { GridItemSpan(maxLineSpan) }) { Text("메모가 없습니다", color = ElementTheme.colors.textSecondary, modifier = Modifier.padding(12.dp)) }
+                item(
+                    key = "empty",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) { Text("메모가 없습니다", color = ElementTheme.colors.textSecondary, modifier = Modifier.padding(12.dp)) }
             }
         }
     }
 }
 
 /** Number of grid items drawn before the tiles (so the "5 before the end" check counts tiles only). */
-private fun headerCount(s: MemoListState, index: MemoIndex, path: String, tags: List<String>): Int {
+private fun headerCount(s: MemoListCache, index: MemoIndex, path: String, tags: List<String>): Int {
     var n = memoFolderBand(index, path, s.items.map { it.id }.toSet()).size
     if (memoSubfolders(index, path).isNotEmpty()) n++
     if (tags.isNotEmpty() || s.items.any { it.tags.isNotEmpty() }) n++
@@ -368,22 +406,51 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
                 is MemoPreview.Link -> if (p.image != null) {
                     MemoThumbnail(p.image, null, Modifier.fillMaxSize())
                 } else {
-                    Text(p.site ?: p.url, modifier = Modifier.align(Alignment.Center).padding(6.dp), color = ElementTheme.colors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        p.site ?: p.url,
+                        modifier = Modifier.align(Alignment.Center).padding(6.dp),
+                        color = ElementTheme.colors.textSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
-                is MemoPreview.Text -> Text(p.text.take(90), modifier = Modifier.padding(6.dp), style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary, overflow = TextOverflow.Ellipsis)
+                is MemoPreview.Text -> Text(
+                    p.text.take(90),
+                    modifier = Modifier.padding(6.dp),
+                    style = ElementTheme.typography.fontBodyXsRegular,
+                    color = ElementTheme.colors.textSecondary,
+                    overflow = TextOverflow.Ellipsis
+                )
                 null -> Unit
             }
-            val corner = listOfNotNull(if (item.hasSchedule) "📅" else null, if (item.pinned) "📌" else if (item.pinSuggested) "📌?" else null)
+            val corner = listOfNotNull(if (item.hasSchedule) "📅" else null, if (item.pinned) {
+                "📌"
+            } else if (item.pinSuggested) {
+                "📌?"
+            } else {
+                null
+            })
             if (corner.isNotEmpty()) MemoCorner(corner.joinToString(" "), Modifier.align(Alignment.TopStart))
         }
-        Text(item.title, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp).testTag(MemoTags.TILE_TITLE), style = ElementTheme.typography.fontBodySmMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text("${item.shortDate} · ${memoKindIcon(item.kind)} ${item.kind}", modifier = Modifier.padding(horizontal = 6.dp), style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
-        MemoTagLine(item.tags, max = 4, modifier = Modifier.padding(6.dp).testTag(MemoTags.TILE_TAGS))
+        Text(
+            item.title,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp).testTag(MemoTags.TILE_TITLE),
+            style = ElementTheme.typography.fontBodySmMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            "${item.shortDate} · ${memoKindIcon(item.kind)} ${item.kind}",
+            modifier = Modifier.padding(horizontal = 6.dp),
+            style = ElementTheme.typography.fontBodyXsRegular,
+            color = ElementTheme.colors.textSecondary
+        )
+        MemoTagLine(item.tags.toImmutableList(), max = 4, modifier = Modifier.padding(6.dp).testTag(MemoTags.TILE_TAGS))
     }
 }
 
 @Composable
-private fun MemoCorner(text: String, modifier: Modifier) {
+private fun MemoCorner(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         modifier = modifier
@@ -396,7 +463,7 @@ private fun MemoCorner(text: String, modifier: Modifier) {
 }
 
 @Composable
-internal fun MemoTagLine(tags: List<String>, max: Int, modifier: Modifier = Modifier, onTag: ((String) -> Unit)? = null) {
+internal fun MemoTagLine(tags: ImmutableList<String>, max: Int, modifier: Modifier = Modifier, onTag: ((String) -> Unit)? = null) {
     val shown = memoVisibleTags(tags, max)
     Row(modifier) {
         shown.first.forEach { t -> MemoChip("#$t", onClick = onTag?.let { { it(t) } }) }
@@ -423,8 +490,13 @@ private fun MemoListRow(controller: MemoController, item: MemoItem) {
     ) {
         Text(memoKindIcon(item.kind), modifier = Modifier.padding(end = 8.dp))
         Column(Modifier.weight(1f)) {
-            Text((if (item.pinned) "📌 " else "") + item.title, style = ElementTheme.typography.fontBodyMdMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            MemoTagLine(item.tags, max = 4)
+            Text(
+                (if (item.pinned) "📌 " else "") + item.title,
+                style = ElementTheme.typography.fontBodyMdMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            MemoTagLine(item.tags.toImmutableList(), max = 4)
         }
         Text(item.shortDate, style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
     }

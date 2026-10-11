@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -83,9 +84,9 @@ internal data class MemoSearchQuery(
         "종류" to MEMO_KINDS.filter { it in kinds }.takeIf { it.isNotEmpty() },
         "폴더" to folder,
         "기간" to period?.toJson(),
-        "일정연결" to (if (schedule) true else null),
-        "고정" to (if (pinned) true else null),
-        "포함" to (if (includeHidden) listOf(MEMO_INBOX, MEMO_TRASH) else null),
+        "일정연결" to true.takeIf { schedule },
+        "고정" to true.takeIf { pinned },
+        "포함" to listOf(MEMO_INBOX, MEMO_TRASH).takeIf { includeHidden },
     )
 
     /** The query sent to the server: free text only, tags go in the filters. */
@@ -142,18 +143,23 @@ internal fun parseMemoSnippet(snippet: String): List<MemoSnippetPart> {
     var rest = snippet
     while (rest.isNotEmpty()) {
         val start = rest.indexOf("<mark>")
-        if (start < 0) {
-            parts += MemoSnippetPart(unescapeHtml(rest), false)
-            break
+        val end = if (start < 0) -1 else rest.indexOf("</mark>", start + 6)
+        rest = when {
+            start < 0 -> {
+                parts += MemoSnippetPart(unescapeHtml(rest), false)
+                ""
+            }
+            end < 0 -> {
+                parts += MemoSnippetPart(unescapeHtml(rest.substring(0, start)), false)
+                parts += MemoSnippetPart(unescapeHtml(rest.substring(start + 6)), true)
+                ""
+            }
+            else -> {
+                parts += MemoSnippetPart(unescapeHtml(rest.substring(0, start)), false)
+                parts += MemoSnippetPart(unescapeHtml(rest.substring(start + 6, end)), true)
+                rest.substring(end + 7)
+            }
         }
-        if (start > 0) parts += MemoSnippetPart(unescapeHtml(rest.substring(0, start)), false)
-        val end = rest.indexOf("</mark>", start + 6)
-        if (end < 0) {
-            parts += MemoSnippetPart(unescapeHtml(rest.substring(start + 6)), true)
-            break
-        }
-        parts += MemoSnippetPart(unescapeHtml(rest.substring(start + 6, end)), true)
-        rest = rest.substring(end + 7)
     }
     return parts.filter { it.text.isNotEmpty() }
 }

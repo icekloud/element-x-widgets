@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -7,10 +8,10 @@
 
 package io.element.android.features.messages.impl.june.memo
 
+import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -107,7 +108,7 @@ internal class MemoRoomBackend(
     /** Sends the op; returns the pagination token from which the answer is looked for (null: from the latest). */
     private suspend fun send(op: MemoOp, requestId: String): String? = withContext(Dispatchers.IO) {
         val s = sessionStore.getLatestSession() ?: throw MemoSendException("세션이 없습니다")
-        val since = runCatching { latestToken(s.homeserverUrl, s.accessToken) }.getOrNull()
+        val since = runCatchingExceptions { latestToken(s.homeserverUrl, s.accessToken) }.getOrNull()
         val txn = UUID.randomUUID().toString().replace("-", "")
         val conn = open(s.homeserverUrl, "/_matrix/client/v3/rooms/$room/send/$MEMO_OP_TYPE/$txn", s.accessToken, "PUT")
         try {
@@ -152,12 +153,11 @@ internal class MemoRoomBackend(
             try {
                 if (conn.responseCode != 200) return@withContext null
                 val chunk = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optJSONArray("chunk") ?: return@withContext null
-                for (i in 0 until chunk.length()) {
-                    val e = chunk.optJSONObject(i) ?: continue
-                    val r = parseMemoResponse(e.optString("type"), e.optJSONObject("content") ?: continue) ?: continue
-                    if (r.requestId == requestId) return@withContext r
-                }
-                null
+                (0 until chunk.length())
+                    .asSequence()
+                    .mapNotNull { i -> chunk.optJSONObject(i) }
+                    .mapNotNull { e -> e.optJSONObject("content")?.let { parseMemoResponse(e.optString("type"), it) } }
+                    .firstOrNull { it.requestId == requestId }
             } finally {
                 conn.disconnect()
             }
