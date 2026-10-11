@@ -32,6 +32,8 @@ object JuneSettings {
     private const val KEY_APERTURE_ROOMS = "aperture_rooms"
     private const val KEY_BT_SPEAK = "bt_speak"
     private const val KEY_BT_SPEAK_STATUS = "bt_speak_status"
+    private const val KEY_MEMO_ROOM = "memo_room_id"
+    private const val KEY_MEMO_FAKE = "memo_fake_data"
 
     /** Default room name keywords that get the Aperture (GLaDOS) chat theme. */
     const val DEFAULT_APERTURE_ROOMS = "GLaDOS, 글라도스"
@@ -122,6 +124,8 @@ object JuneSettings {
     private val apertureRooms = mutableStateOf(DEFAULT_APERTURE_ROOMS)
     private val btSpeak = mutableStateOf(true)
     private val btSpeakStatus = mutableStateOf<String?>(null)
+    private val memoRoomId = mutableStateOf<String?>(null)
+    private val memoFake = mutableStateOf(false)
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -149,6 +153,8 @@ object JuneSettings {
             }
             btSpeak.value = tryOrNull { p.getBoolean(KEY_BT_SPEAK, true) } ?: true
             btSpeakStatus.value = tryOrNull { p.getString(KEY_BT_SPEAK_STATUS, null) }
+            memoRoomId.value = tryOrNull { p.getString(KEY_MEMO_ROOM, null) }?.takeIf { it.isNotBlank() }
+            memoFake.value = tryOrNull { p.getBoolean(KEY_MEMO_FAKE, false) } ?: false
             loaded = true
         }
     }
@@ -331,6 +337,33 @@ object JuneSettings {
         ensureLoaded(context)
         btSpeakStatus.value = status
         prefs(context).edit().putString(KEY_BT_SPEAK_STATUS, status).apply()
+    }
+
+    /** Room shown as the memo bot screen (기록 · 폴더 · 검색) instead of the chat timeline, null = none (observable). */
+    fun memoRoomId(context: Context): String? {
+        ensureLoaded(context)
+        return memoRoomId.value
+    }
+
+    fun setMemoRoomId(context: Context, roomId: String?) {
+        ensureLoaded(context)
+        val id = roomId?.takeIf { it.isNotBlank() }
+        memoRoomId.value = id
+        prefs(context).edit().apply { if (id == null) remove(KEY_MEMO_ROOM) else putString(KEY_MEMO_ROOM, id) }.apply()
+    }
+
+    fun isMemoRoom(context: Context, roomId: String): Boolean = memoRoomId(context) == roomId
+
+    /** The memo screen shows built-in sample data instead of asking the memo bot (to try the screens without the server). */
+    fun memoFakeData(context: Context): Boolean {
+        ensureLoaded(context)
+        return memoFake.value
+    }
+
+    fun setMemoFakeData(context: Context, enabled: Boolean) {
+        ensureLoaded(context)
+        memoFake.value = enabled
+        prefs(context).edit().putBoolean(KEY_MEMO_FAKE, enabled).apply()
     }
 
     /** True if [roomName] contains one of the Aperture keywords (case insensitive). */

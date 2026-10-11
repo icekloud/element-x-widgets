@@ -118,6 +118,8 @@ internal class MemoStore(
             MemoResult.Failed("메모봇이 15초 안에 답하지 않았습니다", timedOut = true)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
+        } catch (e: MemoSendException) {
+            MemoResult.Failed(e.message ?: "요청을 보내지 못했습니다")
         } catch (e: Exception) {
             MemoResult.Failed("요청을 보내지 못했습니다 (${e.javaClass.simpleName})")
         }
