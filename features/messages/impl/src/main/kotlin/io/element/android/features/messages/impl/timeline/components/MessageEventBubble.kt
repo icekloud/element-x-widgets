@@ -142,11 +142,9 @@ fun MessageEventBubble(
                         // Then draw the content on top of it
                         drawContent()
 
-                        // Draw border color, if any
-                        updatedBorderColor?.let { color ->
-                            translate(top = -borderTopShift) {
-                                drawOutline(borderOutline, color, style = Stroke(width = 1.dp.toPx()))
-                            }
+                        // Draw border color (always set: falls back to the theme border colour)
+                        translate(top = -borderTopShift) {
+                            drawOutline(borderOutline, updatedBorderColor, style = Stroke(width = 1.dp.toPx()))
                         }
 
                         // And then clip the top start corner if needed to make room for the avatar
