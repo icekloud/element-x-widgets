@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -14,7 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MemoNavTest : RobolectricTest() {
-    private fun MemoNavState.pressBack(): MemoNavState = when (val b = back()) {
+    private fun MemoLocation.pressBack(): MemoLocation = when (val b = back()) {
         is MemoBack.To -> b.state
         MemoBack.ConfirmDiscard -> error("confirm expected to be handled")
         MemoBack.Exit -> error("exit")
@@ -22,10 +23,10 @@ class MemoNavTest : RobolectricTest() {
 
     @Test
     fun `back chain of the folder tab, six steps`() {
-        var s = MemoNavState().openFolder("여행").openFolder("여행/교토").openNote("n1")
+        var s = MemoLocation().openFolder("여행").openFolder("여행/교토").openNote("n1")
         // note → folder tiles (교토)
         s = s.pressBack()
-        assertEquals(MemoNavState(tab = MemoTab.Folders, folder = "여행/교토"), s)
+        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행/교토"), s)
         // sub folder → parent folder
         s = s.pressBack()
         assertEquals("여행", s.folder)
@@ -35,7 +36,7 @@ class MemoNavTest : RobolectricTest() {
         assertEquals(MemoTab.Folders, s.tab)
         // folder root → record tab
         s = s.pressBack()
-        assertEquals(MemoNavState(), s)
+        assertEquals(MemoLocation(), s)
         // record tab → leave the room (the room screen handles it)
         assertEquals(MemoBack.Exit, s.back())
         assertFalse(s.handlesBack)
@@ -43,32 +44,32 @@ class MemoNavTest : RobolectricTest() {
 
     @Test
     fun `search results and tag manager go back to the empty state, then the record tab`() {
-        var s = MemoNavState().selectTab(MemoTab.Search).showSearchResults(true)
+        var s = MemoLocation().selectTab(MemoTab.Search).showSearchResults(true)
         s = s.pressBack()
-        assertEquals(MemoNavState(tab = MemoTab.Search), s)
+        assertEquals(MemoLocation(tab = MemoTab.Search), s)
         s = s.pressBack()
         assertEquals(MemoTab.Record, s.tab)
-        var t = MemoNavState().openTagManager()
+        var t = MemoLocation().openTagManager()
         assertTrue(t.handlesBack)
         t = t.pressBack()
-        assertEquals(MemoNavState(tab = MemoTab.Search), t)
+        assertEquals(MemoLocation(tab = MemoTab.Search), t)
         // A note opened from the results goes back to the results.
-        val n = MemoNavState(tab = MemoTab.Search, searchResults = true).openNote("x").pressBack()
-        assertEquals(MemoNavState(tab = MemoTab.Search, searchResults = true), n)
+        val n = MemoLocation(tab = MemoTab.Search, searchResults = true).openNote("x").pressBack()
+        assertEquals(MemoLocation(tab = MemoTab.Search, searchResults = true), n)
     }
 
     @Test
     fun `editing with changes asks once`() {
-        val s = MemoNavState().openFolder("여행").openNote("n").startEditing().edited(true)
+        val s = MemoLocation().openFolder("여행").openNote("n").startEditing().edited(true)
         assertEquals(MemoBack.ConfirmDiscard, s.back())
-        assertEquals(MemoNavState(tab = MemoTab.Folders, folder = "여행"), s.afterDiscardConfirmed())
+        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행"), s.afterDiscardConfirmed())
         // Without changes: straight back.
-        assertEquals(MemoNavState(tab = MemoTab.Folders, folder = "여행"), s.edited(false).pressBack())
+        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행"), s.edited(false).pressBack())
     }
 
     @Test
     fun `switching tabs adds no step`() {
-        val s = MemoNavState().openFolder("여행").selectTab(MemoTab.Search).selectTab(MemoTab.Record)
+        val s = MemoLocation().openFolder("여행").selectTab(MemoTab.Search).selectTab(MemoTab.Record)
         // Back from the record tab still leaves, the folder stays remembered for the folder tab.
         assertEquals(MemoBack.Exit, s.back())
         assertEquals("여행", s.selectTab(MemoTab.Folders).folder)

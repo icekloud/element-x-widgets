@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -42,6 +43,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -71,6 +73,7 @@ import io.element.android.libraries.designsystem.theme.components.TextField
 import io.element.android.libraries.matrix.api.media.MediaSource
 import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.sessionstorage.api.SessionStore
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -114,7 +117,7 @@ internal sealed interface MemoSheet {
 internal class MemoController(
     val store: MemoStore,
     val scope: CoroutineScope,
-    val nav: MutableState<MemoNavState>,
+    val nav: MutableState<MemoLocation>,
 ) {
     var sheet by mutableStateOf<MemoSheet?>(null)
     var error by mutableStateOf<Pair<String, (() -> Unit)?>?>(null)
@@ -122,7 +125,7 @@ internal class MemoController(
     /** Tag filters per folder: kept when going back (요구 F "태그 필터는 뒤로가기로 해제 안 함"). */
     val folderTags = mutableStateMapOf<String, List<String>>()
 
-    fun go(f: (MemoNavState) -> MemoNavState) {
+    fun go(f: (MemoLocation) -> MemoLocation) {
         nav.value = f(nav.value)
     }
 
@@ -157,7 +160,7 @@ internal class MemoController(
 internal fun MemoScreen(
     roomId: String,
     useFakeData: Boolean,
-    timelineItems: List<TimelineItem>,
+    timelineItems: ImmutableList<TimelineItem>,
     onLoadOlder: () -> Unit,
     onPhotoClick: (TimelineItem.Event) -> Unit,
     modifier: Modifier = Modifier,
@@ -168,7 +171,7 @@ internal fun MemoScreen(
     }
     val store = remember(backend) { MemoStore(backend) }
     val scope = rememberCoroutineScope()
-    val nav = remember(roomId) { mutableStateOf(MemoNavState()) }
+    val nav = remember(roomId) { mutableStateOf(MemoLocation()) }
     val controller = remember(store) { MemoController(store, scope, nav) }
     val timeline = remember(timelineItems) { memoTimeline(timelineItems) }
 
@@ -290,7 +293,10 @@ private fun MemoErrorBanner(reason: String, retry: (() -> Unit)?, onClose: () ->
     ) {
         Text(reason, modifier = Modifier.weight(1f), color = ElementTheme.colors.textCriticalPrimary, style = ElementTheme.typography.fontBodySmRegular)
         if (retry != null) {
-            Text("다시", modifier = Modifier.clickable { onClose(); retry() }.padding(8.dp), color = ElementTheme.colors.textActionAccent)
+            Text("다시", modifier = Modifier.clickable {
+                onClose()
+                retry()
+            }.padding(8.dp), color = ElementTheme.colors.textActionAccent)
         }
         Text("✕", modifier = Modifier.clickable(onClick = onClose).padding(8.dp), color = ElementTheme.colors.textSecondary)
     }
@@ -349,10 +355,11 @@ private fun MemoRecordTab(
     // Newest card at the bottom, right above the composer (reverse layout: index 0 = newest).
     val cards = remember(timeline.entries) { buildMemoCards(timeline.entries).asReversed() }
     val listState = rememberLazyListState()
+    val loadOlder by rememberUpdatedState(onLoadOlder)
     LaunchedEffect(listState, cards.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .distinctUntilChanged()
-            .collect { last -> if (cards.isNotEmpty() && last >= cards.size - 3) onLoadOlder() }
+            .collect { last -> if (cards.isNotEmpty() && last >= cards.size - 3) loadOlder() }
     }
     if (cards.isEmpty()) {
         Box(Modifier.fillMaxSize().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
@@ -405,7 +412,13 @@ internal fun MemoCardView(
             .padding(8.dp),
     ) {
         if (!card.isBotOnly) {
-            Text("나 · " + card.headline(), style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "나 · " + card.headline(),
+                style = ElementTheme.typography.fontBodySmRegular,
+                color = ElementTheme.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             val photos = card.inputs.filter { it.kind == MemoEntryKind.Photo }
             if (photos.isNotEmpty()) {
                 Row(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -452,7 +465,12 @@ internal fun MemoCardView(
             if (expanded || card.isBotOnly) {
                 card.replies.forEach { r -> Text(r.text, style = ElementTheme.typography.fontBodySmRegular, modifier = Modifier.padding(top = 4.dp)) }
             } else {
-                Text("봇 답 ▸", style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary, modifier = Modifier.padding(top = 2.dp))
+                Text(
+                    "봇 답 ▸",
+                    style = ElementTheme.typography.fontBodyXsRegular,
+                    color = ElementTheme.colors.textSecondary,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
         }
     }
@@ -476,7 +494,10 @@ private fun MemoSheetHost(controller: MemoController) {
                 memoMoveTargets(index).forEach { f ->
                     Text(
                         "${f.icon} ${f.path}",
-                        modifier = Modifier.fillMaxWidth().clickable { close(); sheet.onPick(f.path) }.padding(horizontal = 16.dp, vertical = 12.dp),
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            close()
+                            sheet.onPick(f.path)
+                        }.padding(horizontal = 16.dp, vertical = 12.dp),
                     )
                 }
                 Spacer(Modifier.height(24.dp))
@@ -505,9 +526,18 @@ private fun MemoSheetHost(controller: MemoController) {
             }
         }
         is MemoSheet.Actions -> ModalBottomSheet(onDismissRequest = close, scrollable = false) {
-            Text(sheet.title, style = ElementTheme.typography.fontBodyMdMedium, modifier = Modifier.padding(16.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                sheet.title,
+                style = ElementTheme.typography.fontBodyMdMedium,
+                modifier = Modifier.padding(16.dp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
             sheet.actions.forEach { (label, action) ->
-                Text(label, modifier = Modifier.fillMaxWidth().clickable { close(); action() }.padding(horizontal = 16.dp, vertical = 12.dp))
+                Text(label, modifier = Modifier.fillMaxWidth().clickable {
+                    close()
+                    action()
+                }.padding(horizontal = 16.dp, vertical = 12.dp))
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -524,10 +554,16 @@ private fun MemoSheetHost(controller: MemoController) {
         is MemoSheet.Confirm -> ConfirmationDialog(
             content = sheet.text,
             submitText = sheet.submit,
-            onSubmitClick = { close(); sheet.onSubmit() },
+            onSubmitClick = {
+                close()
+                sheet.onSubmit()
+            },
             onDismiss = close,
         )
-        is MemoSheet.PickDate -> MemoDatePicker(onPick = { d -> close(); sheet.onPick(d) }, onDismiss = close)
+        is MemoSheet.PickDate -> MemoDatePicker(onPick = { d ->
+            close()
+            sheet.onPick(d)
+        }, onDismiss = close)
     }
 }
 

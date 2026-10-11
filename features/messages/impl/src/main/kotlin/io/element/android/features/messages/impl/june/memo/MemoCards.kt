@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -76,7 +77,8 @@ internal fun parseMemoReply(text: String): MemoReplyInfo? {
             seg.startsWith("후보") -> candidates = seg.substringAfter(':', "").split('/', ',').map { it.trim() }.filter { it.isNotEmpty() }.take(2)
             seg.startsWith("📅") || seg.startsWith("⏳") || "검토" in seg -> review = when {
                 "불필요" in seg -> MemoReviewState.NotNeeded
-                "도착" in seg || ("제안" in seg && "요청" !in seg) -> MemoReviewState.Proposed
+                "도착" in seg -> MemoReviewState.Proposed
+                "제안" in seg && "요청" !in seg -> MemoReviewState.Proposed
                 else -> MemoReviewState.Reviewing
             }
             seg.startsWith("📌") -> pin = true

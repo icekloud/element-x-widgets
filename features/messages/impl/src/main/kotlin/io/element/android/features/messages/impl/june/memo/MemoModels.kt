@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -198,7 +199,12 @@ internal fun parseMemoIndex(content: JSONObject): MemoIndex {
     val proposals = content.optJSONArray("제안")
     return MemoIndex(
         folders = if (folders == null) emptyList() else List(folders.length()) { i -> folders.optJSONObject(i)?.let(::parseMemoFolder) }.filterNotNull(),
-        proposals = if (proposals == null) emptyList() else List(proposals.length()) { i -> proposals.optJSONObject(i)?.let(::parseMemoProposal) }.filterNotNull(),
+        proposals = if (proposals ==
+            null) {
+                emptyList()
+            } else {
+                List(proposals.length()) { i -> proposals.optJSONObject(i)?.let(::parseMemoProposal) }.filterNotNull()
+            },
         updatedAt = content.optStringOrNull("갱신시각"),
         splitKeys = if (content.optBoolean("분할")) content.optJSONArray("폴더키").strings() else emptyList(),
     )

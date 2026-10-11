@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -50,9 +51,12 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.element.android.compound.theme.ElementTheme
+import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.designsystem.theme.components.Text
 import io.element.android.libraries.designsystem.theme.components.TextField
 import io.noties.markwon.Markwon
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.launch
 
 /** Search tab state, kept across tab switches (the query stays when coming back). */
@@ -125,8 +129,15 @@ internal fun MemoSearchTab(controller: MemoController) {
                 )
             }
             Text("🎤", modifier = Modifier.clickable {
-                runCatching {
-                    voice.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR"))
+                runCatchingExceptions {
+                    voice.launch(
+                        Intent(
+                            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+                        ).putExtra(
+                            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                        ).putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR")
+                    )
                 }
             }.padding(8.dp))
             Text("🔍", modifier = Modifier.clickable { run(ui.query) }.padding(8.dp))
@@ -151,7 +162,12 @@ internal fun MemoSearchTab(controller: MemoController) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
             MEMO_KINDS.forEach { k -> MemoChip(memoKindIcon(k) + " " + k, selected = k in ui.query.kinds, onClick = { run(ui.query.toggleKind(k)) }) }
             MemoChip("📁 " + (ui.query.folder ?: "폴더") + " ▾", selected = ui.query.folder != null, onClick = {
-                if (ui.query.folder != null) run(ui.query.copy(folder = null)) else controller.sheet = MemoSheet.PickFolder("폴더로 좁히기") { f -> run(ui.query.copy(folder = f)) }
+                if (ui.query.folder !=
+                    null) {
+                        run(ui.query.copy(folder = null))
+                    } else {
+                        controller.sheet = MemoSheet.PickFolder("폴더로 좁히기") { f -> run(ui.query.copy(folder = f)) }
+                    }
             })
             MemoChip((ui.query.period?.label ?: "기간") + " ▾", selected = ui.query.period != null, onClick = {
                 val next = when (ui.query.period) {
@@ -166,9 +182,14 @@ internal fun MemoSearchTab(controller: MemoController) {
             MemoChip("📌", selected = ui.query.pinned, onClick = { run(ui.query.copy(pinned = !ui.query.pinned)) })
         }
         if (!nav.searchResults) {
-            MemoSearchEmpty(controller, ui.recent, tags, onRun = ::run)
+            MemoSearchEmpty(controller, ui.recent.toImmutableList(), tags.toImmutableList(), onRun = ::run)
         } else {
-            Text(ui.query.describe(), modifier = Modifier.padding(8.dp), style = ElementTheme.typography.fontBodySmMedium, color = ElementTheme.colors.textSecondary)
+            Text(
+                ui.query.describe(),
+                modifier = Modifier.padding(8.dp),
+                style = ElementTheme.typography.fontBodySmMedium,
+                color = ElementTheme.colors.textSecondary
+            )
             if (ui.searching) Text("찾는 중…", modifier = Modifier.padding(8.dp), color = ElementTheme.colors.textSecondary)
             if (!ui.searching && ui.results.isEmpty()) {
                 Column(Modifier.padding(12.dp)) {
@@ -190,7 +211,12 @@ internal fun MemoSearchTab(controller: MemoController) {
 }
 
 @Composable
-private fun MemoSearchEmpty(controller: MemoController, recent: List<MemoSearchQuery>, tags: List<MemoTag>, onRun: (MemoSearchQuery) -> Unit) {
+private fun MemoSearchEmpty(
+    controller: MemoController,
+    recent: ImmutableList<MemoSearchQuery>,
+    tags: ImmutableList<MemoTag>,
+    onRun: (MemoSearchQuery) -> Unit,
+) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp)) {
         if (recent.isNotEmpty()) {
             Text("최근 검색", style = ElementTheme.typography.fontBodySmMedium, color = ElementTheme.colors.textSecondary)
@@ -200,7 +226,11 @@ private fun MemoSearchEmpty(controller: MemoController, recent: List<MemoSearchQ
             Text(axis, style = ElementTheme.typography.fontBodySmMedium, color = ElementTheme.colors.textSecondary, modifier = Modifier.padding(top = 8.dp))
             FlowRow { list.take(12).forEach { t -> MemoChip("#${t.name} ${t.count}", onClick = { onRun(MemoSearchQuery(tags = listOf(t.name))) }) } }
         }
-        Text("🏷 태그 관리", color = ElementTheme.colors.textActionAccent, modifier = Modifier.padding(top = 12.dp).clickable { controller.go { it.openTagManager() } }.padding(8.dp))
+        Text(
+            "🏷 태그 관리",
+            color = ElementTheme.colors.textActionAccent,
+            modifier = Modifier.padding(top = 12.dp).clickable { controller.go { it.openTagManager() } }.padding(8.dp)
+        )
     }
 }
 
@@ -216,11 +246,17 @@ private fun MemoResultRow(item: MemoItem, onOpen: () -> Unit, onTag: (String) ->
                     if (part.marked) withStyle(SpanStyle(color = accent, fontWeight = FontWeight.SemiBold)) { append(part.text) } else append(part.text)
                 }
             }
-            Text(text, style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                text,
+                style = ElementTheme.typography.fontBodySmRegular,
+                color = ElementTheme.colors.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("📁 ${item.folder} · ${item.shortDate}  ", style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
-            MemoTagLine(item.tags, max = 4, onTag = onTag)
+            MemoTagLine(item.tags.toImmutableList(), max = 4, onTag = onTag)
         }
     }
 }
@@ -234,7 +270,12 @@ private fun MemoTagManager(controller: MemoController) {
     val refresh: (MemoResponse) -> Unit = { controller.scope.launch { controller.store.loadTags() } }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("‹ 태그 관리", style = ElementTheme.typography.fontBodyLgMedium, modifier = Modifier.weight(1f).clickable { controller.go { s -> (s.back() as? MemoBack.To)?.state ?: s } })
+            Text("‹ 태그 관리", style = ElementTheme.typography.fontBodyLgMedium, modifier = Modifier.weight(1f).clickable {
+                controller.go { s ->
+                    (s.back() as? MemoBack.To)?.state
+                ?: s
+                }
+            })
             Text("＋ 새 태그", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable {
                 controller.sheet = MemoSheet.AskText("새 태그 이름", "") { n -> controller.run(MemoOp.tagCreate(n.removePrefix("#"), null), refresh) }
             }.padding(8.dp))
@@ -246,9 +287,21 @@ private fun MemoTagManager(controller: MemoController) {
                         controller.sheet = MemoSheet.Actions(
                             "#" + t.name,
                             listOf(
-                                "이름 바꾸기" to { controller.sheet = MemoSheet.AskText("새 이름", t.name) { n -> controller.run(MemoOp.tagRename(t.name, n.removePrefix("#")), refresh) } },
-                                "다른 태그로 합치기" to { controller.sheet = MemoSheet.AskText("합칠 태그 이름", "") { n -> controller.run(MemoOp.tagMerge(listOf(t.name), n.removePrefix("#")), refresh) } },
-                                "삭제" to { controller.sheet = MemoSheet.Confirm("#${t.name} 태그를 모든 메모에서 뺄까요?", "삭제") { controller.run(MemoOp.tagDelete(t.name), refresh) } },
+                                "이름 바꾸기" to
+                                    {
+                                        controller.sheet =
+                                        MemoSheet.AskText("새 이름", t.name) { n -> controller.run(MemoOp.tagRename(t.name, n.removePrefix("#")), refresh) }
+                                    },
+                                "다른 태그로 합치기" to
+                                    {
+                                        controller.sheet =
+                                        MemoSheet.AskText("합칠 태그 이름", "") { n -> controller.run(MemoOp.tagMerge(listOf(t.name), n.removePrefix("#")), refresh) }
+                                    },
+                                "삭제" to
+                                    {
+                                        controller.sheet =
+                                        MemoSheet.Confirm("#${t.name} 태그를 모든 메모에서 뺄까요?", "삭제") { controller.run(MemoOp.tagDelete(t.name), refresh) }
+                                    },
                             ),
                         )
                     }.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -257,7 +310,13 @@ private fun MemoTagManager(controller: MemoController) {
                     Column(Modifier.weight(1f)) {
                         Text("#" + t.name, style = ElementTheme.typography.fontBodyMdMedium)
                         val meta = listOfNotNull(t.axis, t.source?.let { "출처 $it" }, t.synonyms.takeIf { it.isNotEmpty() }?.joinToString(prefix = "동의어 "))
-                        if (meta.isNotEmpty()) Text(meta.joinToString(" · "), style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
+                        if (meta.isNotEmpty()) {
+                            Text(
+                                meta.joinToString(" · "),
+                                style = ElementTheme.typography.fontBodyXsRegular,
+                                color = ElementTheme.colors.textSecondary
+                            )
+                        }
                     }
                     Text("${t.count}", color = ElementTheme.colors.textSecondary)
                 }
@@ -289,13 +348,22 @@ internal fun MemoNoteScreen(controller: MemoController, id: String) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             val title = note?.header?.optString("제목")?.takeIf { it.isNotEmpty() } ?: "메모"
-            Text("‹ $title", style = ElementTheme.typography.fontBodyLgMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).clickable {
+            Text("‹ $title", style = ElementTheme.typography.fontBodyLgMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(
+                1f
+            ).clickable {
                 when (val b = nav.back()) {
                     is MemoBack.To -> controller.go { b.state }
                     else -> Unit
                 }
             })
-            if (note != null && !nav.editing) Text("편집", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable { controller.go { it.startEditing() } }.padding(8.dp))
+            if (note != null &&
+                !nav.editing) {
+                    Text(
+                        "편집",
+                        color = ElementTheme.colors.textActionAccent,
+                        modifier = Modifier.clickable { controller.go { it.startEditing() } }.padding(8.dp)
+                    )
+                }
         }
         val n = note
         when {
@@ -304,10 +372,14 @@ internal fun MemoNoteScreen(controller: MemoController, id: String) {
                 Text("다시", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable(onClick = load).padding(horizontal = 8.dp))
             }
             n == null -> Text("불러오는 중…", modifier = Modifier.padding(12.dp), color = ElementTheme.colors.textSecondary)
-            nav.editing -> MemoNoteEditor(controller, n, onSaved = { saved -> note = saved })
+            nav.editing -> MemoNoteEditor(controller, n, onSave = { saved -> note = saved })
             else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
-                Text("📁 ${n.folder} · ${n.created.take(10)}" + if (n.pinned) " · 📌" else "", style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary)
-                MemoTagLine(n.tags, max = 20, modifier = Modifier.padding(vertical = 4.dp))
+                Text(
+                    "📁 ${n.folder} · ${n.created.take(10)}" + if (n.pinned) " · 📌" else "",
+                    style = ElementTheme.typography.fontBodySmRegular,
+                    color = ElementTheme.colors.textSecondary
+                )
+                MemoTagLine(n.tags.toImmutableList(), max = 20, modifier = Modifier.padding(vertical = 4.dp))
                 // 📅 proposal linked to this note
                 index.proposals.filter { it.noteId == id }.forEach { p -> MemoProposalCard(controller, p) }
                 MemoMarkdown(n.body)
@@ -339,7 +411,7 @@ private fun MemoMarkdown(body: String) {
 }
 
 @Composable
-private fun MemoNoteEditor(controller: MemoController, note: MemoNote, onSaved: (MemoNote) -> Unit) {
+private fun MemoNoteEditor(controller: MemoController, note: MemoNote, onSave: (MemoNote) -> Unit) {
     val title0 = note.header.optString("제목")
     val tags0 = note.tags.joinToString(" ") { "#$it" }
     var title by remember(note.id) { mutableStateOf(title0) }
@@ -363,7 +435,9 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote, onSaved: 
                         tags = newTags.takeIf { tags != tags0 },
                     ),
                 ) {
-                    onSaved(note.copy(body = body, header = org.json.JSONObject(note.header.toString()).put("제목", title).put("태그", org.json.JSONArray(newTags))))
+                    onSave(
+                        note.copy(body = body, header = org.json.JSONObject(note.header.toString()).put("제목", title).put("태그", org.json.JSONArray(newTags)))
+                    )
                     controller.go { it.stopEditing() }
                 }
             }.padding(12.dp))

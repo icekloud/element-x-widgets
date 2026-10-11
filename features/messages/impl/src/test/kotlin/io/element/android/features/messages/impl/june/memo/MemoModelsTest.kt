@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -24,7 +25,7 @@ class MemoModelsTest : RobolectricTest() {
                 """{"v":1,"폴더":[{"경로":"여행","아이콘":"✈️","개수":12,"폴더없음수":0,"고정수":2,"최근":["a","b"],"전체":15,"출처":"기본"},
                 {"경로":"받은편지함","개수":3,"폴더없음수":2},{"경로":""}],
                 "제안":[{"id":"p1","종류":"일정추가","요약":"10/5 빵집","상태":"대기","노트":"n1","날짜":"2026-10-05"},
-                {"id":"p2","종류":"폴더생성","요약":"영상","상태":"재검토","폴더":"영상","대상수":5}],"갱신시각":"2026-10-11T20:41:00+09:00"}""",
+                {"id":"p2","종류":"폴더생성","요약":"영상","상태":"재검토","폴더":"영상","대상수":5}],"갱신시각":"2026-10-11T20:41:00+09:00"}""".trimIndent(),
             ),
         )
         assertEquals(listOf("여행", "받은편지함"), index.folders.map { it.path })
@@ -81,9 +82,14 @@ class MemoModelsTest : RobolectricTest() {
         assertEquals(listOf("a", "b"), note.note.tags)
         assertEquals("여행", note.note.folder)
         assertEquals(listOf("mxc://1", "mxc://2"), note.note.attachments.map { it.mxc })
-        assertTrue(note.note.attachments[1].fileJson!!.contains("mxc://2"))
+        // Android's org.json escapes '/' ("mxc:\/\/2"): compare the parsed value, not the string form.
+        assertEquals("mxc://2", JSONObject(note.note.attachments[1].fileJson!!).getString("url"))
+        assertNull(note.note.attachments[0].fileJson)
         assertFalse(note.note.truncated)
-        val tags = parseMemoResponse(MEMO_TAGS_TYPE, JSONObject("""{"요청id":"r3","태그":[{"이름":"빵집","수":7,"축":"주제","출처":"봇","동의어":["교토빵집"]}]}""")) as MemoResponse.Tags
+        val tags = parseMemoResponse(
+            MEMO_TAGS_TYPE,
+            JSONObject("""{"요청id":"r3","태그":[{"이름":"빵집","수":7,"축":"주제","출처":"봇","동의어":["교토빵집"]}]}""")
+        ) as MemoResponse.Tags
         assertEquals(MemoTag("빵집", 7, "주제", "봇", listOf("교토빵집")), tags.tags.single())
         val error = parseMemoResponse(MEMO_ERROR_TYPE, JSONObject("""{"요청id":"r4","op":"move","사유":"폴더가 없습니다"}""")) as MemoResponse.Error
         assertEquals("폴더가 없습니다", error.reason)

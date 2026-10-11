@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -44,7 +45,7 @@ internal data class MemoListKey(val folder: String, val tags: List<String> = emp
 }
 
 /** A loaded tile list, kept so going back restores the items, the cursor and the scroll position without asking again. */
-internal data class MemoListState(
+internal data class MemoListCache(
     val items: List<MemoItem> = emptyList(),
     val nextCursor: String? = null,
     val endReached: Boolean = false,
@@ -60,7 +61,7 @@ internal data class MemoListState(
 }
 
 /** True when the last visible tile is within [MEMO_PREFETCH_DISTANCE] of the end and more can be loaded. */
-internal fun memoShouldLoadMore(state: MemoListState, lastVisibleIndex: Int): Boolean =
+internal fun memoShouldLoadMore(state: MemoListCache, lastVisibleIndex: Int): Boolean =
     state.loaded && !state.endReached && !state.loading && state.error == null &&
         lastVisibleIndex >= state.items.size - MEMO_PREFETCH_DISTANCE
 
@@ -79,18 +80,18 @@ internal class MemoStore(
     private val _indexError = MutableStateFlow(false)
     val indexError: StateFlow<Boolean> = _indexError.asStateFlow()
 
-    private val _lists = MutableStateFlow<Map<MemoListKey, MemoListState>>(emptyMap())
-    val lists: StateFlow<Map<MemoListKey, MemoListState>> = _lists.asStateFlow()
+    private val _lists = MutableStateFlow<Map<MemoListKey, MemoListCache>>(emptyMap())
+    val lists: StateFlow<Map<MemoListKey, MemoListCache>> = _lists.asStateFlow()
 
     private val _tags = MutableStateFlow<List<MemoTag>>(emptyList())
     val tags: StateFlow<List<MemoTag>> = _tags.asStateFlow()
 
     private val notes = mutableMapOf<String, MemoNote>()
 
-    fun list(key: MemoListKey): MemoListState = _lists.value[key] ?: MemoListState()
+    fun list(key: MemoListKey): MemoListCache = _lists.value[key] ?: MemoListCache()
 
-    private fun updateList(key: MemoListKey, f: (MemoListState) -> MemoListState) {
-        _lists.update { all -> all + (key to f(all[key] ?: MemoListState())) }
+    private fun updateList(key: MemoListKey, f: (MemoListCache) -> MemoListCache) {
+        _lists.update { all -> all + (key to f(all[key] ?: MemoListCache())) }
     }
 
     /** Reads the index once; keeps the last good one on a transient error. */
@@ -131,14 +132,15 @@ internal class MemoStore(
     /** First page of [key]. Does nothing when it is already loaded (back navigation restores it), unless [force]. */
     suspend fun loadFirst(key: MemoListKey, force: Boolean = false) {
         val current = list(key)
-        if (current.loading || (current.loaded && !force && current.error == null)) return
+        val alreadyLoaded = current.loaded && !force && current.error == null
+        if (current.loading || alreadyLoaded) return
         updateList(key) { it.copy(loading = true, error = null) }
         when (val r = request(MemoOp.list(key.folder, key.tags, key.sort, null))) {
             is MemoResult.Ok -> {
                 val page = (r.response as? MemoResponse.List)?.page ?: MemoPage(emptyList(), null)
                 val base = _index.value.folder(key.folder)?.count
                 updateList(key) {
-                    MemoListState(
+                    MemoListCache(
                         items = page.items,
                         nextCursor = page.nextCursor,
                         endReached = page.nextCursor == null,
@@ -242,7 +244,18 @@ internal class MemoStore(
                 val pinned = op.op == "pin"
                 _lists.update { all ->
                     all.mapValues { (_, s) ->
-                        s.copy(items = s.items.map { if (matches(it)) it.copy(pinned = if (op.op == "dismiss_pin") it.pinned else pinned, pinSuggested = false) else it })
+                        s.copy(items = s.items.map {
+                            if (matches(it)) {
+                            it.copy(pinned = if (op.op ==
+                            "dismiss_pin") {
+                                it.pinned
+                            } else {
+                                pinned
+                            }, pinSuggested = false)
+                        } else {
+                            it
+                        }
+                        })
                     }
                 }
                 notes.remove(id)

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -17,13 +18,13 @@ import org.json.JSONObject
  * screens before the server module exists. Not used for a real room unless the memo room is set to the fake one.
  */
 internal class FakeMemoBackend(
-    notes: List<FakeNote> = sampleNotes(),
+    notes: List<SampleNote> = sampleNotes(),
     folders: List<MemoFolder> = sampleFolders(),
     proposals: List<MemoProposal> = sampleProposals(),
     tags: List<MemoTag> = sampleTags(),
     private val latencyMillis: Long = 0,
 ) : MemoBackend {
-    data class FakeNote(
+    data class SampleNote(
         val item: MemoItem,
         val body: String = item.title,
         val attachments: List<String> = emptyList(),
@@ -66,9 +67,9 @@ internal class FakeMemoBackend(
         if (op.op in failing) return MemoResponse.Error(requestId, op.op, "가짜 오류: ${op.op}")
         val a = op.args
         return when (op.op) {
-            "list" -> list(requestId, a["folder"] as String, strings(a["tags"]), a["cursor"] as String?)
+            "list" -> list(requestId, a["folder"] as String, strings(a["tags"]), a["cursor"] as? String)
             "get" -> get(requestId, a["id"] as String)
-            "search" -> search(requestId, a["q"] as? String ?: "", a["filters"] as? Map<*, *> ?: emptyMap<String, Any>(), a["cursor"] as String?)
+            "search" -> search(requestId, a["q"] as? String ?: "", a["filters"] as? Map<*, *> ?: emptyMap<String, Any>(), a["cursor"] as? String)
             "tag_list" -> {
                 val p = a["prefix"] as? String ?: ""
                 MemoResponse.Tags(requestId, tags.filter { p.isEmpty() || it.name.contains(p) }.sortedByDescending { it.count })
@@ -82,7 +83,7 @@ internal class FakeMemoBackend(
     private fun find(op: MemoOp): Int {
         val id = op.args["id"] as? String
         val event = op.args["이벤트"] as? String
-        return notes.indexOfFirst { (id != null && it.item.id == id) || (id == null && event != null && it.item.id == "ev:$event") }
+        return notes.indexOfFirst { if (id != null) it.item.id == id else event != null && it.item.id == "ev:$event" }
     }
 
     private fun list(rid: String, folder: String, tags: List<String>, cursor: String?): MemoResponse {
@@ -130,7 +131,7 @@ internal class FakeMemoBackend(
         val page = found.drop(start).take(50).map { n ->
             val w = textWords.firstOrNull()
             val snippet = if (w == null) "" else n.body.replace(w, "<mark>$w</mark>").take(80)
-            n.item.copy(snippet = snippet, matchField = if (w == null) null else "본문")
+            n.item.copy(snippet = snippet, matchField = w?.let { "본문" })
         }
         return MemoResponse.Search(rid, MemoPage(page, if (start + page.size < found.size) (start + page.size).toString() else null))
     }
@@ -174,7 +175,8 @@ internal class FakeMemoBackend(
             "rename_dir" -> {
                 val from = a["path"] as String
                 val new = a["new"] as String
-                val to = if ('/' in new) new else (from.substringBeforeLast('/', "").let { if (it.isEmpty()) new else "$it/$new" })
+                val parent = from.substringBeforeLast('/', "")
+                val to = if ('/' in new || parent.isEmpty()) new else "$parent/$new"
                 val i = folders.indexOfFirst { it.path == from }
                 if (i < 0) {
                     err("폴더가 없습니다")
@@ -301,62 +303,90 @@ internal class FakeMemoBackend(
             schedule: String? = null,
         ) = MemoItem(id, kind, title, preview, date, tags, folder, pinned, pinSuggested, schedule)
 
-        fun sampleNotes(): List<FakeNote> {
+        fun sampleNotes(): List<SampleNote> {
             val base = listOf(
-                FakeNote(
+                SampleNote(
                     item(
-                        "20261011-143012-a1b2", "링크", "○○베이커리", "2026-10-11T14:30:12+09:00", "여행",
+                        "20261011-143012-a1b2",
+                        "링크",
+                        "○○베이커리",
+                        "2026-10-11T14:30:12+09:00",
+                        "여행",
                         listOf("빵집", "교토", "10월5일", "방문후보"),
                         MemoPreview.Link("https://tabelog.com/kyoto/A2601/", "교토 ○○베이커리 — 타베로그 3.72", null, "tabelog"),
                         schedule = "제안있음",
                     ),
                     body = "# ○○베이커리\n\n교토 ○○베이커리 — 타베로그 3.72\n\n## 링크 요약\n가와라마치에서 도보 8분. 오전 7시 개점.",
                 ),
-                FakeNote(
+                SampleNote(
                     item(
-                        "20261011-101500-c3d4", "텍스트", "환전 10만엔 더", "2026-10-11T10:15:00+09:00", "여행",
+                        "20261011-101500-c3d4",
+                        "텍스트",
+                        "환전 10만엔 더",
+                        "2026-10-11T10:15:00+09:00",
+                        "여행",
                         listOf("환전", "할일", "준비"),
                         MemoPreview.Text("환전 10만엔 더. 공항보다 시내 환전소가 수수료 낮음. 가와라마치 ○○환전소 10~19시…"),
                         schedule = "요청됨",
                     ),
                     body = "환전 10만엔 더. 공항보다 시내 환전소가 수수료 낮음. 가와라마치 ○○환전소 10~19시.",
                 ),
-                FakeNote(
+                SampleNote(
                     item(
-                        "20261002-180000-e5f6", "음성", "가와라마치 역 출구", "2026-10-02T18:00:00+09:00", "여행",
+                        "20261002-180000-e5f6",
+                        "음성",
+                        "가와라마치 역 출구",
+                        "2026-10-02T18:00:00+09:00",
+                        "여행",
                         listOf("이동", "교토", "길안내"),
                         MemoPreview.Text("🎤 가와라마치 역 북쪽 출구로 나가면 바로 상점가, 왼쪽으로…"),
                     ),
                     body = "## 음성 전사\n가와라마치 역 북쪽 출구로 나가면 바로 상점가, 왼쪽으로 3분.",
                 ),
-                FakeNote(
+                SampleNote(
                     item(
-                        "20260930-090000-g7h8", "텍스트", "숙소 체크인 15:00", "2026-09-30T09:00:00+09:00", "여행",
+                        "20260930-090000-g7h8",
+                        "텍스트",
+                        "숙소 체크인 15:00",
+                        "2026-09-30T09:00:00+09:00",
+                        "여행",
                         listOf("교토", "숙소"),
                         MemoPreview.Text("체크인 15:00 · 가와라마치 도보 6분"),
                         pinned = true,
                     ),
                     body = "체크인 15:00 · 가와라마치 도보 6분",
                 ),
-                FakeNote(
+                SampleNote(
                     item(
-                        "20261002-120000-i9j0", "사진", "카레집 카운터", "2026-10-02T12:00:00+09:00", "여행",
+                        "20261002-120000-i9j0",
+                        "사진",
+                        "카레집 카운터",
+                        "2026-10-02T12:00:00+09:00",
+                        "여행",
                         listOf("카레", "오사카", "방문완료"),
                         MemoPreview.Photo("mxc://example/curry", 3),
                         pinSuggested = true,
                     ),
                     attachments = listOf("mxc://example/curry", "mxc://example/curry2", "mxc://example/curry3"),
                 ),
-                FakeNote(
+                SampleNote(
                     item(
-                        "20261011-120000-k1l2", "사진", "하다라보 화장수 라벨", "2026-10-11T12:00:00+09:00", "쇼핑·구매",
+                        "20261011-120000-k1l2",
+                        "사진",
+                        "하다라보 화장수 라벨",
+                        "2026-10-11T12:00:00+09:00",
+                        "쇼핑·구매",
                         listOf("화장수", "사진", "구매후보"),
                         MemoPreview.Photo("mxc://example/label", 2),
                     ),
                 ),
-                FakeNote(
+                SampleNote(
                     item(
-                        "20261011-130000-m3n4", "링크", "그 영상 나중에", "2026-10-11T13:00:00+09:00", MEMO_INBOX,
+                        "20261011-130000-m3n4",
+                        "링크",
+                        "그 영상 나중에",
+                        "2026-10-11T13:00:00+09:00",
+                        MEMO_INBOX,
                         listOf("영상"),
                         MemoPreview.Link("https://youtu.be/x", null, null, "YouTube"),
                     ),
@@ -364,10 +394,15 @@ internal class FakeMemoBackend(
             )
             // A long folder to try the infinite scroll (30 + 30 + 5).
             val many = (1..65).map { n ->
-                FakeNote(
+                SampleNote(
                     item(
-                        "20260901-0000%02d-zz%02d".format(n % 60, n), "텍스트", "링크 모음 $n", "2026-09-%02dT08:00:00+09:00".format(30 - n % 29),
-                        "링크보관", listOf("모음", if (n % 2 == 0) "짝수" else "홀수"), MemoPreview.Text("저장한 링크 $n 번"),
+                        "20260901-0000%02d-zz%02d".format(n % 60, n),
+                        "텍스트",
+                        "링크 모음 $n",
+                        "2026-09-%02dT08:00:00+09:00".format(30 - n % 29),
+                        "링크보관",
+                        listOf("모음", if (n % 2 == 0) "짝수" else "홀수"),
+                        MemoPreview.Text("저장한 링크 $n 번"),
                     ),
                 )
             }

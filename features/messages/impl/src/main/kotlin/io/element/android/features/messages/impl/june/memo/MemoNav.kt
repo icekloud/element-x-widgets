@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Element June contributors.
+ * Copyright (c) 2025 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -15,7 +16,7 @@ internal enum class MemoTab { Record, Folders, Search }
  * search results / tag manager → search empty state → record tab.
  * Switching tabs, sheets and bands never add a step.
  */
-internal data class MemoNavState(
+internal data class MemoLocation(
     val tab: MemoTab = MemoTab.Record,
     /** Folder open in the folder tab, null = the folder grid (root). */
     val folder: String? = null,
@@ -68,7 +69,7 @@ internal data class MemoNavState(
 }
 
 internal sealed interface MemoBack {
-    data class To(val state: MemoNavState) : MemoBack
+    data class To(val state: MemoLocation) : MemoBack
     data object ConfirmDiscard : MemoBack
     data object Exit : MemoBack
 }
@@ -110,6 +111,7 @@ internal fun memoRootBand(index: MemoIndex): List<MemoProposal> = index.proposal
 /** Proposals shown in a folder: folder creations under [path] and schedule proposals about the [loadedIds] notes. */
 internal fun memoFolderBand(index: MemoIndex, path: String, loadedIds: Set<String>): List<MemoProposal> =
     index.proposals.filter { p ->
-        (p.isFolderCreate && p.folder != null && (p.folder == path || p.folder.startsWith("$path/"))) ||
-            (p.noteId != null && p.noteId in loadedIds)
+        val folderCreateHere = p.isFolderCreate && p.folder != null && (p.folder == path || p.folder.startsWith("$path/"))
+        val aboutLoadedNote = p.noteId != null && p.noteId in loadedIds
+        folderCreateHere || aboutLoadedNote
     }

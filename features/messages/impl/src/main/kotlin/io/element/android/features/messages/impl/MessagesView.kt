@@ -641,24 +641,26 @@ private fun MessagesViewContent(
                     onLoadOlder = { state.timelineState.eventSink(TimelineEvent.LoadMore(Timeline.PaginationDirection.BACKWARDS)) },
                     onPhotoClick = onContentClick,
                 )
-            } else TimelineView(
-                state = state.timelineState,
-                timelineProtectionState = state.timelineProtectionState,
-                onUserDataClick = onUserDataClick,
-                onLinkClick = { link -> onLinkClick(link, false) },
-                onContentClick = onContentClick,
-                onGalleryItemClick = onGalleryItemClick,
-                onMessageLongClick = onMessageLongClick,
-                onSwipeToReply = onSwipeToReply,
-                onReactionClick = onReactionClick,
-                onReactionLongClick = onReactionLongClick,
-                onMoreReactionsClick = onMoreReactionsClick,
-                onReadReceiptClick = onReadReceiptClick,
-                onJoinCallClick = onJoinCallClick,
-                forceJumpToBottomVisibility = forceJumpToBottomVisibility,
-                nestedScrollConnection = scrollBehavior.nestedScrollConnection,
-                floatingDateTopOffset = topBannersHeightDp,
-            )
+            } else {
+                TimelineView(
+                    state = state.timelineState,
+                    timelineProtectionState = state.timelineProtectionState,
+                    onUserDataClick = onUserDataClick,
+                    onLinkClick = { link -> onLinkClick(link, false) },
+                    onContentClick = onContentClick,
+                    onGalleryItemClick = onGalleryItemClick,
+                    onMessageLongClick = onMessageLongClick,
+                    onSwipeToReply = onSwipeToReply,
+                    onReactionClick = onReactionClick,
+                    onReactionLongClick = onReactionLongClick,
+                    onMoreReactionsClick = onMoreReactionsClick,
+                    onReadReceiptClick = onReadReceiptClick,
+                    onJoinCallClick = onJoinCallClick,
+                    forceJumpToBottomVisibility = forceJumpToBottomVisibility,
+                    nestedScrollConnection = scrollBehavior.nestedScrollConnection,
+                    floatingDateTopOffset = topBannersHeightDp,
+                )
+            }
 
             if (state.timelineState.timelineMode !is Timeline.Mode.Thread) {
                 Column(

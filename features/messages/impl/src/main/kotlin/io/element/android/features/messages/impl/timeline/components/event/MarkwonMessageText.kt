@@ -68,7 +68,7 @@ internal fun MarkwonMessageText(
     val currentContentLayoutChange by rememberUpdatedState(onContentLayoutChange)
     // Element June: a code block background spans the TextView width, so let such messages use the whole bubble width
     val hasCodeBlock = remember(spanned) {
-        spanned is android.text.Spanned && spanned.getSpans(0, spanned.length, CodeBlockSpan::class.java).isNotEmpty()
+        spanned.getSpans(0, spanned.length, CodeBlockSpan::class.java).isNotEmpty()
     }
     AndroidView(
         modifier = if (hasCodeBlock) modifier.fillMaxWidth() else modifier,
