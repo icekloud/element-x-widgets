@@ -97,6 +97,8 @@ internal data class MemoLocalAttachment(
     val mime: String? = null,
     val bytes: Long? = null,
     val state: String = MEMO_ATTACH_LOCAL,
+    /** Failed upload tries in a row (A5): at [MEMO_ATTACH_MAX_TRIES] the attachment becomes [MEMO_ATTACH_FAILED]. */
+    val tries: Int = 0,
 ) {
     /** Union key of the `첨부` bundle: the mxc once uploaded (이벤트규약 v2 §5), the local file before. */
     val key: String get() = mxc ?: localPath ?: id
@@ -106,6 +108,20 @@ internal const val MEMO_ATTACH_LOCAL = "로컬만"
 internal const val MEMO_ATTACH_UPLOADING = "올리는중"
 internal const val MEMO_ATTACH_DONE = "올림"
 internal const val MEMO_ATTACH_FAILED = "실패"
+
+/** Upload tries in a row before an attachment is marked [MEMO_ATTACH_FAILED] (설계 §e). */
+internal const val MEMO_ATTACH_MAX_TRIES = 10
+
+/** Free space under which the memo screen warns (설계 §e: 1 GB or 5 % of the total, whichever is smaller). */
+internal fun memoLowStorage(availableBytes: Long, totalBytes: Long): Boolean =
+    availableBytes <= minOf(1L shl 30, totalBytes / 20)
+
+/** "1.2GB" / "350MB" for the clean button. */
+internal fun memoSizeText(bytes: Long): String = if (bytes >= 1L shl 30) {
+    String.format(java.util.Locale.ROOT, "%.1fGB", bytes / (1L shl 30).toDouble())
+} else {
+    "${bytes / (1L shl 20)}MB"
+}
 
 /** A note row of the local database with its tags and attachments. */
 internal data class MemoNoteRecord(

@@ -80,6 +80,39 @@ internal class MemoLocalBackend(
         id
     }
 
+    // ---------------------------------------------------------------- attachments (A5, 설계 §e)
+
+    /** Attachments that gave up after [MEMO_ATTACH_MAX_TRIES] tries ("사진 N장을 못 올렸습니다 · 다시 시도"). */
+    suspend fun failedAttachments(): Int = withContext(dispatcher) { db.failedAttachmentCount() }
+
+    suspend fun retryFailedAttachments() = withContext(dispatcher) {
+        db.retryFailedAttachments()
+        MemoLocalChanges.changed()
+    }
+
+    /** Uploaded originals still on the phone: how many and how many bytes the clean button would free. */
+    suspend fun uploadedOriginals(): Pair<Int, Long> = withContext(dispatcher) {
+        val rows = db.uploadedOriginals()
+        rows.size to rows.sumOf { it.bytes ?: 0L }
+    }
+
+    /**
+     * "올림 끝난 원본 정리": removes the phone copy of uploaded attachments only (their mxc stays, they can be fetched
+     * again). `로컬만` and `실패` originals are never touched — they are the only copy. Nothing calls this on its own.
+     */
+    suspend fun cleanUploadedOriginals(delete: (String) -> Boolean): Int = withContext(dispatcher) {
+        var n = 0
+        db.uploadedOriginals().forEach { a ->
+            val path = a.localPath ?: return@forEach
+            if (delete(path)) {
+                db.dropOriginal(a.id)
+                n++
+            }
+        }
+        if (n > 0) MemoLocalChanges.changed()
+        n
+    }
+
     // ---------------------------------------------------------------- reads
 
     private fun index(): MemoIndex {
@@ -102,8 +135,11 @@ internal class MemoLocalBackend(
                 source = f.source,
             )
         }
-        // Proposals come from the bot review (A5): none while the phone works alone.
-        return MemoIndex(folders, emptyList())
+        // Proposals come from the bot review (A5): the waiting ones the last sync copied into the suggestion table.
+        val proposals = db.suggestions().filter { it.status == MEMO_SUGGESTION_WAITING }.mapNotNull { s ->
+            runCatchingJson(s.payload)?.let(::parseMemoProposal)?.copy(status = "대기")
+        }
+        return MemoIndex(folders, proposals)
     }
 
     private fun note(rid: String, id: String): MemoResponse {
@@ -194,8 +230,24 @@ internal class MemoLocalBackend(
                     db.deleteTag(name)
                     ok()
                 }
-                // Proposals are made by the bot review (A5). The phone has none to answer yet.
-                "accept", "dismiss", "defer" -> err("제안은 동기화가 붙은 뒤에 쓸 수 있습니다")
+                // A5 (설계 §d-③): the phone answers at once, applies what it can and tells the server at the next sync_push.
+                "accept", "dismiss", "defer" -> {
+                    val id = a["id"] as? String ?: return@transactionWithResult err("제안을 찾지 못했습니다")
+                    val s = db.suggestion(id) ?: return@transactionWithResult err("제안을 찾지 못했습니다")
+                    val answer = when (op.op) {
+                        "accept" -> MEMO_SUGGESTION_ACCEPTED
+                        "dismiss" -> MEMO_SUGGESTION_DISMISSED
+                        else -> MEMO_SUGGESTION_DEFERRED
+                    }
+                    if (op.op == "accept") applySuggestion(s, now)
+                    db.setSuggestionStatus(id, answer)
+                    val payload = JSONObject().put("id", id).put("응답", answer)
+                    (a["날짜"] as? String)?.let { payload.put("날짜", it) }
+                    // 규약 v2 제안응답 has no folder field yet (질문.md): sent anyway, a server that knows it can use it.
+                    (a["folder"] as? String)?.let { payload.put("폴더", it) }
+                    db.enqueue(MEMO_OUTBOX_PROPOSAL, id, payload.toString(), now)
+                    ok(s.noteId)
+                }
                 else -> err("모르는 op: ${op.op}")
             }
         }
@@ -224,6 +276,32 @@ internal class MemoLocalBackend(
     }
 
     private fun MemoNoteRecord.mark(rev: MemoRev, f: MemoNoteRecord.() -> MemoNoteRecord) = f().copy(revs = revs.with(MemoBundle.Mark, rev))
+
+    /**
+     * [적용] of a `분류` (tags / folder) or `첨부분석` (text added to the body) suggestion: written here first, like a
+     * change typed on the phone, so it shows at once and goes up with its own stamp. Other kinds (schedule, folder
+     * creation) are carried out by the server when it gets the answer.
+     */
+    private fun applySuggestion(s: MemoSuggestionRow, now: Long) {
+        val n = s.noteId?.let { db.note(it) }?.takeIf { it.deleted == MEMO_DELETED_NONE } ?: return
+        val content = runCatchingJson(s.payload)?.optJSONObject("제안내용") ?: return
+        when (s.kind) {
+            "분류" -> {
+                val tags = content.optJSONArray("태그")?.let { t -> (0 until t.length()).map { t.optString(it) }.filter { it.isNotEmpty() } }
+                val folder = content.optString("폴더").trim('/').takeIf { it.isNotEmpty() }
+                if (tags.isNullOrEmpty() && folder == null) return
+                folder?.let { if (!folderExists(it)) saveFolder(MemoFolderRow(it, defaultMemoFolderIcon(it), "사용자", nextOrder()), now) }
+                val rev = db.nextRev(device(), now)
+                save(n.copy(tags = tags?.distinct() ?: n.tags, folder = folder ?: n.folder, revs = n.revs.with(MemoBundle.Class, rev)), now)
+            }
+            "첨부분석" -> {
+                val extra = content.optString("본문추가").trimEnd()
+                if (extra.isEmpty()) return
+                val rev = db.nextRev(device(), now)
+                save(n.copy(body = memoNormalizedBody(n.body) + "\n\n" + extra, revs = n.revs.with(MemoBundle.Body, rev)), now)
+            }
+        }
+    }
 
     /** Changes the tags of every note carrying [tag] (one stamp per note, `분류` bundle). */
     private fun retag(tag: String, now: Long, f: (List<String>) -> List<String>) {
@@ -275,7 +353,7 @@ internal class MemoLocalBackend(
         (a["id"] as? String)?.takeIf { it.isNotEmpty() } ?: (a["이벤트"] as? String)?.let { db.noteIdByOrigin(it) }
 
     /** This phone in the change stamps: made once and kept with the database (A4 may switch to the Matrix device id). */
-    private fun device(): String = db.state(STATE_DEVICE) ?: memoNewDeviceId().also { db.setState(STATE_DEVICE, it) }
+    private fun device(): String = memoDeviceOf(db)
 
     private fun strings(v: Any?): List<String> = (v as? List<*>)?.map { it.toString() } ?: emptyList()
 
@@ -283,10 +361,6 @@ internal class MemoLocalBackend(
         JSONObject(s)
     } catch (e: org.json.JSONException) {
         null
-    }
-
-    companion object {
-        private const val STATE_DEVICE = "device"
     }
 }
 
