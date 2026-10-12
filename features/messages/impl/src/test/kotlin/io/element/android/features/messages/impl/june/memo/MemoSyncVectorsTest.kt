@@ -40,6 +40,25 @@ class MemoSyncVectorsTest : RobolectricTest() {
     }
 
     @Test
+    fun `the note content hash is the one the server writes, whatever the trailing newlines`() {
+        // 이벤트규약 §5 v2.1: the server hashes the stored body (one trailing newline) on every path.
+        // 924e26d9… = sha1("빵집 목록\n교토\n"), the value 맞물림시험.py reads back from the server file.
+        listOf("빵집 목록\n교토", "빵집 목록\n교토\n", "빵집 목록\n교토\n\n").forEach { body ->
+            val note = MemoNoteRecord(
+                id = id,
+                folder = "여행",
+                title = "교토",
+                body = body,
+                kind = "텍스트",
+                createdMs = t0,
+                revs = MemoRevs.all(MemoRev(t0, "폰A", 3)),
+            )
+            assertEquals("924e26d903a4034797c2a44aea83ba91ecf1ef06", note.contentHash)
+        }
+        assertEquals("빵집 목록\n교토\n", memoStoredBody("빵집 목록\n교토\n\n"))
+    }
+
+    @Test
     fun `the segment of a note id`() {
         assertEquals(5, memoSegment(id))
     }
