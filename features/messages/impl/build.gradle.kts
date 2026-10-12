@@ -89,8 +89,12 @@ dependencies {
     implementation(libs.matrix.emojibase.bindings)
     implementation(projects.features.knockrequests.api)
     implementation(projects.features.roommembermoderation.api)
+    // Element June memo bot: local encrypted database (already used by push and cachestore)
+    implementation(projects.libraries.encryptedDb)
+    implementation(libs.sqldelight.driver.android)
 
     testCommonDependencies(libs, true)
+    testImplementation(libs.sqldelight.driver.jvm)
     testImplementation(projects.libraries.matrix.test)
     testImplementation(projects.libraries.dateformatter.test)
     testImplementation(projects.libraries.push.test)
