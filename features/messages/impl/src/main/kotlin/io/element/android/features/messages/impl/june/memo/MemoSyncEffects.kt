@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,7 +43,7 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var visible by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     // A retry that is due bumps this, so the push effect runs again (only while visible).
-    var retryTick by remember { mutableStateOf(0) }
+    var retryTick by remember { mutableIntStateOf(0) }
 
     DisposableEffect(lifecycle, runner) {
         val observer = LifecycleEventObserver { _, event ->

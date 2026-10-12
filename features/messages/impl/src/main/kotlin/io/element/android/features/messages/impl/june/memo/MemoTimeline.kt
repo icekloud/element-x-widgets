@@ -11,6 +11,7 @@ package io.element.android.features.messages.impl.june.memo
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemImageContent
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemUnknownContent
+import io.element.android.libraries.core.data.tryOrNull
 
 private fun TimelineItem.events(): List<TimelineItem.Event> = when (this) {
     is TimelineItem.Event -> listOf(this)
@@ -37,4 +38,4 @@ internal fun memoPhotosByMxc(items: List<TimelineItem>): Map<String, TimelineIte
  */
 internal fun memoAnswersOf(items: List<TimelineItem>): List<MemoResponse> = items.flatMap { it.events() }
     .filter { it.content is TimelineItemUnknownContent }
-    .mapNotNull { event -> parseMemoResponseEvent(runCatching { event.timelineItemDebugInfoProvider().originalJson }.getOrNull()) }
+    .mapNotNull { event -> parseMemoResponseEvent(tryOrNull { event.timelineItemDebugInfoProvider().originalJson }) }

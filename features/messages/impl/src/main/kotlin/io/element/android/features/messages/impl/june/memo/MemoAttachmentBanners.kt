@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.element.android.compound.theme.ElementTheme
+import io.element.android.libraries.core.data.tryOrNull
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -38,11 +40,11 @@ import java.io.File
 internal fun MemoAttachmentBanners(local: MemoLocalBackend, localVersion: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var failed by remember { mutableStateOf(0) }
+    var failed by remember { mutableIntStateOf(0) }
     var clean by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     LaunchedEffect(local, localVersion) {
         failed = local.failedAttachments()
-        val stat = runCatching { StatFs(context.filesDir.path) }.getOrNull()
+        val stat = tryOrNull { StatFs(context.filesDir.path) }
         clean = if (stat != null && memoLowStorage(stat.availableBytes, stat.totalBytes)) local.uploadedOriginals() else null
     }
     if (failed > 0) {

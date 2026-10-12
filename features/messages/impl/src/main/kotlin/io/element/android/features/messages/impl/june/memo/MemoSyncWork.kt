@@ -22,6 +22,7 @@ import dev.zacsweers.metro.AssistedInject
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.ContributesTo
 import dev.zacsweers.metro.binding
+import io.element.android.libraries.core.data.tryOrNull
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.di.annotations.ApplicationContext
 import io.element.android.libraries.sessionstorage.api.SessionStore
@@ -66,8 +67,9 @@ internal object MemoSyncHub {
     /** Leaving the screen with something still to send: one job, run when the network is there (not a periodic one). */
     fun scheduleUpload(scheduler: WorkManagerScheduler) {
         scope.launch {
-            runCatching { scheduler.submit(MemoUploadRequestBuilder) }
-                .onFailure { Timber.d("June memo: upload job not scheduled (%s)", it.javaClass.simpleName) }
+            tryOrNull(onException = { Timber.d("June memo: upload job not scheduled (%s)", it.javaClass.simpleName) }) {
+                scheduler.submit(MemoUploadRequestBuilder)
+            }
         }
     }
 }
