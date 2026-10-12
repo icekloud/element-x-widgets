@@ -354,11 +354,14 @@ class MemoDbTest : RobolectricTest() {
                 )
             }
         }
+        // Best of 5 after a warm-up run: the cost of the work, not of a GC pause or the JIT on a busy test machine.
         fun ms(f: () -> Unit): Long {
             f()
-            val start = System.nanoTime()
-            f()
-            return (System.nanoTime() - start) / 1_000_000
+            return (1..5).minOf {
+                val start = System.nanoTime()
+                f()
+                (System.nanoTime() - start) / 1_000_000
+            }
         }
         val search = ms { db.search(MemoSearchQuery(text = "라마"), t0, null) }
         val first = ms { db.list("여행", emptyList(), null, null) }

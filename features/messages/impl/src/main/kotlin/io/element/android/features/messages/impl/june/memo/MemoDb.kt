@@ -48,6 +48,10 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         n.copy(tags = tagsOf(listOf(id))[id].orEmpty(), attachments = attachmentsOf(listOf(id))[id].orEmpty())
     }
 
+    /** The note made from the Matrix input event [eventId] (record tab targets before v2). */
+    fun noteIdByOrigin(eventId: String): String? =
+        query("SELECT id FROM note WHERE origin_event = ? LIMIT 1", listOf(eventId)) { c -> c.getString(0)!! }.firstOrNull()
+
     /** Writes [n] with its tags and attachments (replaces them). */
     fun putNote(n: MemoNoteRecord) = transaction { writeNote(n) }
 
