@@ -357,6 +357,51 @@ internal fun memoLocalPreview(kind: String, preview: String, linkJson: String?, 
     return if (preview.isEmpty()) null else MemoPreview.Text(preview)
 }
 
+/** The note in the `노트변경` form (이벤트규약 v2 §5): the outbox payload and, in A4, the `sync_push` item. */
+internal fun MemoNoteRecord.toChangeJson(): JSONObject {
+    val o = JSONObject()
+        .put("id", id)
+        .put("폴더", folder)
+        .put("제목", title)
+        .put("본문", body)
+        .put("태그", JSONArray(tags))
+        .put("종류", kind)
+        .put("생성", memoIso(createdMs))
+        .put("수정", memoIso(modified.ms))
+        .put("고정", pinned)
+        .put("고정제안", pinSuggested)
+        .put("고정제안_무시", pinDismissed)
+        .put("삭제", deleted)
+    val files = JSONArray()
+    attachments.filter { it.mxc != null }.forEach { a ->
+        val f = JSONObject().put("mxc", a.mxc)
+        a.mime?.let { f.put("mimetype", it) }
+        a.fileJson?.let { tryOrNull { JSONObject(it) } }?.let { f.put("file", it) }
+        files.put(f)
+    }
+    o.put("첨부", files)
+    linkJson?.let { tryOrNull { JSONObject(it) } }?.let { o.put("링크", it) }
+    val rev = JSONObject()
+    MemoBundle.entries.forEach { b ->
+        val r = revs[b]
+        rev.put(b.key, JSONArray().put(memoIso(r.ms)).put(r.device.ifEmpty { MEMO_DEVICE_SERVER }).put(r.seq))
+    }
+    return o.put("rev", rev).put("기기", modified.device.ifEmpty { MEMO_DEVICE_SERVER }).put("순번", modified.seq)
+}
+
+/** Title of a new note: the first non empty line of its plain text, cut to [MEMO_TITLE_CHARS]. */
+internal fun memoTitleOf(text: String): String =
+    memoPlainText(text).lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(MEMO_TITLE_CHARS).orEmpty()
+
+private val SINGLE_URL = Regex("^https?://\\S+$")
+
+/** Kind of a new note from what was typed (이벤트규약 §3 `종류`): photo, link (only a URL), otherwise text. */
+internal fun memoKindOf(text: String, attachments: List<MemoLocalAttachment>): String = when {
+    attachments.isNotEmpty() -> "사진"
+    SINGLE_URL.matches(text.trim()) -> "링크"
+    else -> "텍스트"
+}
+
 /** A photo kept on the phone, not uploaded yet: the preview source is this prefix + the local path. */
 internal const val MEMO_LOCAL_FILE_PREFIX = "file://"
 

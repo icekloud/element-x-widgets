@@ -56,15 +56,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.compose.AsyncImage
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesTo
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.features.messages.impl.R
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
-import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.theme.components.ModalBottomSheet
@@ -75,11 +72,8 @@ import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-
-private const val INDEX_POLL_MILLIS = 3_000L
 
 /** Test tags of the memo screen (Compose UI tests). */
 internal object MemoTags {
@@ -167,8 +161,10 @@ internal fun MemoScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    // v2 (설계 A2): the screens read and write the local database; nothing goes to the room until the sync (A4).
+    // The fake backend stays for the developer setting and the sync tests.
     val backend: MemoBackend = remember(roomId, useFakeData) {
-        if (useFakeData) FakeMemoBackend() else MemoRoomBackend(context.bindings<MemoBindings>().memoSessionStore(), roomId)
+        if (useFakeData) FakeMemoBackend() else MemoLocalBackend({ MemoDatabase.get(context) })
     }
     val store = remember(backend) { MemoStore(backend) }
     val scope = rememberCoroutineScope()
@@ -176,17 +172,10 @@ internal fun MemoScreen(
     val controller = remember(store) { MemoController(store, scope, nav) }
     val timeline = remember(timelineItems) { memoTimeline(timelineItems) }
 
-    // Answers seen in the room timeline (decrypted by the SDK) reach the waiting requests first.
-    LaunchedEffect(timeline.answers, backend) {
-        (backend as? MemoRoomBackend)?.let { b -> timeline.answers.forEach(b::deliver) }
-    }
-    // The index is read while the screen is shown (like the June background panel).
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(store) {
-        while (true) {
-            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) store.refreshIndex()
-            delay(INDEX_POLL_MILLIS)
-        }
+    // The index is read again when the local notes change (no polling, 설계 §k).
+    val localVersion by MemoLocalChanges.version.collectAsState()
+    LaunchedEffect(store, localVersion) {
+        store.refreshIndex()
     }
 
     val state = nav.value
