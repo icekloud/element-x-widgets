@@ -405,6 +405,9 @@ internal fun memoKindOf(text: String, attachments: List<MemoLocalAttachment>): S
 /** A photo kept on the phone, not uploaded yet: the preview source is this prefix + the local path. */
 internal const val MEMO_LOCAL_FILE_PREFIX = "file://"
 
+/** List key of the record tab (A3): the notes of every folder but the trash, newest first. */
+internal const val MEMO_ALL_FOLDERS = ""
+
 private const val ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 /** A note id made on the phone, same format as the server (`YYYYMMDD-HHMMSS-xxxx`, 이벤트규약 v2 §0). */

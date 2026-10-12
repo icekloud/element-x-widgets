@@ -98,9 +98,15 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
 
     /** One tile list page (folder + AND tags, newest first). [cursor] is the opaque value of the previous page. */
     fun list(folder: String, tags: List<String>, sort: String?, cursor: String?, limit: Int = MEMO_PAGE_SIZE): MemoPage {
-        val where = StringBuilder(if (folder == MEMO_TRASH) "deleted = 1" else "deleted = 0 AND folder = ?")
+        val where = StringBuilder(
+            when (folder) {
+                MEMO_TRASH -> "deleted = 1"
+                MEMO_ALL_FOLDERS -> "deleted = 0"
+                else -> "deleted = 0 AND folder = ?"
+            }
+        )
         val args = mutableListOf<Any?>()
-        if (folder != MEMO_TRASH) args += folder
+        if (folder != MEMO_TRASH && folder != MEMO_ALL_FOLDERS) args += folder
         tagFilter(tags, where, args)
         val column = if (sort == "수정") "modified_ms" else "created_ms"
         val order: String

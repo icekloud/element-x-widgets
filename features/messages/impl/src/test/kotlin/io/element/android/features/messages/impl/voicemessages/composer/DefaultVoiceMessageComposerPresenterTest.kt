@@ -1087,6 +1087,7 @@ class DefaultVoiceMessageComposerPresenterTest {
             player = VoiceMessageComposerPlayer(FakeMediaPlayer(), this),
             messageComposerContext = messageComposerContext,
             permissionsPresenterFactory = FakePermissionsPresenterFactory(permissionsPresenter),
+            room = joinedRoom,
         )
     }
 
