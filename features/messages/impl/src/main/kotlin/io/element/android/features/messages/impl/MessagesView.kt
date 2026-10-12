@@ -73,6 +73,7 @@ import io.element.android.features.messages.impl.june.JuneComposerStack
 import io.element.android.features.messages.impl.june.JuneEditKind
 import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
+import io.element.android.features.messages.impl.june.memo.MemoScreen
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
 import io.element.android.features.messages.impl.messagecomposer.AttachmentsBottomSheet
@@ -629,24 +630,37 @@ private fun MessagesViewContent(
             // date badge offset so the badge sits below whichever banners are currently showing.
             var topBannersHeightDp by remember { mutableStateOf(0.dp) }
 
-            TimelineView(
-                state = state.timelineState,
-                timelineProtectionState = state.timelineProtectionState,
-                onUserDataClick = onUserDataClick,
-                onLinkClick = { link -> onLinkClick(link, false) },
-                onContentClick = onContentClick,
-                onGalleryItemClick = onGalleryItemClick,
-                onMessageLongClick = onMessageLongClick,
-                onSwipeToReply = onSwipeToReply,
-                onReactionClick = onReactionClick,
-                onReactionLongClick = onReactionLongClick,
-                onMoreReactionsClick = onMoreReactionsClick,
-                onReadReceiptClick = onReadReceiptClick,
-                onJoinCallClick = onJoinCallClick,
-                forceJumpToBottomVisibility = forceJumpToBottomVisibility,
-                nestedScrollConnection = scrollBehavior.nestedScrollConnection,
-                floatingDateTopOffset = topBannersHeightDp,
-            )
+            // Element June memo bot: the memo bot room shows the memo screen (기록 · 폴더 · 검색) instead of the timeline.
+            // The composer below stays the same. Every other room is unchanged.
+            val juneContext = LocalContext.current
+            if (JuneSettings.isMemoRoom(juneContext, state.roomId.value) && state.timelineState.timelineMode !is Timeline.Mode.Thread) {
+                MemoScreen(
+                    roomId = state.roomId.value,
+                    useFakeData = JuneSettings.memoFakeData(juneContext),
+                    timelineItems = state.timelineState.timelineItems,
+                    onLoadOlder = { state.timelineState.eventSink(TimelineEvent.LoadMore(Timeline.PaginationDirection.BACKWARDS)) },
+                    onPhotoClick = onContentClick,
+                )
+            } else {
+                TimelineView(
+                    state = state.timelineState,
+                    timelineProtectionState = state.timelineProtectionState,
+                    onUserDataClick = onUserDataClick,
+                    onLinkClick = { link -> onLinkClick(link, false) },
+                    onContentClick = onContentClick,
+                    onGalleryItemClick = onGalleryItemClick,
+                    onMessageLongClick = onMessageLongClick,
+                    onSwipeToReply = onSwipeToReply,
+                    onReactionClick = onReactionClick,
+                    onReactionLongClick = onReactionLongClick,
+                    onMoreReactionsClick = onMoreReactionsClick,
+                    onReadReceiptClick = onReadReceiptClick,
+                    onJoinCallClick = onJoinCallClick,
+                    forceJumpToBottomVisibility = forceJumpToBottomVisibility,
+                    nestedScrollConnection = scrollBehavior.nestedScrollConnection,
+                    floatingDateTopOffset = topBannersHeightDp,
+                )
+            }
 
             if (state.timelineState.timelineMode !is Timeline.Mode.Thread) {
                 Column(

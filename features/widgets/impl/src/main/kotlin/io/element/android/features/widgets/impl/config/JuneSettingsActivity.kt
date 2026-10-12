@@ -43,6 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.element.android.features.widgets.impl.WidgetBindings
 import io.element.android.libraries.architecture.bindings
+import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.designsystem.june.JuneSettings
 
 /**
@@ -193,6 +195,9 @@ private fun JuneSettingsScreen(onColorsChanged: () -> Unit, onClose: () -> Unit)
         }
 
         HorizontalDivider()
+        MemoRoomSection()
+
+        HorizontalDivider()
                 SectionTitle("방별 테마 (Aperture · GLaDOS)")
         Text("방 이름에 아래 단어가 들어가면 그 방은 어두운 Aperture 테마(검정 배경·주황 강조)로 보입니다. 쉼표로 구분합니다.", style = MaterialTheme.typography.bodySmall)
         var apertureText by remember { mutableStateOf(JuneSettings.apertureRooms(context)) }
@@ -259,6 +264,61 @@ private fun JuneSettingsScreen(onColorsChanged: () -> Unit, onClose: () -> Unit)
             },
             onDismiss = { editing = null },
         )
+    }
+}
+
+/**
+ * Element June memo bot: the room opened as the memo screen (기록 · 폴더 · 검색) instead of the chat.
+ * The room is the one the admin joined by accepting the bot invite; it is picked from the room list (no id typing).
+ */
+@Composable
+private fun MemoRoomSection() {
+    val context = LocalContext.current
+    Column {
+        SectionTitle("메모봇 방")
+        Text(
+            "고른 방은 대화 대신 메모 화면(기록 · 폴더 · 검색)으로 열립니다. 입력창은 그대로입니다. 다른 방은 바뀌지 않습니다.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        val repository = remember { runCatchingExceptions { context.bindings<WidgetBindings>().widgetRoomRepository() }.getOrNull() }
+        var rooms by remember { mutableStateOf<List<io.element.android.features.widgets.impl.WidgetRoom>?>(null) }
+        var picking by remember { mutableStateOf(false) }
+        LaunchedEffect(repository) {
+            if (repository == null) {
+                rooms = emptyList()
+                return@LaunchedEffect
+            }
+            val sid = runCatchingExceptions { repository.defaultSessionId() }.getOrNull()
+            rooms = if (sid == null) emptyList() else runCatchingExceptions { repository.loadAllRooms(sid) }.getOrDefault(emptyList())
+        }
+        val current = JuneSettings.memoRoomId(context)
+        val currentName = current?.let { id -> rooms?.firstOrNull { it.roomId == id }?.name ?: id }
+        Text(if (currentName == null) "지정 안 됨" else "지금: $currentName")
+        Row {
+            TextButton(enabled = rooms != null, onClick = { picking = !picking }) { Text(if (rooms == null) "방 목록을 불러오는 중…" else "방 고르기") }
+            TextButton(enabled = current != null, onClick = { JuneSettings.setMemoRoomId(context, null) }) { Text("지정 해제") }
+        }
+        if (picking) {
+            rooms.orEmpty().forEach { room ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            JuneSettings.setMemoRoomId(context, room.roomId)
+                            picking = false
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text((if (room.roomId == current) "● " else "○ ") + room.name, modifier = Modifier.weight(1f), maxLines = 1)
+                }
+            }
+            if (rooms.isNullOrEmpty()) Text("대화방이 없습니다. 메모봇 초대를 먼저 수락하세요.", style = MaterialTheme.typography.bodySmall)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = JuneSettings.memoFakeData(context), onCheckedChange = { JuneSettings.setMemoFakeData(context, it) })
+            Text("가짜 데이터로 미리 보기 (서버 없이 화면만 확인, 조작은 저장되지 않음)", style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 

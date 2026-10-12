@@ -3,4 +3,8 @@
 <resources>
     <string name="june_action_select_text">텍스트 선택</string>
     <string name="june_queue_edit_too_late">이미 실행되어 편집하지 않았습니다</string>
+    <!-- Memo bot screen: tab names (설계안 A안, change here) -->
+    <string name="june_memo_tab_record">기록</string>
+    <string name="june_memo_tab_folders">폴더</string>
+    <string name="june_memo_tab_search">검색</string>
 </resources>
