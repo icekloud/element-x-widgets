@@ -45,12 +45,12 @@ class MemoRecordTabUiTest : RobolectricTest() {
                 MemoRecordTab(controller, version)
             }
         }
-        waitUntil(5_000) { onAllNodesWithTag(MemoTags.RECORD_ROW).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.RECORD_ROW).fetchSemanticsNodes().isNotEmpty() }
         onNodeWithText("교토 빵집 메모", substring = true).assertIsDisplayed()
         onNodeWithText("📥 받은편지함").assertIsDisplayed()
         // A second note typed below (airplane mode: no server at all) shows too, through the local change signal.
         runBlocking { backend.create("환전 10만엔") }
-        waitUntil(5_000) { onAllNodesWithTag(MemoTags.RECORD_ROW).fetchSemanticsNodes().size == 2 }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.RECORD_ROW).fetchSemanticsNodes().size == 2 }
         onNodeWithText("환전 10만엔", substring = true).assertIsDisplayed()
         // No line waits for a bot answer anywhere (the old "⏳ 메모봇 처리 중…").
         onAllNodesWithText("처리 중", substring = true, useUnmergedTree = true).assertCountEquals(0)
