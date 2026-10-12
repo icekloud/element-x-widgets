@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2026 Element June contributors.
- * Copyright (c) 2025 Element Creations Ltd.
+ * Copyright (c) 2026 Element Creations Ltd.
  *
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
  * Please see LICENSE files in the repository root for full details.
@@ -33,7 +32,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
     }
 
     /** The memo bot room: answers sync_pull with [pull], accepts every pushed note, records every call. */
-    private class FakeRoom(
+    private class FakeMemoSyncTransport(
         var online: Boolean = true,
         var pull: JSONObject = JSONObject().put("노트", JSONArray()).put("기준", 0),
         var proposals: List<JSONObject> = emptyList(),
@@ -79,7 +78,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
         }
     }
 
-    private fun runner(db: MemoDb, room: FakeRoom, files: Map<String, ByteArray> = emptyMap()) =
+    private fun runner(db: MemoDb, room: FakeMemoSyncTransport, files: Map<String, ByteArray> = emptyMap()) =
         MemoSyncRunner(db, room, clock = { now }, readFile = { files[it] })
 
     private fun backend(db: MemoDb) = MemoLocalBackend({ db }, clock = { now }, dispatcher = kotlinx.coroutines.Dispatchers.Unconfined)
@@ -87,7 +86,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
     @Test
     fun `a note typed on the phone goes up with one sync_push and is clean afterwards`() = runTest {
         val db = db()
-        val room = FakeRoom()
+        val room = FakeMemoSyncTransport()
         val id = backend(db).create("장보기 목록")
         val r = runner(db, room)
         assertTrue(r.hasPendingUploads())
@@ -100,7 +99,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
     @Test
     fun `with the server off nothing is lost, nothing throws and the note stays local`() = runTest {
         val db = db()
-        val room = FakeRoom(online = false)
+        val room = FakeMemoSyncTransport(online = false)
         val id = backend(db).create("오프라인 메모")
         val r = runner(db, room)
         assertFalse(r.syncNow())
@@ -134,7 +133,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
             .put("순번", 3)
         val proposal = JSONObject().put("id", "p1").put("종류", "분류").put("요약", "태그 #여행").put("상태", "대기")
             .put("노트", "20261013-020000-abcd").put("제안내용", JSONObject().put("태그", JSONArray(listOf("여행"))))
-        val room = FakeRoom(pull = JSONObject().put("노트", JSONArray().put(change)).put("기준", 7), proposals = listOf(proposal))
+        val room = FakeMemoSyncTransport(pull = JSONObject().put("노트", JSONArray().put(change)).put("기준", 7), proposals = listOf(proposal))
         assertTrue(runner(db, room).syncNow())
         assertEquals("서버 본문", db.note("20261013-020000-abcd")!!.body)
         assertEquals(7L, MemoSync.base(db))
@@ -152,7 +151,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
         val id = local.create("오사카 일정")
         val proposal = JSONObject().put("id", "p1").put("종류", "분류").put("요약", "태그 #여행").put("상태", "대기")
             .put("노트", id).put("제안내용", JSONObject().put("태그", JSONArray(listOf("여행"))).put("폴더", "여행"))
-        val room = FakeRoom(proposals = listOf(proposal))
+        val room = FakeMemoSyncTransport(proposals = listOf(proposal))
         val r = runner(db, room)
         r.syncNow()
         assertEquals(1, db.suggestions().size)
@@ -179,7 +178,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
         val id = local.create("메모")
         val before = db.note(id)!!
         val proposal = JSONObject().put("id", "p2").put("종류", "분류").put("노트", id).put("제안내용", JSONObject().put("태그", JSONArray(listOf("x"))))
-        runner(db, FakeRoom(proposals = listOf(proposal))).syncNow()
+        runner(db, FakeMemoSyncTransport(proposals = listOf(proposal))).syncNow()
         local.call(MemoOp.dismiss("p2"), "rid")
         assertEquals(before.tags, db.note(id)!!.tags)
         assertEquals(MEMO_SUGGESTION_DISMISSED, db.suggestion("p2")!!.status)
@@ -190,7 +189,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
         val db = db()
         val plain = "사진 바이트".toByteArray()
         val id = backend(db).create("", listOf(MemoLocalAttachment(id = "a1", localPath = "/p/1.jpg", mime = "image/jpeg", bytes = plain.size.toLong())))
-        val room = FakeRoom()
+        val room = FakeMemoSyncTransport()
         val r = runner(db, room, files = mapOf("/p/1.jpg" to plain))
         assertTrue(r.push())
         val a = db.note(id)!!.attachments.single()
@@ -214,7 +213,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
         val db = db()
         val local = backend(db)
         val id = local.create("", listOf(MemoLocalAttachment(id = "a1", localPath = "/p/1.jpg")))
-        val room = FakeRoom(uploadFails = true)
+        val room = FakeMemoSyncTransport(uploadFails = true)
         val r = runner(db, room, files = mapOf("/p/1.jpg" to byteArrayOf(1, 2, 3)))
         repeat(MEMO_ATTACH_MAX_TRIES) { r.push(force = true) }
         assertEquals(MEMO_ATTACH_FAILED, db.note(id)!!.attachments.single().state)
@@ -232,7 +231,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
         val local = backend(db)
         local.create("", listOf(MemoLocalAttachment(id = "up", localPath = "/p/up.jpg", bytes = 10)))
         local.create("", listOf(MemoLocalAttachment(id = "only", localPath = "/p/only.jpg", bytes = 20)))
-        val room = FakeRoom()
+        val room = FakeMemoSyncTransport()
         // Only the first one can be read; the second has no file any more, so it is 실패 and its original is kept.
         runner(db, room, files = mapOf("/p/up.jpg" to byteArrayOf(1))).push(force = true)
         assertEquals(1 to 10L, local.uploadedOriginals())
@@ -249,8 +248,8 @@ class MemoSyncRunnerTest : RobolectricTest() {
     fun `folder rows alone do not count as something to upload (no background job for them)`() = runTest {
         val db = db()
         backend(db).call(MemoOp.mkdir("새폴더", null), "rid")
-        assertFalse(runner(db, FakeRoom()).hasPendingUploads())
-        assertNull(runner(db, FakeRoom()).nextRetryInMs())
+        assertFalse(runner(db, FakeMemoSyncTransport()).hasPendingUploads())
+        assertNull(runner(db, FakeMemoSyncTransport()).nextRetryInMs())
     }
 
     @Test
