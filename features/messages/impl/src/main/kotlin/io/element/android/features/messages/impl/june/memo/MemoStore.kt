@@ -241,21 +241,16 @@ internal class MemoStore(
                 notes.remove(id)
             }
             "pin", "unpin", "dismiss_pin" -> {
-                val pinned = op.op == "pin"
+                // dismiss_pin only drops the 📌 suggestion: the pinned flag stays as it is.
+                val pinnedAfter: (MemoItem) -> Boolean = when (op.op) {
+                    "pin" -> { _ -> true }
+                    "unpin" -> { _ -> false }
+                    else -> { item -> item.pinned }
+                }
                 _lists.update { all ->
                     all.mapValues { (_, s) ->
-                        s.copy(items = s.items.map {
-                            if (matches(it)) {
-                            it.copy(pinned = if (op.op ==
-                            "dismiss_pin") {
-                                it.pinned
-                            } else {
-                                pinned
-                            }, pinSuggested = false)
-                        } else {
-                            it
-                        }
-                        })
+                        val items = s.items.map { if (matches(it)) it.copy(pinned = pinnedAfter(it), pinSuggested = false) else it }
+                        s.copy(items = items)
                     }
                 }
                 notes.remove(id)

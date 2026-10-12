@@ -30,6 +30,8 @@ internal data class MemoTimeline(
     val answers: List<MemoResponse>,
     /** The timeline events of the entries, by entry key (a photo tap opens the media viewer of the room). */
     val events: Map<String, TimelineItem.Event> = emptyMap(),
+    /** The photo events of the loaded timeline, by mxc url (a note attachment tap opens the same media viewer). */
+    val photosByMxc: Map<String, TimelineItem.Event> = emptyMap(),
 )
 
 private fun TimelineItem.events(): List<TimelineItem.Event> = when (this) {
@@ -44,6 +46,7 @@ internal fun memoTimeline(items: List<TimelineItem>): MemoTimeline {
     val thumbs = mutableMapOf<String, MediaRequestData>()
     val answers = mutableListOf<MemoResponse>()
     val events = mutableMapOf<String, TimelineItem.Event>()
+    val photos = mutableMapOf<String, TimelineItem.Event>()
     for (event in items.asReversed().flatMap { it.events() }) {
         val key = event.id.value
         val content = event.content
@@ -53,7 +56,10 @@ internal fun memoTimeline(items: List<TimelineItem>): MemoTimeline {
             parseMemoResponseEvent(json)?.let { answers += it }
         } else {
             memoEntryContent(content)?.let { (kind, text) ->
-                if (content is TimelineItemImageContent) thumbs[key] = content.thumbnailMediaRequestData
+                if (content is TimelineItemImageContent) {
+                    thumbs[key] = content.thumbnailMediaRequestData
+                    photos[content.mediaSource.safeUrl] = event
+                }
                 events[key] = event
                 entries += MemoEntry(
                     key = key,
@@ -68,7 +74,7 @@ internal fun memoTimeline(items: List<TimelineItem>): MemoTimeline {
             }
         }
     }
-    return MemoTimeline(entries, thumbs, answers, events)
+    return MemoTimeline(entries, thumbs, answers, events, photos)
 }
 
 /** Kind and text of a record tab entry, null for the contents the record tab does not show. */

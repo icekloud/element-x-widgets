@@ -198,13 +198,8 @@ internal fun parseMemoIndex(content: JSONObject): MemoIndex {
     val folders = content.optJSONArray("폴더")
     val proposals = content.optJSONArray("제안")
     return MemoIndex(
-        folders = if (folders == null) emptyList() else List(folders.length()) { i -> folders.optJSONObject(i)?.let(::parseMemoFolder) }.filterNotNull(),
-        proposals = if (proposals ==
-            null) {
-                emptyList()
-            } else {
-                List(proposals.length()) { i -> proposals.optJSONObject(i)?.let(::parseMemoProposal) }.filterNotNull()
-            },
+        folders = folders?.let { a -> List(a.length()) { i -> a.optJSONObject(i)?.let(::parseMemoFolder) }.filterNotNull() }.orEmpty(),
+        proposals = proposals?.let { a -> List(a.length()) { i -> a.optJSONObject(i)?.let(::parseMemoProposal) }.filterNotNull() }.orEmpty(),
         updatedAt = content.optStringOrNull("갱신시각"),
         splitKeys = if (content.optBoolean("분할")) content.optJSONArray("폴더키").strings() else emptyList(),
     )
