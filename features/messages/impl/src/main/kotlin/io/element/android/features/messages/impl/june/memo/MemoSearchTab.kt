@@ -162,12 +162,11 @@ internal fun MemoSearchTab(controller: MemoController) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
             MEMO_KINDS.forEach { k -> MemoChip(memoKindIcon(k) + " " + k, selected = k in ui.query.kinds, onClick = { run(ui.query.toggleKind(k)) }) }
             MemoChip("📁 " + (ui.query.folder ?: "폴더") + " ▾", selected = ui.query.folder != null, onClick = {
-                if (ui.query.folder !=
-                    null) {
-                        run(ui.query.copy(folder = null))
-                    } else {
-                        controller.sheet = MemoSheet.PickFolder("폴더로 좁히기") { f -> run(ui.query.copy(folder = f)) }
-                    }
+                if (ui.query.folder != null) {
+                    run(ui.query.copy(folder = null))
+                } else {
+                    controller.sheet = MemoSheet.PickFolder("폴더로 좁히기") { f -> run(ui.query.copy(folder = f)) }
+                }
             })
             MemoChip((ui.query.period?.label ?: "기간") + " ▾", selected = ui.query.period != null, onClick = {
                 val next = when (ui.query.period) {
@@ -328,7 +327,12 @@ private fun MemoTagManager(controller: MemoController) {
 // ---------------------------------------------------------------- 노트 뷰어·편집
 
 @Composable
-internal fun MemoNoteScreen(controller: MemoController, id: String) {
+internal fun MemoNoteScreen(
+    controller: MemoController,
+    id: String,
+    canOpenAttachment: (MemoAttachment) -> Boolean = { false },
+    onAttachmentClick: (MemoAttachment) -> Unit = {},
+) {
     val store = controller.store
     var note by remember(id) { mutableStateOf(store.cachedNote(id)) }
     var failed by remember(id) { mutableStateOf<String?>(null) }
@@ -348,22 +352,26 @@ internal fun MemoNoteScreen(controller: MemoController, id: String) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             val title = note?.header?.optString("제목")?.takeIf { it.isNotEmpty() } ?: "메모"
-            Text("‹ $title", style = ElementTheme.typography.fontBodyLgMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(
-                1f
-            ).clickable {
+            val goBack = {
                 when (val b = nav.back()) {
                     is MemoBack.To -> controller.go { b.state }
                     else -> Unit
                 }
-            })
-            if (note != null &&
-                !nav.editing) {
-                    Text(
-                        "편집",
-                        color = ElementTheme.colors.textActionAccent,
-                        modifier = Modifier.clickable { controller.go { it.startEditing() } }.padding(8.dp)
-                    )
-                }
+            }
+            Text(
+                "‹ $title",
+                style = ElementTheme.typography.fontBodyLgMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).clickable(onClick = goBack),
+            )
+            if (note != null && !nav.editing) {
+                Text(
+                    "편집",
+                    color = ElementTheme.colors.textActionAccent,
+                    modifier = Modifier.clickable { controller.go { it.startEditing() } }.padding(8.dp)
+                )
+            }
         }
         val n = note
         when {
@@ -387,7 +395,18 @@ internal fun MemoNoteScreen(controller: MemoController, id: String) {
                 if (n.attachments.isNotEmpty()) {
                     FlowRow(Modifier.padding(vertical = 8.dp)) {
                         n.attachments.forEach { a ->
-                            MemoThumbnail(a.mxc, a.fileJson, Modifier.padding(end = 6.dp, bottom = 6.dp).size(96.dp).clip(RoundedCornerShape(6.dp)))
+                            // Opens the media viewer of the room when the photo is in the loaded room timeline.
+                            val open = if (canOpenAttachment(a)) Modifier.clickable { onAttachmentClick(a) } else Modifier
+                            MemoThumbnail(
+                                a.mxc,
+                                a.fileJson,
+                                Modifier
+                                    .padding(end = 6.dp, bottom = 6.dp)
+                                    .size(96.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .then(open)
+                                    .testTag(MemoTags.NOTE_ATTACHMENT),
+                            )
                         }
                     }
                 }

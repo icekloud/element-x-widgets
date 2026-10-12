@@ -55,7 +55,6 @@ class MemoScreenUiTest : RobolectricTest() {
 
     @Test
     fun `proposal band card shows its buttons only while waiting`() = runAndroidComposeUiTest<ComponentActivity> {
-        val sent = mutableListOf<String>()
         setContent {
             ElementTheme {
                 val scope = rememberCoroutineScope()
@@ -65,7 +64,6 @@ class MemoScreenUiTest : RobolectricTest() {
                     MemoProposalCard(controller, MemoProposal("p2", "폴더생성", "영상 5건", "대기", folder = "영상"))
                     MemoProposalCard(controller, MemoProposal("p3", "일정추가", "다시 보는 중", "재검토"))
                 }
-                sent += "drawn"
             }
         }
         onAllNodesWithTag(MemoTags.BAND).assertCountEquals(3)
@@ -73,8 +71,12 @@ class MemoScreenUiTest : RobolectricTest() {
         onNodeWithText("만들기").assertIsDisplayed()
         onNodeWithText("기존 폴더로").assertIsDisplayed()
         onNodeWithText("플랜봇 재검토 중").assertIsDisplayed()
-        onAllNodesWithTag(MemoTags.BAND).assertCountEquals(3)
-        assertThat(sent).isNotEmpty()
+        // Only the two waiting cards have buttons: the schedule proposal under review (p3) has none.
+        onAllNodesWithText("수락").assertCountEquals(1)
+        onAllNodesWithText("다른 날").assertCountEquals(1)
+        onAllNodesWithText("만들기").assertCountEquals(1)
+        onAllNodesWithText("기존 폴더로").assertCountEquals(1)
+        onAllNodesWithText("플랜봇 재검토 중").assertCountEquals(1)
     }
 
     @Test

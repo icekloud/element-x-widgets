@@ -96,6 +96,7 @@ internal object MemoTags {
     const val FOLDER_ROOT = "memo_folder_root"
     const val SEARCH = "memo_search"
     const val ERROR = "memo_error"
+    const val NOTE_ATTACHMENT = "memo_note_attachment"
 }
 
 @ContributesTo(AppScope::class)
@@ -216,7 +217,12 @@ internal fun MemoScreen(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val note = state.note
             when {
-                note != null -> MemoNoteScreen(controller, note)
+                note != null -> MemoNoteScreen(
+                    controller,
+                    note,
+                    canOpenAttachment = { a -> a.mxc in timeline.photosByMxc },
+                    onAttachmentClick = { a -> timeline.photosByMxc[a.mxc]?.let(onPhotoClick) },
+                )
                 state.tab == MemoTab.Record -> MemoRecordTab(controller, timeline, onLoadOlder, onPhotoClick)
                 state.tab == MemoTab.Folders -> MemoFoldersTab(controller)
                 else -> MemoSearchTab(controller)
