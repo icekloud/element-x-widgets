@@ -190,20 +190,23 @@ internal object MemoSync {
             val item = segments.optJSONObject(i) ?: continue
             val number = item.optString("구간").toIntOrNull() ?: continue
             val rows = item.optJSONArray("서버") ?: JSONArray()
-            val serverIds = mutableSetOf<String>()
-            for (r in 0 until rows.length()) {
-                val row = rows.optJSONObject(r) ?: continue
-                val id = row.optString("id").takeIf { it.isNotEmpty() } ?: continue
-                serverIds += id
-                val serverRev = MemoRev(
-                    memoParseIso(row.optString("수정")) ?: 0,
-                    row.optString("기기").ifEmpty { MEMO_DEVICE_SERVER },
-                    row.optLong("순번"),
-                )
+            val serverRows = (0 until rows.length())
+                .mapNotNull { rows.optJSONObject(it) }
+                .mapNotNull { row ->
+                    val id = row.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                    id to MemoRev(
+                        memoParseIso(row.optString("수정")) ?: 0,
+                        row.optString("기기").ifEmpty { MEMO_DEVICE_SERVER },
+                        row.optLong("순번"),
+                    )
+                }
+            val serverIds = serverRows.mapTo(mutableSetOf()) { it.first }
+            serverRows.forEach { (id, serverRev) ->
                 val mine = db.note(id)
                 when {
-                    mine == null -> wanted += id
-                    mine.modified < serverRev -> wanted += id
+                    // ① the server is newer, or ④ we do not have it at all: download
+                    mine == null || mine.modified < serverRev -> wanted += id
+                    // ② we are newer: upload
                     serverRev < mine.modified -> push += id
                 }
             }
@@ -375,7 +378,10 @@ internal fun memoChangeFromJson(o: JSONObject): MemoNoteRecord? {
  */
 internal fun memoParseIso(text: String?): Long? {
     val s = text?.trim().orEmpty()
-    if (s.length < 19 || s[4] != '-' || s[7] != '-' || (s[10] != 'T' && s[10] != ' ')) return null
+    if (s.length < 19) return null
+    val datePartLooksRight = s[4] == '-' && s[7] == '-'
+    val timeStartsHere = s[10] == 'T' || s[10] == ' '
+    if (!datePartLooksRight || !timeStartsHere) return null
     return tryOrNull {
         val year = s.substring(0, 4).toInt()
         val month = s.substring(5, 7).toInt()

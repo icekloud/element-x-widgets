@@ -185,7 +185,12 @@ internal fun MemoSearchTab(controller: MemoController) {
             MemoChip("📌", selected = ui.query.pinned, onClick = { run(ui.query.copy(pinned = !ui.query.pinned)) })
         }
         if (!nav.searchResults) {
-            MemoSearchEmpty(controller, memoRecentWith(ui.recent, MemoSearchQuery()).toImmutableList(), tags.toImmutableList(), onRun = { q -> run(q, submitted = true) })
+            MemoSearchEmpty(
+                controller,
+                memoRecentWith(ui.recent, MemoSearchQuery()).toImmutableList(),
+                tags.toImmutableList(),
+                onRun = { q -> run(q, submitted = true) },
+            )
         } else {
             Text(
                 ui.query.describe(),
@@ -206,7 +211,13 @@ internal fun MemoSearchTab(controller: MemoController) {
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(ui.results, key = { it.id }) { item ->
-                    MemoResultRow(item, onOpen = { controller.go { it.openNote(item.id) } }, onTag = { t -> run(ui.query.withTag(t), submitted = true) })
+                    MemoResultRow(
+                        item,
+                        onOpen = { controller.go { it.openNote(item.id) } },
+                        onTag = { t ->
+                            run(ui.query.withTag(t), submitted = true)
+                        },
+                    )
                 }
             }
         }
