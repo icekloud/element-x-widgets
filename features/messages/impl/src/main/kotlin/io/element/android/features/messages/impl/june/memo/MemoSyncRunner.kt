@@ -147,10 +147,11 @@ internal class MemoSyncRunner(
 
     private fun applyProposalResults(results: JSONArray?, sent: List<MemoOutboxRow>) {
         val byId = sent.associateBy { it.target }
+        val answered = (0 until (results?.length() ?: 0))
+            .mapNotNull { results?.optJSONObject(it) }
+            .mapNotNull { r -> byId[r.optString("id")]?.let { row -> r to row } }
         db.transaction {
-            for (i in 0 until (results?.length() ?: 0)) {
-                val r = results?.optJSONObject(i) ?: continue
-                val row = byId[r.optString("id")] ?: continue
+            for ((r, row) in answered) {
                 if (r.optString("상태") == "오류") {
                     // The server could not apply it (expired, gone): the local answer stands, nothing is retried.
                     db.dropOutbox(row.seq)
