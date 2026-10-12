@@ -132,7 +132,14 @@ internal data class MemoNoteRecord(
     val modified: MemoRev get() = revs.max
     val bodyPlain: String get() = memoPlainText(body)
 
-    /** Same value as the server `내용해시` (body + uploaded mxc list). */
+    /**
+     * The server `내용해시` of this note (body + uploaded mxc list), on the body as the phone holds it.
+     *
+     * The server keeps two different values for the same note — the body the phone sent when it stores it the first
+     * time, and the body as written to the file (one trailing newline) after a merge — so the hash is only used as a
+     * hint here. "Is this the same note" is decided by [memoSameNote] on the bundles, with the trailing newline
+     * ignored (found by the server interoperability test, A4 ⑤; see 이벤트규약-변경.md).
+     */
     val contentHash: String get() = memoContentHash(body, attachments.mapNotNull { it.mxc })
 
     /** A tombstone keeps only the id and the stamps (설계 §c-3). */
@@ -224,6 +231,13 @@ private fun hex(bytes: ByteArray): String {
     }
     return out.toString()
 }
+
+/**
+ * A note body in the one form the phone keeps: without the trailing newlines the server file always has
+ * (`june_memo_index.py` `write_note` writes the body with exactly one). Everything the sync stores goes through this,
+ * so a note that only differs by that newline is the same note and is never uploaded again (A4 ⑤).
+ */
+internal fun memoNormalizedBody(body: String): String = body.trimEnd('\n')
 
 /** The server `content_hash`: sha1 of the body, then for each mxc a NUL byte and the mxc. */
 internal fun memoContentHash(body: String, mxcs: List<String>): String {

@@ -31,10 +31,18 @@ internal data class MemoOutboxRow(
     val createdMs: Long,
     val updatedMs: Long,
     val tries: Int,
+    val nextTryMs: Long = 0,
+    val lastError: String? = null,
 )
 
 internal const val MEMO_OUTBOX_NOTE = "note"
 internal const val MEMO_OUTBOX_FOLDER = "folder"
+
+/** One developer log line of the sync (설계 §k-6). Counts and timings only, never note content. */
+internal data class MemoSyncLogRow(val atMs: Long, val kind: String, val notes: Int, val tookMs: Long?, val result: String?)
+
+/** How many sync log lines are kept (요구서 A4: the last 50). */
+internal const val MEMO_SYNC_LOG_ROWS = 50
 
 /**
  * Element June memo bot local database `june_memo.db` (설계 §a): notes, tags, attachments, suggestions, folders,
@@ -295,10 +303,13 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
     )
 
     fun outbox(): List<MemoOutboxRow> = query(
-        "SELECT seq, kind, target, payload_json, created_ms, updated_ms, tries FROM outbox ORDER BY seq",
+        "SELECT seq, kind, target, payload_json, created_ms, updated_ms, tries, next_try_ms, last_error FROM outbox ORDER BY seq",
         emptyList()
     ) { c ->
-        MemoOutboxRow(c.getLong(0)!!, c.getString(1)!!, c.getString(2)!!, c.getString(3)!!, c.getLong(4)!!, c.getLong(5)!!, c.getLong(6)!!.toInt())
+        MemoOutboxRow(
+            c.getLong(0)!!, c.getString(1)!!, c.getString(2)!!, c.getString(3)!!, c.getLong(4)!!, c.getLong(5)!!,
+            c.getLong(6)!!.toInt(), c.getLong(7) ?: 0, c.getString(8),
+        )
     }
 
     fun outboxCount(): Int = query("SELECT COUNT(*) FROM outbox", emptyList()) { c -> c.getLong(0)!!.toInt() }.first()
@@ -309,6 +320,38 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
             val id = c.getString(0)!!
             memoSegment(id, segments) to memoSegmentLine(id, MemoRev(c.getLong(1)!!, c.getString(2).orEmpty(), c.getLong(3)!!))
         }.groupBy({ it.first }, { it.second }).mapValues { (_, lines) -> memoSegmentHash(lines) to lines.size }
+
+    /** The `<id>:<rev>` summary lines of one segment, what the compare sync sends for a segment the server differs on. */
+    fun segmentLines(segment: Int, segments: Int = MEMO_SEGMENTS): List<String> =
+        query("SELECT id, modified_ms, modified_device, modified_seq FROM note", emptyList()) { c ->
+            val id = c.getString(0)!!
+            id to MemoRev(c.getLong(1)!!, c.getString(2).orEmpty(), c.getLong(3)!!)
+        }.filter { memoSegment(it.first, segments) == segment }.map { (id, rev) -> memoSegmentLine(id, rev) }
+
+    /** Removes the waiting upload [seq] (it went through). */
+    fun dropOutbox(seq: Long) = exec("DELETE FROM outbox WHERE seq = ?", listOf(seq))
+
+    /** The upload failed: counts the try and holds it until [nextTryMs] (back-off, 설계 §k-4 ③). */
+    fun failOutbox(seq: Long, nextTryMs: Long, error: String?) =
+        exec("UPDATE outbox SET tries = tries + 1, next_try_ms = ?, last_error = ? WHERE seq = ?", listOf(nextTryMs, error, seq))
+
+    /** The waiting uploads that may be tried at [nowMs], oldest first. */
+    fun outboxDue(nowMs: Long): List<MemoOutboxRow> = outbox().filter { it.nextTryMs <= nowMs }
+
+    /** Writes one developer log line (설계 §k-6). Note content is never written here, only counts and timings. */
+    fun log(atMs: Long, kind: String, notes: Int, tookMs: Long?, result: String?) {
+        exec(
+            "INSERT INTO sync_log(at_ms, kind, notes, took_ms, result) VALUES (?, ?, ?, ?, ?)",
+            listOf(atMs, kind, notes.toLong(), tookMs, result),
+        )
+        exec("DELETE FROM sync_log WHERE id NOT IN (SELECT id FROM sync_log ORDER BY id DESC LIMIT ?)", listOf(MEMO_SYNC_LOG_ROWS.toLong()))
+    }
+
+    /** The kept log lines, newest first (설계 §k-6: the last [MEMO_SYNC_LOG_ROWS]). */
+    fun logs(limit: Int = MEMO_SYNC_LOG_ROWS): List<MemoSyncLogRow> = query(
+        "SELECT at_ms, kind, notes, took_ms, result FROM sync_log ORDER BY id DESC LIMIT ?",
+        listOf(limit.toLong()),
+    ) { c -> MemoSyncLogRow(c.getLong(0)!!, c.getString(1)!!, c.getLong(2)!!.toInt(), c.getLong(3), c.getString(4)) }
 
     // ---- SQL helpers
 
