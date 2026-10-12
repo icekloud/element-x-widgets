@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -114,6 +115,7 @@ import io.element.android.libraries.designsystem.components.ExpandableBottomShee
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.components.rememberExpandableBottomSheetLayoutState
+import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.text.toAnnotatedString
