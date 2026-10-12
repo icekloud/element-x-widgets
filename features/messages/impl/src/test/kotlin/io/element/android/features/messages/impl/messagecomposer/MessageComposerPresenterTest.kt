@@ -10,6 +10,10 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import io.element.android.libraries.mediaviewer.api.local.LocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.EditedLocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEdits
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditor
 import android.net.Uri
 import androidx.compose.runtime.remember
 import app.cash.molecule.RecompositionMode
@@ -26,13 +30,13 @@ import io.element.android.features.messages.impl.MessagesNavigator
 import io.element.android.features.messages.impl.attachments.Attachment
 import io.element.android.features.messages.impl.draft.ComposerDraftService
 import io.element.android.features.messages.impl.draft.FakeComposerDraftService
-import io.element.android.features.messages.impl.june.memo.MemoComposerInput
-import io.element.android.features.messages.impl.june.memo.MemoInputSink
 import io.element.android.features.messages.impl.messagecomposer.suggestions.SuggestionsProcessor
 import io.element.android.features.messages.impl.timeline.TimelineController
 import io.element.android.features.messages.impl.utils.FakeMentionSpanFormatter
 import io.element.android.features.messages.impl.utils.FakeTextPillificationHelper
 import io.element.android.features.messages.impl.utils.TextPillificationHelper
+import io.element.android.features.messages.impl.june.memo.MemoComposerInput
+import io.element.android.features.messages.impl.june.memo.MemoInputSink
 import io.element.android.libraries.architecture.AsyncAction
 import io.element.android.libraries.core.mimetype.MimeTypes
 import io.element.android.libraries.designsystem.utils.snackbar.SnackbarDispatcher
