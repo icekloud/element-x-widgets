@@ -307,8 +307,15 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         emptyList()
     ) { c ->
         MemoOutboxRow(
-            c.getLong(0)!!, c.getString(1)!!, c.getString(2)!!, c.getString(3)!!, c.getLong(4)!!, c.getLong(5)!!,
-            c.getLong(6)!!.toInt(), c.getLong(7) ?: 0, c.getString(8),
+            seq = c.getLong(0)!!,
+            kind = c.getString(1)!!,
+            target = c.getString(2)!!,
+            payload = c.getString(3)!!,
+            createdMs = c.getLong(4)!!,
+            updatedMs = c.getLong(5)!!,
+            tries = c.getLong(6)!!.toInt(),
+            nextTryMs = c.getLong(7) ?: 0,
+            lastError = c.getString(8),
         )
     }
 
