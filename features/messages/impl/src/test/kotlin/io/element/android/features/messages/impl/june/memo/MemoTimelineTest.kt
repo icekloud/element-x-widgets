@@ -20,9 +20,9 @@ class MemoTimelineTest {
     fun `photo events are found by their mxc url, so a note attachment opens the room media viewer`() {
         val photo = aTimelineItemEvent(content = aTimelineItemImageContent().copy(mediaSource = MediaSource("mxc://hs/abc#auto")))
         val text = aTimelineItemEvent(content = aTimelineItemTextContent(body = "빵집 메모"))
-        val timeline = memoTimeline(listOf(text, photo))
-        assertThat(timeline.photosByMxc.keys).containsExactly("mxc://hs/abc")
-        assertThat(timeline.photosByMxc["mxc://hs/abc"]).isSameInstanceAs(photo)
-        assertThat(timeline.entries).hasSize(2)
+        // v2: the record tab reads the local notes; only this lookup is left of the timeline (설계 §g)
+        val photos = memoPhotosByMxc(listOf(text, photo))
+        assertThat(photos.keys).containsExactly("mxc://hs/abc")
+        assertThat(photos["mxc://hs/abc"]).isSameInstanceAs(photo)
     }
 }

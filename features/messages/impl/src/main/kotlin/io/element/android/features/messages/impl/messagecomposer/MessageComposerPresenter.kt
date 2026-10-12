@@ -127,6 +127,9 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import kotlin.time.Duration.Companion.seconds
 import io.element.android.libraries.core.mimetype.MimeTypes.Any as AnyMimeTypes
+import io.element.android.features.messages.impl.june.memo.MemoComposerInput
+import io.element.android.features.messages.impl.june.memo.MemoInputSink
+import io.element.android.libraries.ui.strings.CommonStrings
 
 @Suppress("LargeClass")
 @AssistedInject
@@ -297,8 +300,12 @@ class MessageComposerPresenter(
                     }
                 }
                 is MessageComposerEvent.SendMessage -> {
-                    // Element June: pending pictures go out with the typed text as their caption
-                    if (pendingAttachments.isNotEmpty() && !messageComposerContext.composerMode.isEditing) {
+                    // Element June memo bot v2: in the memo room the input becomes a local note, nothing goes to the room
+                    val memoSink = MemoComposerInput.forRoom(room.roomId.value)
+                    if (memoSink != null && !messageComposerContext.composerMode.isEditing) {
+                        sessionCoroutineScope.saveMemoInput(memoSink, markdownTextEditorState, richTextEditorState)
+                    } else if (pendingAttachments.isNotEmpty() && !messageComposerContext.composerMode.isEditing) {
+                        // Element June: pending pictures go out with the typed text as their caption
                         sessionCoroutineScope.sendPendingAttachments(markdownTextEditorState, richTextEditorState)
                     } else {
                         sessionCoroutineScope.sendMessage(
@@ -778,6 +785,26 @@ class MessageComposerPresenter(
         navigator.navigateToPreviewAttachments(attachments, inReplyToEventId)
 
         resetComposerModeAfterAttaching()
+    }
+
+    // Element June memo bot v2 (설계 §f): the typed text and the pending pictures become one local note
+    private fun CoroutineScope.saveMemoInput(
+        sink: MemoInputSink,
+        markdownTextEditorState: MarkdownTextEditorState,
+        richTextEditorState: RichTextEditorState,
+    ) = launch {
+        val attachments = pendingAttachments
+        val text = currentComposerMessage(markdownTextEditorState, richTextEditorState, withMentions = false).markdown
+        if (attachments.isEmpty() && text.isBlank()) return@launch
+        pendingAttachments = persistentListOf()
+        pendingEditor = null
+        resetComposer(markdownTextEditorState, richTextEditorState, fromEdit = false)
+        runCatchingExceptions {
+            if (attachments.isEmpty()) sink.saveText(text) else sink.savePictures(attachments.map { it.uri }, text.takeIf { it.isNotBlank() })
+        }.onFailure { cause ->
+            Timber.e(cause, "Failed to save the memo")
+            snackbarDispatcher.post(SnackbarMessage(CommonStrings.error_unknown))
+        }
     }
 
     // Element June: send the pending pictures one by one, the typed text is the caption of the first one

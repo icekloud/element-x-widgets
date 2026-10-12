@@ -625,7 +625,6 @@ private fun MessagesViewContent(
                     roomId = state.roomId.value,
                     useFakeData = JuneSettings.memoFakeData(juneContext),
                     timelineItems = state.timelineState.timelineItems,
-                    onLoadOlder = { state.timelineState.eventSink(TimelineEvent.LoadMore(Timeline.PaginationDirection.BACKWARDS)) },
                     onPhotoClick = onContentClick,
                 )
             } else {
@@ -719,15 +718,20 @@ private fun MessagesViewComposerBottomSheetContents(
                             onLinkClick = onLinkClick,
                         )
                     }
-                    // Element June: background processes of the bot, then its busy queue (edit / steer / cancel)
-                    JuneComposerPanels(
-                        roomId = state.roomId.value,
-                        editingEventId = juneEditingEventId(state.composerState.mode),
-                        onEdit = { event, kind ->
-                            val action = if (kind == JuneEditKind.Caption) TimelineItemAction.EditCaption else TimelineItemAction.Edit
-                            state.eventSink(MessagesEvent.HandleAction(action, event))
-                        },
-                    )
+                    // Element June: background processes of the bot, then its busy queue (edit / steer / cancel).
+                    // Not in the memo bot room shown as the memo screen: no bot conversation there (설계 §f, 결정 4).
+                    val juneMemoScreen = JuneSettings.isMemoRoom(LocalContext.current, state.roomId.value) &&
+                        state.timelineState.timelineMode !is Timeline.Mode.Thread
+                    if (!juneMemoScreen) {
+                        JuneComposerPanels(
+                            roomId = state.roomId.value,
+                            editingEventId = juneEditingEventId(state.composerState.mode),
+                            onEdit = { event, kind ->
+                                val action = if (kind == JuneEditKind.Caption) TimelineItemAction.EditCaption else TimelineItemAction.Edit
+                                state.eventSink(MessagesEvent.HandleAction(action, event))
+                            },
+                        )
+                    }
                 },
                 bottom = {
                     if (verificationViolation != null) {
