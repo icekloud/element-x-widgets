@@ -38,6 +38,9 @@ internal data class MemoOutboxRow(
 internal const val MEMO_OUTBOX_NOTE = "note"
 internal const val MEMO_OUTBOX_FOLDER = "folder"
 
+/** A suggestion answer waiting for the next `sync_push` (`제안응답[]`, 이벤트규약 v2 §2). Target = suggestion id. */
+internal const val MEMO_OUTBOX_PROPOSAL = "proposal"
+
 /** One developer log line of the sync (설계 §k-6). Counts and timings only, never note content. */
 internal data class MemoSyncLogRow(val atMs: Long, val kind: String, val notes: Int, val tookMs: Long?, val result: String?)
 
@@ -98,8 +101,8 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         exec("DELETE FROM attachment WHERE note_id = ?", listOf(n.id))
         n.attachments.forEachIndexed { i, a ->
             exec(
-                "INSERT INTO attachment(id, note_id, idx, local_path, mxc, file_json, mime, bytes, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                listOf(a.id, n.id, i, a.localPath, a.mxc, a.fileJson, a.mime, a.bytes, a.state),
+                "INSERT INTO attachment(id, note_id, idx, local_path, mxc, file_json, mime, bytes, state, tries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                listOf(a.id, n.id, i, a.localPath, a.mxc, a.fileJson, a.mime, a.bytes, a.state, a.tries),
             )
         }
     }
@@ -199,7 +202,8 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         val ids = rows.map { it.id }
         val tags = tagsOf(ids)
         val attachments = attachmentsOf(ids)
-        return rows.map { it.toItem(tags[it.id].orEmpty(), attachments[it.id].orEmpty()) }
+        val proposals = suggestionCounts(ids)
+        return rows.map { it.toItem(tags[it.id].orEmpty(), attachments[it.id].orEmpty()).copy(proposals = proposals[it.id] ?: 0) }
     }
 
     private fun tagsOf(ids: List<String>): Map<String, List<String>> = inChunks(ids) { chunk ->
@@ -208,20 +212,66 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
 
     private fun attachmentsOf(ids: List<String>): Map<String, List<MemoLocalAttachment>> = inChunks(ids) { chunk ->
         query(
-            "SELECT note_id, id, mxc, local_path, file_json, mime, bytes, state FROM attachment WHERE note_id IN (${marks(chunk.size)}) ORDER BY note_id, idx",
+            "SELECT note_id, $ATTACH_COLS FROM attachment WHERE note_id IN (${marks(chunk.size)}) ORDER BY note_id, idx",
             chunk,
-        ) { c ->
-            c.getString(0)!! to MemoLocalAttachment(
-                id = c.getString(1)!!,
-                mxc = c.getString(2),
-                localPath = c.getString(3),
-                fileJson = c.getString(4),
-                mime = c.getString(5),
-                bytes = c.getLong(6),
-                state = c.getString(7) ?: MEMO_ATTACH_LOCAL,
-            )
-        }
+        ) { c -> c.getString(0)!! to readAttachment(c, 1) }
     }.groupBy({ it.first }, { it.second })
+
+    // ---- attachment upload queue (A5, 설계 §e: the queue is the attachment table itself)
+
+    /** Attachments still to upload (로컬만 / 올리는중 with a local copy), oldest note first, with their note id. */
+    fun pendingAttachments(): List<Pair<String, MemoLocalAttachment>> = query(
+        "SELECT note_id, $ATTACH_COLS FROM attachment WHERE state IN (?, ?) AND local_path IS NOT NULL ORDER BY note_id, idx",
+        listOf(MEMO_ATTACH_LOCAL, MEMO_ATTACH_UPLOADING),
+    ) { c -> c.getString(0)!! to readAttachment(c, 1) }
+
+    /** Stores the upload result of one attachment (mxc and EncryptedFile, or one more failed try). */
+    fun updateAttachment(id: String, mxc: String?, fileJson: String?, state: String, tries: Int) = exec(
+        "UPDATE attachment SET mxc = ?, file_json = ?, state = ?, tries = ? WHERE id = ?",
+        listOf(mxc, fileJson, state, tries, id),
+    )
+
+    /** How many attachments gave up after [MEMO_ATTACH_MAX_TRIES] tries (the "다시 시도" line). */
+    fun failedAttachmentCount(): Int =
+        query("SELECT COUNT(*) FROM attachment WHERE state = ?", listOf(MEMO_ATTACH_FAILED)) { c -> c.getLong(0)!!.toInt() }.first()
+
+    /** "다시 시도": the failed attachments go back to the queue with a fresh try count. */
+    fun retryFailedAttachments() = exec("UPDATE attachment SET state = ?, tries = 0 WHERE state = ?", listOf(MEMO_ATTACH_LOCAL, MEMO_ATTACH_FAILED))
+
+    /** Uploaded attachments that still keep their original on the phone: the only ones the clean button may remove. */
+    fun uploadedOriginals(): List<MemoLocalAttachment> = query(
+        "SELECT $ATTACH_COLS FROM attachment WHERE state = ? AND mxc IS NOT NULL AND local_path IS NOT NULL",
+        listOf(MEMO_ATTACH_DONE),
+    ) { c -> readAttachment(c, 0) }
+
+    /** Forgets the local original of an uploaded attachment (the thumbnail and the mxc stay). */
+    fun dropOriginal(id: String) = exec("UPDATE attachment SET local_path = NULL WHERE id = ? AND state = ?", listOf(id, MEMO_ATTACH_DONE))
+
+    // ---- suggestions (A5, 설계 §d-③: the bot review only ever proposes, the phone answers)
+
+    fun putSuggestion(s: MemoSuggestionRow) = exec(
+        "INSERT OR REPLACE INTO suggestion(id, note_id, kind, payload_json, status, created_ms) VALUES (?, ?, ?, ?, ?, ?)",
+        listOf(s.id, s.noteId, s.kind, s.payload, s.status, s.createdMs),
+    )
+
+    fun suggestions(): List<MemoSuggestionRow> = query(
+        "SELECT id, note_id, kind, payload_json, status, created_ms FROM suggestion ORDER BY created_ms DESC, id",
+        emptyList(),
+    ) { c -> MemoSuggestionRow(c.getString(0)!!, c.getString(1), c.getString(2)!!, c.getString(3)!!, c.getString(4)!!, c.getLong(5)!!) }
+
+    fun suggestion(id: String): MemoSuggestionRow? = suggestions().firstOrNull { it.id == id }
+
+    fun setSuggestionStatus(id: String, status: String) = exec("UPDATE suggestion SET status = ? WHERE id = ?", listOf(status, id))
+
+    fun deleteSuggestion(id: String) = exec("DELETE FROM suggestion WHERE id = ?", listOf(id))
+
+    /** Waiting suggestions per note, the tile chip `🤖 제안 N`. */
+    private fun suggestionCounts(ids: List<String>): Map<String, Int> = inChunks(ids) { chunk ->
+        query(
+            "SELECT note_id, COUNT(*) FROM suggestion WHERE status = ? AND note_id IN (${marks(chunk.size)}) GROUP BY note_id",
+            listOf<Any?>(MEMO_SUGGESTION_WAITING) + chunk,
+        ) { c -> c.getString(0)!! to c.getLong(1)!!.toInt() }
+    }.toMap()
 
     private fun <T> inChunks(ids: List<String>, f: (List<String>) -> List<T>): List<T> =
         if (ids.isEmpty()) emptyList() else ids.distinct().chunked(MAX_IN).flatMap(f)
@@ -382,16 +432,18 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         private const val MAX_IN = 500
 
         val Schema: SqlSchema<QueryResult.Value<Unit>> = object : SqlSchema<QueryResult.Value<Unit>> {
-            override val version: Long = 1
+            override val version: Long = 2
 
             override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
-                MEMO_SCHEMA_V1.forEach { driver.execute(null, it, 0) }
+                (MEMO_SCHEMA_V1 + MEMO_SCHEMA_V2).forEach { driver.execute(null, it, 0) }
                 MemoDb(driver).seedFolders()
                 return QueryResult.Unit
             }
 
-            override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> =
-                QueryResult.Unit
+            override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> {
+                if (oldVersion < 2 && newVersion >= 2) MEMO_SCHEMA_V2.forEach { driver.execute(null, it, 0) }
+                return QueryResult.Unit
+            }
         }
     }
 
@@ -504,6 +556,39 @@ private fun readRow(c: SqlCursor) = MemoRow(
     scheduleState = c.getString(8),
     linkJson = c.getString(9),
 )
+
+/** Version 2 (A5): the upload try count of an attachment. */
+private val MEMO_SCHEMA_V2 = listOf(
+    "ALTER TABLE attachment ADD COLUMN tries INTEGER NOT NULL DEFAULT 0",
+)
+
+private const val ATTACH_COLS = "id, mxc, local_path, file_json, mime, bytes, state, tries"
+
+private fun readAttachment(c: SqlCursor, from: Int) = MemoLocalAttachment(
+    id = c.getString(from)!!,
+    mxc = c.getString(from + 1),
+    localPath = c.getString(from + 2),
+    fileJson = c.getString(from + 3),
+    mime = c.getString(from + 4),
+    bytes = c.getLong(from + 5),
+    state = c.getString(from + 6) ?: MEMO_ATTACH_LOCAL,
+    tries = (c.getLong(from + 7) ?: 0L).toInt(),
+)
+
+/** One suggestion of the bot review (설계 §a `suggestion`): the server proposal JSON as it came, and its local status. */
+internal data class MemoSuggestionRow(
+    val id: String,
+    val noteId: String?,
+    val kind: String,
+    val payload: String,
+    val status: String,
+    val createdMs: Long,
+)
+
+internal const val MEMO_SUGGESTION_WAITING = "대기"
+internal const val MEMO_SUGGESTION_ACCEPTED = "수락"
+internal const val MEMO_SUGGESTION_DISMISSED = "거절"
+internal const val MEMO_SUGGESTION_DEFERRED = "보류"
 
 /** Version 1 of the schema (설계 §a + §k-5 indexes). New versions add migrations, they never edit this list. */
 private val MEMO_SCHEMA_V1 = listOf(

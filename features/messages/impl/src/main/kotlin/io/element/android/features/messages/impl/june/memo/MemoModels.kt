@@ -24,8 +24,19 @@ internal const val MEMO_SEARCH_TYPE = "app.june.memo.search"
 internal const val MEMO_TAGS_TYPE = "app.june.memo.tags"
 internal const val MEMO_OK_TYPE = "app.june.memo.ok"
 internal const val MEMO_ERROR_TYPE = "app.june.memo.error"
+internal const val MEMO_SYNC_TYPE = "app.june.memo.sync"
+internal const val MEMO_SYNC_ACK_TYPE = "app.june.memo.sync_ack"
 
-internal val MEMO_RESPONSE_TYPES = listOf(MEMO_LIST_TYPE, MEMO_NOTE_TYPE, MEMO_SEARCH_TYPE, MEMO_TAGS_TYPE, MEMO_OK_TYPE, MEMO_ERROR_TYPE)
+internal val MEMO_RESPONSE_TYPES = listOf(
+    MEMO_LIST_TYPE,
+    MEMO_NOTE_TYPE,
+    MEMO_SEARCH_TYPE,
+    MEMO_TAGS_TYPE,
+    MEMO_OK_TYPE,
+    MEMO_ERROR_TYPE,
+    MEMO_SYNC_TYPE,
+    MEMO_SYNC_ACK_TYPE,
+)
 
 internal const val MEMO_INBOX = "받은편지함"
 internal const val MEMO_ARCHIVE = "보관함"
@@ -101,6 +112,8 @@ internal data class MemoItem(
     val scheduleState: String? = null,
     val snippet: String? = null,
     val matchField: String? = null,
+    /** Waiting bot suggestions of this note (A5 chip `🤖 제안 N`, 설계 §d-③). */
+    val proposals: Int = 0,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date
@@ -143,6 +156,10 @@ internal sealed interface MemoResponse {
     data class Tags(override val requestId: String, val tags: kotlin.collections.List<MemoTag>) : MemoResponse
     data class Ok(override val requestId: String, val op: String, val id: String?, val path: String?) : MemoResponse
     data class Error(override val requestId: String, val op: String, val reason: String) : MemoResponse
+
+    /** [v2] `app.june.memo.sync` / `app.june.memo.sync_ack`: the raw content, applied by [MemoSync]. */
+    data class Sync(override val requestId: String, val content: JSONObject) : MemoResponse
+    data class SyncAck(override val requestId: String, val content: JSONObject) : MemoResponse
 }
 
 internal fun JSONArray?.strings(): List<String> {
@@ -308,6 +325,8 @@ internal fun parseMemoResponse(type: String, content: JSONObject): MemoResponse?
         }
         MEMO_OK_TYPE -> MemoResponse.Ok(rid, content.optString("op"), content.optStringOrNull("id"), content.optStringOrNull("경로"))
         MEMO_ERROR_TYPE -> MemoResponse.Error(rid, content.optString("op"), content.optString("사유").ifEmpty { "알 수 없는 오류" })
+        MEMO_SYNC_TYPE -> MemoResponse.Sync(rid, content)
+        MEMO_SYNC_ACK_TYPE -> MemoResponse.SyncAck(rid, content)
         else -> null
     }
 }

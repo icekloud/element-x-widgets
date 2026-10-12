@@ -159,8 +159,8 @@ internal fun MemoProposalCard(controller: MemoController, p: MemoProposal) {
                 MemoChip("수락", accent = true, onClick = { controller.run(MemoOp.accept(p.id)) })
                 MemoChip("무시", onClick = { controller.run(MemoOp.dismiss(p.id)) })
                 MemoChip("다른 날", onClick = {
-                    val noteId = p.noteId ?: p.id
-                    controller.sheet = MemoSheet.PickDate { date -> controller.run(MemoOp.defer(noteId, date)) }
+                    // The answer is about the suggestion (규약 v2 제안응답 id), not about its note.
+                    controller.sheet = MemoSheet.PickDate { date -> controller.run(MemoOp.defer(p.id, date)) }
                 })
             } else if (p.isFolderCreate) {
                 MemoChip("만들기", accent = true, onClick = { controller.run(MemoOp.accept(p.id)) })
@@ -431,6 +431,13 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
                 null
             })
             if (corner.isNotEmpty()) MemoCorner(corner.joinToString(" "), Modifier.align(Alignment.TopStart))
+            if (item.proposals > 0) {
+                // A5 (설계 §d-③): the bot review only proposes; the chip opens them, nothing changes until [적용].
+                MemoCorner(
+                    "🤖 제안 ${item.proposals}",
+                    Modifier.align(Alignment.BottomEnd).clickable { controller.sheet = memoProposalSheet(controller, item.id) },
+                )
+            }
         }
         Text(
             item.title,
@@ -447,6 +454,23 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
         )
         MemoTagLine(item.tags.toImmutableList(), max = 4, modifier = Modifier.padding(6.dp).testTag(MemoTags.TILE_TAGS))
     }
+}
+
+/** The suggestions of one note as a bottom sheet: [적용] / [아니오] each, and [모두 적용] (A5, 설계 §d-③). */
+internal fun memoProposalSheet(controller: MemoController, noteId: String): MemoSheet {
+    val proposals = controller.store.index.value.proposals.filter { it.noteId == noteId && it.isWaiting }
+    val actions = proposals.flatMap { p ->
+        val label = p.summary.ifEmpty { p.kind }
+        listOf<Pair<String, () -> Unit>>(
+            "적용 · $label" to { controller.run(MemoOp.accept(p.id)) },
+            "아니오 · $label" to { controller.run(MemoOp.dismiss(p.id)) },
+        )
+    } + if (proposals.size > 1) {
+        listOf<Pair<String, () -> Unit>>("모두 적용 (${proposals.size})" to { proposals.forEach { controller.run(MemoOp.accept(it.id)) } })
+    } else {
+        emptyList()
+    }
+    return MemoSheet.Actions("🤖 제안 ${proposals.size}", actions)
 }
 
 @Composable

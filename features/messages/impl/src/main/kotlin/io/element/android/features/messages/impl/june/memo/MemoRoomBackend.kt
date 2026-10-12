@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -76,6 +77,21 @@ internal class MemoRoomBackend(
             mergeMemoIndex(main, main.splitKeys.mapNotNull { key -> state(MEMO_INDEX_TYPE, key) })
         } catch (e: Exception) {
             Timber.d("June memo: index fetch failed (%s)", e.javaClass.simpleName)
+            null
+        }
+    }
+
+    /** The raw `제안[]` items of the index (main + split keys), for the local suggestion table (A5). */
+    suspend fun fetchProposalItems(): List<JSONObject>? = withContext(Dispatchers.IO) {
+        try {
+            val main = state(MEMO_INDEX_TYPE, "") ?: return@withContext emptyList()
+            val parts = listOf(main) + parseMemoIndex(main).splitKeys.mapNotNull { key -> state(MEMO_INDEX_TYPE, key) }
+            parts.flatMap { part ->
+                val a = part.optJSONArray("제안") ?: JSONArray()
+                (0 until a.length()).mapNotNull { a.optJSONObject(it) }
+            }
+        } catch (e: Exception) {
+            Timber.d("June memo: proposals fetch failed (%s)", e.javaClass.simpleName)
             null
         }
     }
@@ -168,4 +184,43 @@ internal class MemoRoomBackend(
     }
 }
 
-internal val MEMO_ANSWER_TYPES = listOf(MEMO_LIST_TYPE, MEMO_NOTE_TYPE, MEMO_SEARCH_TYPE, MEMO_TAGS_TYPE, MEMO_OK_TYPE, MEMO_ERROR_TYPE)
+internal val MEMO_ANSWER_TYPES = MEMO_RESPONSE_TYPES
+
+/**
+ * The sync transport over the memo bot room (A4): the same send + answer path as the screens used in v1, with a
+ * timeout, the proposals of the index state and the media upload of the encrypted attachments (A5).
+ */
+internal class MemoRoomSyncTransport(
+    private val sessionStore: SessionStore,
+    private val room: MemoRoomBackend,
+    private val timeoutMillis: Long = MEMO_SYNC_TIMEOUT_MILLIS,
+) : MemoSyncTransport {
+    override suspend fun call(op: MemoOp): MemoResponse =
+        withTimeout(timeoutMillis) { room.call(op, UUID.randomUUID().toString()) }
+
+    override suspend fun fetchProposals(): List<JSONObject>? = room.fetchProposalItems()
+
+    override suspend fun upload(bytes: ByteArray): String = withContext(Dispatchers.IO) {
+        val s = sessionStore.getLatestSession() ?: throw MemoSendException("세션이 없습니다")
+        val conn = URL(s.homeserverUrl.trimEnd('/') + "/_matrix/media/v3/upload").openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 60_000
+            conn.doOutput = true
+            conn.setRequestProperty("Authorization", "Bearer ${s.accessToken}")
+            conn.setRequestProperty("Content-Type", "application/octet-stream")
+            conn.setFixedLengthStreamingMode(bytes.size)
+            conn.outputStream.use { it.write(bytes) }
+            if (conn.responseCode !in 200..299) throw MemoSendException("올리지 못했습니다 (${conn.responseCode})")
+            val uri = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optString("content_uri")
+            if (!uri.startsWith("mxc://")) throw MemoSendException("올린 주소가 없습니다")
+            uri
+        } finally {
+            conn.disconnect()
+        }
+    }
+}
+
+/** A sync answer can take longer than a screen read: the server reads its files at that time (규약 §3). */
+internal const val MEMO_SYNC_TIMEOUT_MILLIS = 30_000L

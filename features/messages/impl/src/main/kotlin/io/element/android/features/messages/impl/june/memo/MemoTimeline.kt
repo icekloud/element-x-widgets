@@ -10,6 +10,7 @@ package io.element.android.features.messages.impl.june.memo
 
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
 import io.element.android.features.messages.impl.timeline.model.event.TimelineItemImageContent
+import io.element.android.features.messages.impl.timeline.model.event.TimelineItemUnknownContent
 
 private fun TimelineItem.events(): List<TimelineItem.Event> = when (this) {
     is TimelineItem.Event -> listOf(this)
@@ -29,3 +30,11 @@ internal fun memoPhotosByMxc(items: List<TimelineItem>): Map<String, TimelineIte
     }
     return photos
 }
+
+/**
+ * The memo bot answers seen in the loaded room timeline (A4): in an encrypted room this is the only way the sync call
+ * gets its answer (the `/messages` poll cannot read it). Already decrypted by the SDK.
+ */
+internal fun memoAnswersOf(items: List<TimelineItem>): List<MemoResponse> = items.flatMap { it.events() }
+    .filter { it.content is TimelineItemUnknownContent }
+    .mapNotNull { event -> parseMemoResponseEvent(runCatching { event.timelineItemDebugInfoProvider().originalJson }.getOrNull()) }

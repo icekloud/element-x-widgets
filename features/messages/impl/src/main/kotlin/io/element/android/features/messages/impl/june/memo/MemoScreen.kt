@@ -182,6 +182,7 @@ internal fun MemoScreen(
     LaunchedEffect(store, localVersion) {
         store.refreshIndex()
     }
+    if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion)
 
     val state = nav.value
     var discardAsked by remember { mutableStateOf(false) }
@@ -208,6 +209,7 @@ internal fun MemoScreen(
     val index by store.index.collectAsState()
     Column(modifier = modifier.fillMaxSize()) {
         controller.error?.let { (reason, retry) -> MemoErrorBanner(reason, retry, onClose = { controller.error = null }) }
+        if (!useFakeData) MemoAttachmentBanners(local, localVersion)
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val note = state.note
             when {

@@ -58,6 +58,7 @@ dependencies {
     implementation(projects.libraries.audio.api)
     implementation(projects.libraries.voiceplayer.api)
     implementation(projects.libraries.voicerecorder.api)
+    implementation(projects.libraries.workmanager.api)
     implementation(projects.libraries.mediaplayer.api)
     implementation(projects.libraries.push.api)
     implementation(projects.libraries.sessionStorage.api) // Element June: background panel
