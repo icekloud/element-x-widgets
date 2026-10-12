@@ -1754,8 +1754,15 @@ class MessageComposerPresenterTest : RobolectricTest() {
                     liveTimeline = FakeTimeline().apply { sendMessageLambda = sendMessage },
                     typingNoticeResult = { Result.success(Unit) },
                 ),
+                slashCommandService = FakeSlashCommandService(parseResult = { _, _, _ -> SlashCommand.NotACommand }),
             )
-            moleculeFlow(RecompositionMode.Immediate) { presenter.present() }.test {
+            val permalinkBuilder = FakePermalinkBuilder(permalinkForUserLambda = { Result.success("") })
+            // Emit a new state when the text changes, as `present - send message with plain text enabled` does.
+            moleculeFlow(RecompositionMode.Immediate) {
+                val state = presenter.present()
+                val messageMarkdown = state.textEditorState.messageMarkdown(permalinkBuilder)
+                remember(state, messageMarkdown) { state }
+            }.test {
                 val initial = awaitFirstItem()
                 initial.textEditorState.setMarkdown("교토 빵집 메모")
                 awaitItem().eventSink(MessageComposerEvent.SendMessage)
@@ -1789,7 +1796,13 @@ class MessageComposerPresenterTest : RobolectricTest() {
                 ),
                 slashCommandService = FakeSlashCommandService(parseResult = { _, _, _ -> SlashCommand.NotACommand }),
             )
-            moleculeFlow(RecompositionMode.Immediate) { presenter.present() }.test {
+            val permalinkBuilder = FakePermalinkBuilder(permalinkForUserLambda = { Result.success("") })
+            // Emit a new state when the text changes, as `present - send message with plain text enabled` does.
+            moleculeFlow(RecompositionMode.Immediate) {
+                val state = presenter.present()
+                val messageMarkdown = state.textEditorState.messageMarkdown(permalinkBuilder)
+                remember(state, messageMarkdown) { state }
+            }.test {
                 val initial = awaitFirstItem()
                 initial.textEditorState.setMarkdown(A_MESSAGE)
                 awaitItem().eventSink(MessageComposerEvent.SendMessage)
