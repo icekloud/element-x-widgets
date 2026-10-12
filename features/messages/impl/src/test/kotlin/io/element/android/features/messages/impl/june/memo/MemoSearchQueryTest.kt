@@ -101,4 +101,26 @@ class MemoSearchQueryTest : RobolectricTest() {
         assertEquals("음성: ", memoMatchPrefix("음성"))
         assertEquals("", memoMatchPrefix(null))
     }
+
+    @Test
+    fun `recent searches keep only submitted text or tag queries, newest first, no duplicate, five at most`() {
+        // Filter chips toggled on and off: nothing to describe, never recorded (추가요청 1 수정 2)
+        var recent = emptyList<MemoSearchQuery>()
+        repeat(6) { i ->
+            recent = memoRecentWith(recent, MemoSearchQuery(kinds = if (i % 2 == 0) setOf("링크") else emptySet()))
+            recent = memoRecentWith(recent, MemoSearchQuery(pinned = true, period = MemoPeriod.Today))
+        }
+        assertEquals(0, recent.size)
+        recent = memoRecentWith(recent, MemoSearchQuery(text = "교토"))
+        assertEquals(listOf("\"교토\""), recent.map { it.describe() })
+        recent = memoRecentWith(recent, MemoSearchQuery(tags = listOf("빵집")))
+        recent = memoRecentWith(recent, MemoSearchQuery(text = "교토"))
+        assertEquals(listOf("\"교토\"", "#빵집"), recent.map { it.describe() })
+        (1..6).forEach { recent = memoRecentWith(recent, MemoSearchQuery(text = "q$it")) }
+        assertEquals(MEMO_RECENT_SEARCHES, recent.size)
+        assertEquals("\"q6\"", recent.first().describe())
+        // Empty lines already kept are dropped when shown
+        val shown = memoRecentWith(listOf(MemoSearchQuery(kinds = setOf("사진")), MemoSearchQuery(text = "a")), MemoSearchQuery())
+        assertEquals(listOf("\"a\""), shown.map { it.describe() })
+    }
 }
