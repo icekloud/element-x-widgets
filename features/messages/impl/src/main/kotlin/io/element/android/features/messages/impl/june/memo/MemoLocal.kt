@@ -133,14 +133,11 @@ internal data class MemoNoteRecord(
     val bodyPlain: String get() = memoPlainText(body)
 
     /**
-     * The server `내용해시` of this note (body + uploaded mxc list), on the body as the phone holds it.
-     *
-     * The server keeps two different values for the same note — the body the phone sent when it stores it the first
-     * time, and the body as written to the file (one trailing newline) after a merge — so the hash is only used as a
-     * hint here. "Is this the same note" is decided by [memoSameNote] on the bundles, with the trailing newline
-     * ignored (found by the server interoperability test, A4 ⑤; see 이벤트규약-변경.md).
+     * The server `내용해시` of this note: the stored body (one trailing newline, [memoStoredBody]) + the uploaded mxc
+     * list. The server computes it the same way on every path (이벤트규약 §5 v2.1, 관리자 결정 2026-10-13), so the
+     * value is equal on both sides. It is only a hint for "same": which side is newer is decided by the bundle revs.
      */
-    val contentHash: String get() = memoContentHash(body, attachments.mapNotNull { it.mxc })
+    val contentHash: String get() = memoContentHash(memoStoredBody(body), attachments.mapNotNull { it.mxc })
 
     /** A tombstone keeps only the id and the stamps (설계 §c-3). */
     fun tombstone(rev: MemoRev): MemoNoteRecord = copy(
@@ -233,11 +230,14 @@ private fun hex(bytes: ByteArray): String {
 }
 
 /**
- * A note body in the one form the phone keeps: without the trailing newlines the server file always has
- * (`june_memo_index.py` `write_note` writes the body with exactly one). Everything the sync stores goes through this,
- * so a note that only differs by that newline is the same note and is never uploaded again (A4 ⑤).
+ * A note body in the one form the phone keeps: without trailing newlines. Trailing newlines carry no meaning
+ * (이벤트규약 §5 v2.1); the server stores the body with exactly one ([memoStoredBody]). Everything the sync stores goes
+ * through this, so a note that only differs by trailing newlines is the same note and is never uploaded again (A4 ⑤).
  */
 internal fun memoNormalizedBody(body: String): String = body.trimEnd('\n')
+
+/** The body as the server stores it and hashes it: trailing newlines folded into exactly one (`stored_body`). */
+internal fun memoStoredBody(body: String): String = memoNormalizedBody(body) + "\n"
 
 /** The server `content_hash`: sha1 of the body, then for each mxc a NUL byte and the mxc. */
 internal fun memoContentHash(body: String, mxcs: List<String>): String {

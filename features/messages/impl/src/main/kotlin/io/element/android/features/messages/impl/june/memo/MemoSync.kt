@@ -186,9 +186,10 @@ internal object MemoSync {
         if (segments == null || segments.length() == 0) return MemoSegmentDiff(emptyList(), emptyList())
         val wanted = mutableListOf<String>()
         val push = mutableListOf<String>()
-        for (i in 0 until segments.length()) {
-            val item = segments.optJSONObject(i) ?: continue
-            val number = item.optString("구간").toIntOrNull() ?: continue
+        val numbered = (0 until segments.length())
+            .mapNotNull { segments.optJSONObject(it) }
+            .mapNotNull { item -> item.optString("구간").toIntOrNull()?.let { it to item } }
+        for ((number, item) in numbered) {
             val rows = item.optJSONArray("서버") ?: JSONArray()
             val serverRows = (0 until rows.length())
                 .mapNotNull { rows.optJSONObject(it) }
