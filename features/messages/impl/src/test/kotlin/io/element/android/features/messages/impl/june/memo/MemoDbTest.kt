@@ -84,6 +84,36 @@ class MemoDbTest : RobolectricTest() {
     }
 
     @Test
+    fun `a version 1 database migrated to version 2 keeps its attachments and stores their next try and reason`() {
+        // The database of an older APK: version 1 tables, one waiting attachment written before 앱5 (no tries, no retry time).
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        MEMO_SCHEMA_V1.forEach { driver.execute(null, it, 0) }
+        driver.execute(
+            null,
+            "INSERT INTO attachment(id, note_id, idx, local_path, state) VALUES ('a1', '20261012-100000-aaaa', 0, '/p/1.jpg', '$MEMO_ATTACH_LOCAL')",
+            0,
+        )
+        MemoDb.Schema.migrate(driver, 1, 2)
+        val db = MemoDb(driver)
+        val old = db.pendingAttachments().single().second
+        assertEquals(0, old.tries)
+        assertEquals(0L, old.retryAtMs)
+        assertNull(old.error)
+        // The retry time and the reason live in the version 1 columns retry_at_ms / err: no new column was needed.
+        db.updateAttachment("a1", null, null, MEMO_ATTACH_LOCAL, 1, retryAtMs = t0 + 5_000)
+        assertEquals(t0 + 5_000, db.pendingAttachments().single().second.retryAtMs)
+        db.updateAttachment("a1", null, null, MEMO_ATTACH_FAILED, 2, error = MEMO_ATTACH_ERR_READ)
+        assertEquals(MEMO_ATTACH_ERR_READ, db.failedAttachmentReason())
+        db.retryFailedAttachments()
+        val back = db.pendingAttachments().single().second
+        assertEquals(MemoLocalAttachment("a1", localPath = "/p/1.jpg"), back)
+        // A waiting attachment is held back by a network error of another one, never moved forward.
+        db.holdAttachments(t0 + 60_000)
+        db.holdAttachments(t0 + 1_000)
+        assertEquals(t0 + 60_000, db.pendingAttachments().single().second.retryAtMs)
+    }
+
+    @Test
     fun `list pages of 30 with a keyset cursor, no duplicates when a newer note arrives`() {
         val db = db()
         repeat(65) { i -> db.putNote(note("20261001-0000%02d-n%03d".format(i % 60, i), created = t0 + i * 1000L)) }

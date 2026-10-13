@@ -85,6 +85,9 @@ internal class MemoLocalBackend(
     /** Attachments that gave up after [MEMO_ATTACH_MAX_TRIES] tries ("사진 N장을 못 올렸습니다 · 다시 시도"). */
     suspend fun failedAttachments(): Int = withContext(dispatcher) { db.failedAttachmentCount() }
 
+    /** Why one of the failed attachments could not go up (e.g. too big), null when no reason is kept. */
+    suspend fun failedAttachmentReason(): String? = withContext(dispatcher) { db.failedAttachmentReason() }
+
     suspend fun retryFailedAttachments() = withContext(dispatcher) {
         db.retryFailedAttachments()
         MemoLocalChanges.changed()

@@ -99,6 +99,10 @@ internal data class MemoLocalAttachment(
     val state: String = MEMO_ATTACH_LOCAL,
     /** Failed upload tries in a row (A5): at [MEMO_ATTACH_MAX_TRIES] the attachment becomes [MEMO_ATTACH_FAILED]. */
     val tries: Int = 0,
+    /** When a failed upload may be tried again (column `retry_at_ms`), 0 = now. The screen retry waits for it too. */
+    val retryAtMs: Long = 0,
+    /** Why the last upload failed (column `err`), shown on the "못 올렸습니다" line. Never the file content. */
+    val error: String? = null,
 ) {
     /** Union key of the `첨부` bundle: the mxc once uploaded (이벤트규약 v2 §5), the local file before. */
     val key: String get() = mxc ?: localPath ?: id
@@ -111,6 +115,24 @@ internal const val MEMO_ATTACH_FAILED = "실패"
 
 /** Upload tries in a row before an attachment is marked [MEMO_ATTACH_FAILED] (설계 §e). */
 internal const val MEMO_ATTACH_MAX_TRIES = 10
+
+/**
+ * The upload size limit used when the server does not tell its `m.upload.size` (결정기록 앱5): 50 MiB, the Synapse
+ * default. A bigger file is not read at all and stays [MEMO_ATTACH_FAILED] with the reason (관리자 결정 1-2 (나)).
+ */
+internal const val MEMO_ATTACH_DEFAULT_MAX_BYTES = 50L shl 20
+
+// The reasons of a 실패 attachment, shown after "첨부 N개를 못 올렸습니다" (no file name, no content).
+internal const val MEMO_ATTACH_ERR_MISSING = "원본 파일이 없습니다"
+internal const val MEMO_ATTACH_ERR_READ = "원본 파일을 읽지 못했습니다"
+internal const val MEMO_ATTACH_ERR_MEMORY = "파일이 너무 커서 처리하지 못했습니다"
+internal const val MEMO_ATTACH_ERR_UPLOAD = "${MEMO_ATTACH_MAX_TRIES}번 올리지 못했습니다"
+
+internal fun memoAttachTooBig(size: Long, limit: Long) = "파일이 너무 큽니다 (${memoSizeText(size)} · 상한 ${memoSizeText(limit)})"
+
+/** The "못 올렸습니다" line of the memo screen, with the reason of one of them when it is known. */
+internal fun memoFailedAttachmentsText(count: Int, reason: String?): String =
+    "첨부 ${count}개를 못 올렸습니다" + (reason?.let { " · $it" } ?: "")
 
 /** Free space under which the memo screen warns (설계 §e: 1 GB or 5 % of the total, whichever is smaller). */
 internal fun memoLowStorage(availableBytes: Long, totalBytes: Long): Boolean =

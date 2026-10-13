@@ -220,6 +220,26 @@ internal class MemoRoomSyncTransport(
             conn.disconnect()
         }
     }
+
+    /** `m.upload.size` of the media config (authenticated v1 path, then the older v3 one). Null when neither answers. */
+    override suspend fun maxUploadSize(): Long? = withContext(Dispatchers.IO) {
+        val s = sessionStore.getLatestSession() ?: return@withContext null
+        listOf("/_matrix/client/v1/media/config", "/_matrix/media/v3/config").firstNotNullOfOrNull { path ->
+            val conn = URL(s.homeserverUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
+            try {
+                conn.connectTimeout = 8_000
+                conn.readTimeout = 10_000
+                conn.setRequestProperty("Authorization", "Bearer ${s.accessToken}")
+                if (conn.responseCode != 200) return@firstNotNullOfOrNull null
+                JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("m.upload.size").takeIf { it > 0 }
+            } catch (e: Exception) {
+                Timber.d("June memo: media config not read (%s)", e.javaClass.simpleName)
+                null
+            } finally {
+                conn.disconnect()
+            }
+        }
+    }
 }
 
 /** A sync answer can take longer than a screen read: the server reads its files at that time (규약 §3). */

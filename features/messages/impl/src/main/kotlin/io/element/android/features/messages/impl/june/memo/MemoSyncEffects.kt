@@ -29,7 +29,8 @@ import kotlinx.coroutines.delay
  * - shown (opened, back from the background): one `sync_pull` round, then what waits goes up
  * - a local change: `sync_push` once the input stopped for [MemoSyncRunner.PUSH_DELAY_MS]
  * - a failed send is tried again after its back-off, still only while visible
- * - hidden (ON_STOP) with something left to send: one one-time job that runs when the network is there
+ * - hidden (ON_STOP) with attachments left to upload: one one-time job that runs when the network is there. It uploads
+ *   the attachments only; the notes and the suggestion answers go up at the next screen open (관리자 결정 1-1 (가))
  *
  * Nothing runs on a timer when the screen is not visible, and nothing is shown while it works: the notes are local.
  */
@@ -51,7 +52,7 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
                 Lifecycle.Event.ON_START -> visible = true
                 Lifecycle.Event.ON_STOP -> {
                     visible = false
-                    if (runner.hasPendingUploads()) MemoSyncHub.scheduleUpload(bindings.memoSyncWorkManagerScheduler())
+                    if (runner.hasPendingAttachments()) MemoSyncHub.scheduleUpload(bindings.memoSyncWorkManagerScheduler())
                 }
                 else -> Unit
             }
@@ -60,7 +61,7 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
         onDispose {
             lifecycle.removeObserver(observer)
             // Leaving the memo screen (another room, back): the same as going to the background.
-            if (runner.hasPendingUploads()) MemoSyncHub.scheduleUpload(bindings.memoSyncWorkManagerScheduler())
+            if (runner.hasPendingAttachments()) MemoSyncHub.scheduleUpload(bindings.memoSyncWorkManagerScheduler())
         }
     }
 

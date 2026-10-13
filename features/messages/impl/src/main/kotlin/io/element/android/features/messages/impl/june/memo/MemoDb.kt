@@ -101,8 +101,9 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         exec("DELETE FROM attachment WHERE note_id = ?", listOf(n.id))
         n.attachments.forEachIndexed { i, a ->
             exec(
-                "INSERT INTO attachment(id, note_id, idx, local_path, mxc, file_json, mime, bytes, state, tries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                listOf(a.id, n.id, i, a.localPath, a.mxc, a.fileJson, a.mime, a.bytes, a.state, a.tries),
+                "INSERT INTO attachment(id, note_id, idx, local_path, mxc, file_json, mime, bytes, state, tries, retry_at_ms, err)" +
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                listOf(a.id, n.id, i, a.localPath, a.mxc, a.fileJson, a.mime, a.bytes, a.state, a.tries, a.retryAtMs, a.error),
             )
         }
     }
@@ -225,18 +226,36 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         listOf(MEMO_ATTACH_LOCAL, MEMO_ATTACH_UPLOADING),
     ) { c -> c.getString(0)!! to readAttachment(c, 1) }
 
-    /** Stores the upload result of one attachment (mxc and EncryptedFile, or one more failed try). */
-    fun updateAttachment(id: String, mxc: String?, fileJson: String?, state: String, tries: Int) = exec(
-        "UPDATE attachment SET mxc = ?, file_json = ?, state = ?, tries = ? WHERE id = ?",
-        listOf(mxc, fileJson, state, tries, id),
+    /**
+     * Stores the upload result of one attachment: mxc and EncryptedFile, or one more failed try with the time it may
+     * be tried again ([retryAtMs], 0 = now) and the reason shown to the user ([error]).
+     */
+    fun updateAttachment(id: String, mxc: String?, fileJson: String?, state: String, tries: Int, retryAtMs: Long = 0, error: String? = null) = exec(
+        "UPDATE attachment SET mxc = ?, file_json = ?, state = ?, tries = ?, retry_at_ms = ?, err = ? WHERE id = ?",
+        listOf(mxc, fileJson, state, tries, retryAtMs, error, id),
+    )
+
+    /** A network error: every waiting attachment waits at least until [retryAtMs] (the queue stops at the first error). */
+    fun holdAttachments(retryAtMs: Long) = exec(
+        "UPDATE attachment SET retry_at_ms = ? WHERE state IN (?, ?) AND local_path IS NOT NULL AND COALESCE(retry_at_ms, 0) < ?",
+        listOf(retryAtMs, MEMO_ATTACH_LOCAL, MEMO_ATTACH_UPLOADING, retryAtMs),
     )
 
     /** How many attachments gave up after [MEMO_ATTACH_MAX_TRIES] tries (the "다시 시도" line). */
     fun failedAttachmentCount(): Int =
         query("SELECT COUNT(*) FROM attachment WHERE state = ?", listOf(MEMO_ATTACH_FAILED)) { c -> c.getLong(0)!!.toInt() }.first()
 
-    /** "다시 시도": the failed attachments go back to the queue with a fresh try count. */
-    fun retryFailedAttachments() = exec("UPDATE attachment SET state = ?, tries = 0 WHERE state = ?", listOf(MEMO_ATTACH_LOCAL, MEMO_ATTACH_FAILED))
+    /** The reason of one failed attachment (the newest note first), null when none is known. */
+    fun failedAttachmentReason(): String? = query(
+        "SELECT err FROM attachment WHERE state = ? AND err IS NOT NULL ORDER BY note_id DESC, idx LIMIT 1",
+        listOf(MEMO_ATTACH_FAILED),
+    ) { c -> c.getString(0) }.firstOrNull()
+
+    /** "다시 시도": the failed attachments go back to the queue with a fresh try count, due now, without the old reason. */
+    fun retryFailedAttachments() = exec(
+        "UPDATE attachment SET state = ?, tries = 0, retry_at_ms = 0, err = NULL WHERE state = ?",
+        listOf(MEMO_ATTACH_LOCAL, MEMO_ATTACH_FAILED),
+    )
 
     /** Uploaded attachments that still keep their original on the phone: the only ones the clean button may remove. */
     fun uploadedOriginals(): List<MemoLocalAttachment> = query(
@@ -562,7 +581,9 @@ private val MEMO_SCHEMA_V2 = listOf(
     "ALTER TABLE attachment ADD COLUMN tries INTEGER NOT NULL DEFAULT 0",
 )
 
-private const val ATTACH_COLS = "id, mxc, local_path, file_json, mime, bytes, state, tries"
+// retry_at_ms / err are version 1 columns (설계 §e queue), used since 앱5: no new column, no migration. Rows written
+// before stay NULL there, read as "due now" and "no reason".
+private const val ATTACH_COLS = "id, mxc, local_path, file_json, mime, bytes, state, tries, retry_at_ms, err"
 
 private fun readAttachment(c: SqlCursor, from: Int) = MemoLocalAttachment(
     id = c.getString(from)!!,
@@ -573,6 +594,8 @@ private fun readAttachment(c: SqlCursor, from: Int) = MemoLocalAttachment(
     bytes = c.getLong(from + 5),
     state = c.getString(from + 6) ?: MEMO_ATTACH_LOCAL,
     tries = (c.getLong(from + 7) ?: 0L).toInt(),
+    retryAtMs = c.getLong(from + 8) ?: 0L,
+    error = c.getString(from + 9),
 )
 
 /** One suggestion of the bot review (설계 §a `suggestion`): the server proposal JSON as it came, and its local status. */
@@ -591,7 +614,7 @@ internal const val MEMO_SUGGESTION_DISMISSED = "거절"
 internal const val MEMO_SUGGESTION_DEFERRED = "보류"
 
 /** Version 1 of the schema (설계 §a + §k-5 indexes). New versions add migrations, they never edit this list. */
-private val MEMO_SCHEMA_V1 = listOf(
+internal val MEMO_SCHEMA_V1 = listOf(
     """
         CREATE TABLE note (
         id TEXT NOT NULL PRIMARY KEY, folder TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, body_plain TEXT NOT NULL,
