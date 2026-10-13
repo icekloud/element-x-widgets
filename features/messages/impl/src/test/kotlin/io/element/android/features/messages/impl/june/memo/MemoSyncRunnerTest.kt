@@ -37,6 +37,7 @@ class MemoSyncRunnerTest : RobolectricTest() {
         var pull: JSONObject = JSONObject().put("노트", JSONArray()).put("기준", 0),
         var proposals: List<JSONObject> = emptyList(),
         var uploadFails: Boolean = false,
+        var maxSize: Long? = null,
     ) : MemoSyncTransport {
         val ops = mutableListOf<MemoOp>()
         val uploads = mutableListOf<ByteArray>()
@@ -71,6 +72,8 @@ class MemoSyncRunnerTest : RobolectricTest() {
             uploads += bytes
             return "mxc://test/${uploads.size}"
         }
+
+        override suspend fun maxUploadSize(): Long? = maxSize
 
         fun pushed(): List<JSONObject> = ops.filter { it.op == "sync_push" }.flatMap { op ->
             val a = op.args["변경"] as JSONArray
@@ -260,6 +263,169 @@ class MemoSyncRunnerTest : RobolectricTest() {
         backend(db).call(MemoOp.mkdir("새폴더", null), "rid")
         assertFalse(runner(db, FakeMemoSyncTransport()).hasPendingUploads())
         assertNull(runner(db, FakeMemoSyncTransport()).nextRetryInMs())
+    }
+
+    // ---------------------------------------------------------------- 앱5: GLaDOS 지적 3건 (관리자 결정 2026-10-13)
+
+    @Test
+    fun `the one-time job uploads the attachments only, the note waits for the next screen open`() = runTest {
+        val db = db()
+        val local = backend(db)
+        val id = local.create("", listOf(MemoLocalAttachment(id = "a1", localPath = "/p/1.jpg", bytes = 3)))
+        local.create("글만 있는 메모")
+        val room = FakeMemoSyncTransport()
+        val r = runner(db, room, files = mapOf("/p/1.jpg" to byteArrayOf(1, 2, 3)))
+        assertTrue(r.hasPendingAttachments())
+        assertTrue(r.pushAttachments())
+        assertEquals(MEMO_ATTACH_DONE, db.note(id)!!.attachments.single().state)
+        // No sync_push (its answer may only come through the open timeline): the notes stay queued for the screen.
+        assertTrue(room.ops.none { it.op == "sync_push" })
+        assertFalse(r.hasPendingAttachments())
+        assertTrue(r.hasPendingUploads())
+        // The screen open sends them, the stamped attachment note included.
+        assertTrue(r.syncNow())
+        assertTrue(room.pushed().any { it.getString("id") == id })
+        assertFalse(r.hasPendingUploads())
+    }
+
+    @Test
+    fun `notes alone never ask for the one-time job`() = runTest {
+        val db = db()
+        backend(db).create("글만 있는 메모")
+        val r = runner(db, FakeMemoSyncTransport())
+        assertTrue(r.hasPendingUploads())
+        assertFalse(r.hasPendingAttachments())
+    }
+
+    @Test
+    fun `a file over the server limit is never read, becomes failed with the reason, and the next one still goes up`() = runTest {
+        val db = db()
+        val local = backend(db)
+        val big = local.create("", listOf(MemoLocalAttachment(id = "big", localPath = "/p/big.mp4", bytes = 3L shl 20)))
+        val small = local.create("", listOf(MemoLocalAttachment(id = "small", localPath = "/p/small.jpg", bytes = 3)))
+        val read = mutableListOf<String>()
+        val room = FakeMemoSyncTransport(maxSize = 1L shl 20)
+        val r = MemoSyncRunner(
+            db,
+            room,
+            clock = { now },
+            readFile = { path ->
+                read += path
+                byteArrayOf(1, 2, 3)
+            },
+            fileSize = { path -> if (path == "/p/big.mp4") 3L shl 20 else 3L },
+        )
+        assertTrue(r.push())
+        assertEquals(listOf("/p/small.jpg"), read)
+        val failed = db.note(big)!!.attachments.single()
+        assertEquals(MEMO_ATTACH_FAILED, failed.state)
+        assertEquals(memoAttachTooBig(3L shl 20, 1L shl 20), failed.error)
+        assertEquals(MEMO_ATTACH_DONE, db.note(small)!!.attachments.single().state)
+        assertEquals(1, local.failedAttachments())
+        assertEquals("첨부 1개를 못 올렸습니다 · 파일이 너무 큽니다 (3MB · 상한 1MB)", memoFailedAttachmentsText(1, local.failedAttachmentReason()))
+        assertFalse(r.hasPendingAttachments())
+    }
+
+    @Test
+    fun `without the server limit the default one applies`() = runTest {
+        val db = db()
+        val id = backend(db).create("", listOf(MemoLocalAttachment(id = "a1", localPath = "/p/1.mp4")))
+        val r = MemoSyncRunner(
+            db,
+            FakeMemoSyncTransport(maxSize = null),
+            clock = { now },
+            readFile = { error("must not be read") },
+            fileSize = { MEMO_ATTACH_DEFAULT_MAX_BYTES + 1 },
+        )
+        r.push()
+        val a = db.note(id)!!.attachments.single()
+        assertEquals(MEMO_ATTACH_FAILED, a.state)
+        assertEquals(memoAttachTooBig(MEMO_ATTACH_DEFAULT_MAX_BYTES + 1, MEMO_ATTACH_DEFAULT_MAX_BYTES), a.error)
+    }
+
+    @Test
+    fun `a read error or a file too big for the memory does not throw and becomes failed with the reason`() = runTest {
+        val db = db()
+        val local = backend(db)
+        val io = local.create("", listOf(MemoLocalAttachment(id = "io", localPath = "/p/io.jpg", bytes = 3)))
+        val oom = local.create("", listOf(MemoLocalAttachment(id = "oom", localPath = "/p/oom.jpg", bytes = 3)))
+        val gone = local.create("", listOf(MemoLocalAttachment(id = "gone", localPath = "/p/gone.jpg", bytes = 3)))
+        val r = MemoSyncRunner(
+            db,
+            FakeMemoSyncTransport(),
+            clock = { now },
+            readFile = { path ->
+                when (path) {
+                    "/p/io.jpg" -> throw java.io.IOException("disk")
+                    "/p/oom.jpg" -> byteArrayOf(9)
+                    else -> null
+                }
+            },
+            encrypt = { throw OutOfMemoryError("big") },
+            fileSize = { 3L },
+        )
+        // Nothing reaches the screen: the round ends normally (the attachments were not a network problem).
+        assertTrue(r.push())
+        assertEquals(MEMO_ATTACH_ERR_READ, db.note(io)!!.attachments.single().error)
+        assertEquals(MEMO_ATTACH_ERR_MEMORY, db.note(oom)!!.attachments.single().error)
+        assertEquals(MEMO_ATTACH_ERR_MISSING, db.note(gone)!!.attachments.single().error)
+        assertEquals(3, local.failedAttachments())
+        // "다시 시도" puts them back without the old reason.
+        local.retryFailedAttachments()
+        assertEquals(0, local.failedAttachments())
+        assertTrue(db.pendingAttachments().all { it.second.error == null && it.second.retryAtMs == 0L && it.second.tries == 0 })
+    }
+
+    @Test
+    fun `a failed attachment upload sets its next try, which the screen retry time follows`() = runTest {
+        val db = db()
+        val id = backend(db).create("", listOf(MemoLocalAttachment(id = "a1", localPath = "/p/1.jpg", bytes = 3)))
+        val room = FakeMemoSyncTransport(uploadFails = true)
+        val r = runner(db, room, files = mapOf("/p/1.jpg" to byteArrayOf(1, 2, 3)))
+        // Only the attachment is left (the case GLaDOS found: nothing in the outbox, so no screen retry at all).
+        db.transaction { db.outbox().forEach { db.dropOutbox(it.seq) } }
+        assertFalse(r.push())
+        val a = db.note(id)!!.attachments.single()
+        assertEquals(MEMO_ATTACH_LOCAL, a.state)
+        assertEquals(1, a.tries)
+        assertEquals(now + MemoSync.BACKOFF_MS[0], a.retryAtMs)
+        assertTrue(db.outbox().none { it.kind == MEMO_OUTBOX_NOTE })
+        assertEquals(MemoSync.BACKOFF_MS[0], r.nextRetryInMs())
+        // Before its time the screen push does not try it again.
+        room.uploadFails = false
+        now += 1_000
+        r.push()
+        assertTrue(room.uploads.isEmpty())
+        assertEquals(MemoSync.BACKOFF_MS[0] - 1_000, r.nextRetryInMs())
+        // At its time it goes up.
+        now += MemoSync.BACKOFF_MS[0]
+        assertTrue(r.push())
+        assertEquals(MEMO_ATTACH_DONE, db.note(id)!!.attachments.single().state)
+        assertEquals(1, room.uploads.size)
+    }
+
+    @Test
+    fun `the job ignores the attachment back-off (WorkManager has its own)`() = runTest {
+        val db = db()
+        val id = backend(db).create("", listOf(MemoLocalAttachment(id = "a1", localPath = "/p/1.jpg", bytes = 3)))
+        val room = FakeMemoSyncTransport(uploadFails = true)
+        val r = runner(db, room, files = mapOf("/p/1.jpg" to byteArrayOf(1, 2, 3)))
+        assertFalse(r.pushAttachments())
+        room.uploadFails = false
+        assertTrue(r.pushAttachments())
+        assertEquals(MEMO_ATTACH_DONE, db.note(id)!!.attachments.single().state)
+    }
+
+    @Test
+    fun `ten failed uploads keep the reason for the failed line`() = runTest {
+        val db = db()
+        val local = backend(db)
+        val id = local.create("", listOf(MemoLocalAttachment(id = "a1", localPath = "/p/1.jpg", bytes = 3)))
+        val r = runner(db, FakeMemoSyncTransport(uploadFails = true), files = mapOf("/p/1.jpg" to byteArrayOf(1)))
+        repeat(MEMO_ATTACH_MAX_TRIES) { r.pushAttachments() }
+        assertEquals(MEMO_ATTACH_ERR_UPLOAD, db.note(id)!!.attachments.single().error)
+        assertEquals("첨부 1개를 못 올렸습니다 · 10번 올리지 못했습니다", memoFailedAttachmentsText(1, local.failedAttachmentReason()))
+        assertEquals("첨부 2개를 못 올렸습니다", memoFailedAttachmentsText(2, null))
     }
 
     @Test

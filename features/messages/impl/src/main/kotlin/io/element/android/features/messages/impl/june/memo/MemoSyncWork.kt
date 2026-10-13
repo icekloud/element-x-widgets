@@ -64,7 +64,7 @@ internal object MemoSyncHub {
 
     fun room(context: Context, sessionStore: SessionStore, roomId: String): MemoRoomBackend = entry(context, sessionStore, roomId).first
 
-    /** Leaving the screen with something still to send: one job, run when the network is there (not a periodic one). */
+    /** Leaving the screen with attachments still to upload: one job, run when the network is there (not a periodic one). */
     fun scheduleUpload(scheduler: WorkManagerScheduler) {
         scope.launch {
             tryOrNull(onException = { Timber.d("June memo: upload job not scheduled (%s)", it.javaClass.simpleName) }) {
@@ -87,7 +87,11 @@ internal object MemoUploadRequestBuilder : WorkManagerRequestBuilder {
     }
 }
 
-/** Sends what the memo screen left behind (attachments, notes, suggestion answers), then ends (설계 §e·§k-4). */
+/**
+ * Uploads the attachments the memo screen left behind, then ends (설계 §e·§k-4). Only the attachments (관리자 결정
+ * 2026-10-13 1-1 (가)): the notes and the suggestion answers wait for the next screen open, where the `sync_ack` can
+ * be read from the room timeline even when the room is encrypted.
+ */
 @AssistedInject
 class MemoUploadWorker(
     @Assisted params: WorkerParameters,
@@ -97,9 +101,9 @@ class MemoUploadWorker(
     override suspend fun doWork(): Result {
         val roomId = JuneSettings.memoRoomId(applicationContext) ?: return Result.success()
         val runner = MemoSyncHub.runner(applicationContext, sessionStore, roomId)
-        runner.push(force = true)
+        runner.pushAttachments()
         // WorkManager backs off (30 s doubling, capped at 5 h); after MAX_RUNS tries the rest waits for the next screen open.
-        return if (runner.hasPendingUploads() && runAttemptCount + 1 < MAX_RUNS) Result.retry() else Result.success()
+        return if (runner.hasPendingAttachments() && runAttemptCount + 1 < MAX_RUNS) Result.retry() else Result.success()
     }
 
     @ContributesIntoMap(AppScope::class, binding = binding<MetroWorkerFactory.WorkerInstanceFactory<*>>())

@@ -25,6 +25,9 @@ internal interface MemoSyncTransport {
 
     /** Uploads already encrypted bytes to the media repository and returns the `mxc://` uri. */
     suspend fun upload(bytes: ByteArray): String
+
+    /** The server upload limit in bytes (`m.upload.size`), null when it cannot be read right now. */
+    suspend fun maxUploadSize(): Long?
 }
 
 /**
@@ -40,20 +43,26 @@ internal class MemoSyncRunner(
     private val clock: () -> Long = System::currentTimeMillis,
     private val readFile: (String) -> ByteArray? = { path -> File(path).takeIf { it.isFile }?.readBytes() },
     private val encrypt: (ByteArray) -> MemoEncryptedFile = ::memoEncryptAttachment,
+    /** The size of a local file without reading it, null when unknown (then the stored size is used). */
+    private val fileSize: (String) -> Long? = { path -> File(path).takeIf { it.isFile }?.length() },
 ) {
     private val mutex = Mutex()
 
     private fun device(): String = memoDeviceOf(db)
 
-    /** True when something waits for the server: notes, suggestion answers or attachments (the one-time job test). */
+    /** True when something waits for the server: notes, suggestion answers or attachments (the screen retry test). */
     fun hasPendingUploads(): Boolean =
-        db.outbox().any { it.kind == MEMO_OUTBOX_NOTE || it.kind == MEMO_OUTBOX_PROPOSAL } || db.pendingAttachments().isNotEmpty()
+        db.outbox().any { it.kind == MEMO_OUTBOX_NOTE || it.kind == MEMO_OUTBOX_PROPOSAL } || hasPendingAttachments()
 
-    /** Millis until the earliest waiting upload may be tried again, null when nothing waits. */
+    /** True when attachments still wait for their upload (the one-time job test, 관리자 결정 1-1 (가)). */
+    fun hasPendingAttachments(): Boolean = db.pendingAttachments().isNotEmpty()
+
+    /** Millis until the earliest waiting upload (note, answer or attachment) may be tried again, null when nothing waits. */
     fun nextRetryInMs(): Long? {
         val rows = db.outbox().filter { it.kind == MEMO_OUTBOX_NOTE || it.kind == MEMO_OUTBOX_PROPOSAL }
-        if (rows.isEmpty()) return null
-        return (rows.minOf { it.nextTryMs } - clock()).coerceAtLeast(0)
+        val times = rows.map { it.nextTryMs } + db.pendingAttachments().map { it.second.retryAtMs }
+        if (times.isEmpty()) return null
+        return (times.min() - clock()).coerceAtLeast(0)
     }
 
     /** Screen shown: pull what changed, then send what waits. Returns false when the server could not be reached. */
@@ -63,8 +72,15 @@ internal class MemoSyncRunner(
         pulled && pushed
     }
 
-    /** Input stopped (2.5 s) or a retry is due: attachments then `sync_push`. [force] ignores the back-off (job run). */
+    /** Input stopped (2.5 s) or a retry is due: attachments then `sync_push`. [force] ignores the back-off. */
     suspend fun push(force: Boolean = false): Boolean = mutex.withLock { uploadLocked(force) }
+
+    /**
+     * The one-time job after the screen went away (관리자 결정 2026-10-13 1-1 (가)): the attachments only, without
+     * waiting for their back-off (WorkManager has its own). No `sync_push`: its answer can only be read through the
+     * open room timeline in an encrypted room, so the notes and the suggestion answers go up at the next screen open.
+     */
+    suspend fun pushAttachments(): Boolean = mutex.withLock { uploadAttachments(force = true) }
 
     // ---------------------------------------------------------------- pull
 
@@ -127,7 +143,7 @@ internal class MemoSyncRunner(
     // ---------------------------------------------------------------- push
 
     private suspend fun uploadLocked(force: Boolean): Boolean {
-        val attachmentsOk = uploadAttachments()
+        val attachmentsOk = uploadAttachments(force)
         val now = clock()
         val due = if (force) db.outbox() else db.outboxDue(now)
         val notes = due.filter { it.kind == MEMO_OUTBOX_NOTE }.take(MemoSync.PUSH_BATCH)
@@ -165,23 +181,46 @@ internal class MemoSyncRunner(
 
     /**
      * Uploads the attachments still kept only on the phone (설계 §e: the queue is the attachment table). Each is
-     * encrypted here, so the original never sits in the media repository in clear. Stops at the first network error.
+     * encrypted here, so the original never sits in the media repository in clear. Stops at the first network error,
+     * which holds every waiting attachment back until the failed one's next try ([force] = the job: no waiting).
      */
-    private suspend fun uploadAttachments(): Boolean {
-        for ((noteId, a) in db.pendingAttachments()) {
-            val bytes = a.localPath?.let(readFile)
-            if (bytes == null) {
-                db.updateAttachment(a.id, a.mxc, a.fileJson, MEMO_ATTACH_FAILED, a.tries + 1)
-                continue
+    private suspend fun uploadAttachments(force: Boolean): Boolean {
+        val start = clock()
+        val due = db.pendingAttachments().filter { force || it.second.retryAtMs <= start }
+        if (due.isEmpty()) return true
+        // Asked once per round: a file over the limit is never read (관리자 결정 1-2 (나), no streaming yet).
+        val limit = transport.maxUploadSize()?.takeIf { it > 0 } ?: MEMO_ATTACH_DEFAULT_MAX_BYTES
+        for ((noteId, a) in due) {
+            val sealed = when (val s = seal(a, limit)) {
+                is Sealed.Ready -> s.file
+                is Sealed.Refused -> {
+                    // Trying again cannot help (too big, gone, unreadable): 실패 with the reason, the next one goes on.
+                    db.updateAttachment(a.id, a.mxc, a.fileJson, MEMO_ATTACH_FAILED, a.tries + 1, error = s.reason)
+                    MemoLocalChanges.changed()
+                    continue
+                }
             }
-            val sealed = encrypt(bytes)
             val mxc = try {
                 transport.upload(sealed.cipher)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 val tries = a.tries + 1
-                db.updateAttachment(a.id, null, null, if (tries >= MEMO_ATTACH_MAX_TRIES) MEMO_ATTACH_FAILED else MEMO_ATTACH_LOCAL, tries)
+                val failed = tries >= MEMO_ATTACH_MAX_TRIES
+                val retryAt = MemoSync.nextTryMs(tries, clock())
+                db.transaction {
+                    db.updateAttachment(
+                        a.id,
+                        null,
+                        null,
+                        if (failed) MEMO_ATTACH_FAILED else MEMO_ATTACH_LOCAL,
+                        tries,
+                        retryAt,
+                        if (failed) MEMO_ATTACH_ERR_UPLOAD else null,
+                    )
+                    db.holdAttachments(retryAt)
+                }
+                if (failed) MemoLocalChanges.changed()
                 return false
             }
             val now = clock()
@@ -197,6 +236,32 @@ internal class MemoSyncRunner(
             MemoLocalChanges.changed()
         }
         return true
+    }
+
+    /** One attachment read and encrypted, or the reason it cannot be uploaded. */
+    private sealed interface Sealed {
+        class Ready(val file: MemoEncryptedFile) : Sealed
+
+        class Refused(val reason: String) : Sealed
+    }
+
+    /**
+     * Reads and encrypts [a] when it fits under [limit] (the size is checked before reading). Never throws: a read
+     * error or a file too big for the memory becomes a reason instead of crashing the screen (GLaDOS 치명 2).
+     */
+    private fun seal(a: MemoLocalAttachment, limit: Long): Sealed {
+        val path = a.localPath ?: return Sealed.Refused(MEMO_ATTACH_ERR_MISSING)
+        return try {
+            val size = fileSize(path) ?: a.bytes
+            if (size != null && size > limit) return Sealed.Refused(memoAttachTooBig(size, limit))
+            val bytes = readFile(path) ?: return Sealed.Refused(MEMO_ATTACH_ERR_MISSING)
+            if (bytes.size > limit) return Sealed.Refused(memoAttachTooBig(bytes.size.toLong(), limit))
+            Sealed.Ready(encrypt(bytes))
+        } catch (e: OutOfMemoryError) {
+            Sealed.Refused(MEMO_ATTACH_ERR_MEMORY)
+        } catch (e: Exception) {
+            Sealed.Refused(MEMO_ATTACH_ERR_READ)
+        }
     }
 
     private suspend fun callOrNull(op: MemoOp): MemoResponse? = try {

@@ -41,14 +41,16 @@ internal fun MemoAttachmentBanners(local: MemoLocalBackend, localVersion: Long) 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var failed by remember { mutableIntStateOf(0) }
+    var reason by remember { mutableStateOf<String?>(null) }
     var clean by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     LaunchedEffect(local, localVersion) {
         failed = local.failedAttachments()
+        reason = if (failed > 0) local.failedAttachmentReason() else null
         val stat = tryOrNull { StatFs(context.filesDir.path) }
         clean = if (stat != null && memoLowStorage(stat.availableBytes, stat.totalBytes)) local.uploadedOriginals() else null
     }
     if (failed > 0) {
-        MemoNoticeLine("첨부 ${failed}개를 못 올렸습니다", "다시 시도") { scope.launch { local.retryFailedAttachments() } }
+        MemoNoticeLine(memoFailedAttachmentsText(failed, reason), "다시 시도") { scope.launch { local.retryFailedAttachments() } }
     }
     clean?.let { (count, bytes) ->
         val action = if (count > 0) "올림 끝난 원본 ${count}개(${memoSizeText(bytes)}) 정리" else null
