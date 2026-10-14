@@ -225,8 +225,11 @@ class MemoPhotoSyncTest : RobolectricTest() {
         // With the link card the address line is the card's; the body line does not repeat it.
         val card = link.copy(preview = MemoPreview.Link("https://example.com/a", null, null, null))
         assertNull(memoCardText(card))
-        // The small top line keeps a title the body does not start with.
-        assertEquals("다른 제목", memoCardHeadTitle(text.copy(title = "다른 제목"), memoCardText(text)))
+        // The small top line keeps a title the body does not start with. 앱8: a typed note is untitled since 앱7 (its
+        // title is only the start of the body); a written title also clears that mark, as MemoDb.toItem does.
+        assertTrue(text.untitled)
+        assertEquals("", memoCardHeadTitle(text.copy(title = "다른 제목"), memoCardText(text)))
+        assertEquals("다른 제목", memoCardHeadTitle(text.copy(title = "다른 제목", untitled = false), memoCardText(text)))
         assertEquals(7, MEMO_CARD_LINES)
     }
 

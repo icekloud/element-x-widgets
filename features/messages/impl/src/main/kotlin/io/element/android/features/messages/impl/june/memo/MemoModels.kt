@@ -131,6 +131,16 @@ internal fun memoCardText(item: MemoItem): String? {
 internal fun memoDisplayTitle(title: String, preview: String, id: String): String =
     title.ifEmpty { preview.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().take(MEMO_TITLE_CHARS).ifEmpty { id } }
 
+/** Test tag of the photo upload mark of a record card (앱8). */
+internal const val MEMO_PHOTO_UPLOAD_MARK_TAG = "memo_photo_upload_mark"
+
+/** 앱8 항목 1 d: the small mark of a record card whose photos are not on the server yet, empty when all went up. */
+internal fun memoPhotoUploadMark(item: MemoItem): String = when {
+    item.photosFailed > 0 -> "⚠ 사진 ${item.photosFailed}장 못 올림"
+    item.photosWaiting > 0 -> "⏳ 사진 ${item.photosWaiting}장 올리기 전"
+    else -> ""
+}
+
 internal fun memoCardHeadTitle(item: MemoItem, text: String?): String = when {
     item.title.isBlank() -> if (text == null) item.kind else ""
     item.untitled -> if (text == null) item.kind else ""
@@ -157,6 +167,9 @@ internal data class MemoItem(
     val text: String? = null,
     /** 앱7 항목 1: no title was written or accepted; [title] is then only the start of the body, for the screen. */
     val untitled: Boolean = false,
+    /** 앱8 항목 1 d: attachments of a local note still waiting for their upload, and those that failed. */
+    val photosWaiting: Int = 0,
+    val photosFailed: Int = 0,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date

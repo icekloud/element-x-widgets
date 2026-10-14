@@ -468,6 +468,16 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+        val uploadMark = memoPhotoUploadMark(item)
+        if (uploadMark.isNotEmpty()) {
+            Text(
+                uploadMark,
+                style = ElementTheme.typography.fontBodyXsRegular,
+                color = if (item.photosFailed > 0) ElementTheme.colors.textCriticalPrimary else ElementTheme.colors.textSecondary,
+                maxLines = 1,
+                modifier = Modifier.testTag(MEMO_PHOTO_UPLOAD_MARK_TAG),
+            )
+        }
         when (val p = item.preview) {
             is MemoPreview.Photo -> MemoPhotoRow(p, Modifier.padding(vertical = 4.dp)) { i -> controller.viewer = MemoViewerRequest(p.cells, i) }
             is MemoPreview.Link -> Text(p.url, style = ElementTheme.typography.fontBodySmRegular, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -29,9 +29,12 @@ import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.theme.components.CircularProgressIndicator
 import io.element.android.libraries.designsystem.theme.components.Icon
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 /** Test tag of the sync button. */
 internal const val MEMO_SYNC_BUTTON_TAG = "memo_sync_button"
@@ -57,9 +60,21 @@ internal fun MemoSyncButton(roomId: String, modifier: Modifier = Modifier) {
                 modifier = Modifier.clickable {
                     running = true
                     scope.launch {
-                        val result = withContext(Dispatchers.IO) { runner.syncByButton() }
-                        running = false
-                        Toast.makeText(context, memoSyncButtonText(result), Toast.LENGTH_SHORT).show()
+                        // 앱8: the spinner always stops and a line is always shown, whatever ended the press.
+                        val text = try {
+                            memoSyncReportText(withContext(Dispatchers.IO) { runner.syncByButtonReport() })
+                        } catch (e: CancellationException) {
+                            // The screen went away: nothing to show. A time out from below still gets its line.
+                            if (!isActive) throw e
+                            Timber.w("June memo: sync button timed out (%s)", e.javaClass.simpleName)
+                            memoSyncButtonText(MemoButtonSync.TimedOut)
+                        } catch (e: Exception) {
+                            Timber.w("June memo: sync button failed (%s)", e.javaClass.simpleName)
+                            memoSyncButtonText(MemoButtonSync.Failed)
+                        } finally {
+                            running = false
+                        }
+                        Toast.makeText(context, text, Toast.LENGTH_LONG).show()
                     }
                 },
                 imageVector = CompoundIcons.Restart(),

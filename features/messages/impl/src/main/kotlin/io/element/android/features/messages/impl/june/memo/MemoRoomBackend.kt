@@ -11,7 +11,11 @@ package io.element.android.features.messages.impl.june.memo
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -200,15 +204,39 @@ internal class MemoRoomSyncTransport(
 
     override suspend fun fetchProposals(): List<JSONObject>? = room.fetchProposalItems()
 
-    override suspend fun upload(bytes: ByteArray): String = withContext(Dispatchers.IO) {
-        val s = sessionStore.getLatestSession() ?: throw MemoSendException("세션이 없습니다")
-        val conn = URL(s.homeserverUrl.trimEnd('/') + "/_matrix/media/v3/upload").openConnection() as HttpURLConnection
-        try {
+    /**
+     * 앱8: limited to [MEMO_UPLOAD_TIMEOUT_MILLIS] as a whole. The blocking write has no timeout of its own, so a
+     * watcher closes the connection as soon as the call is cancelled (time out, press limit): the write then throws.
+     */
+    override suspend fun upload(bytes: ByteArray): String = withTimeout(MEMO_UPLOAD_TIMEOUT_MILLIS) {
+        withContext(Dispatchers.IO) {
+            val s = sessionStore.getLatestSession() ?: throw MemoSendException("세션이 없습니다")
+            val conn = URL(s.homeserverUrl.trimEnd('/') + "/_matrix/media/v3/upload").openConnection() as HttpURLConnection
+            coroutineScope {
+                // Started at once (not dispatched), so its finally runs even when the cancel comes right away.
+                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
+                try {
+                    uploadOn(conn, s.accessToken, bytes)
+                } finally {
+                    watcher.cancel()
+                }
+            }
+        }
+    }
+
+    private fun uploadOn(conn: HttpURLConnection, token: String, bytes: ByteArray): String {
+        return try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 8_000
             conn.readTimeout = 60_000
             conn.doOutput = true
-            conn.setRequestProperty("Authorization", "Bearer ${s.accessToken}")
+            conn.setRequestProperty("Authorization", "Bearer $token")
             conn.setRequestProperty("Content-Type", "application/octet-stream")
             conn.setFixedLengthStreamingMode(bytes.size)
             conn.outputStream.use { it.write(bytes) }
@@ -244,3 +272,6 @@ internal class MemoRoomSyncTransport(
 
 /** A sync answer can take longer than a screen read: the server reads its files at that time (규약 §3). */
 internal const val MEMO_SYNC_TIMEOUT_MILLIS = 30_000L
+
+/** 앱8: one attachment upload at most, the write included (it has no timeout of its own). */
+internal const val MEMO_UPLOAD_TIMEOUT_MILLIS = 60_000L
