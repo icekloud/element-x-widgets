@@ -9,6 +9,7 @@
 
 package io.element.android.features.messages.impl.june.memo
 
+import io.element.android.libraries.core.data.tryOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -56,6 +57,18 @@ internal fun memoAesCtr(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArr
     val c = Cipher.getInstance("AES/CTR/NoPadding")
     c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
     return c.doFinal(data)
+}
+
+/**
+ * The json of `MediaSource(url, json)` for a memo attachment. The SDK reads it as a ruma `MediaSource`, which is
+ * encrypted only when the top level has a `file` key; a bare `EncryptedFile` (top level `url`) is read as a plain mxc
+ * and the downloaded bytes are not decrypted (앱6 원인분석_사진.md). The memo keeps the bare `EncryptedFile` (as the
+ * server sends it, without `mimetype`), so it is wrapped here. Anything else is returned as it is.
+ */
+internal fun memoMediaSourceJson(fileJson: String?): String? {
+    val o = fileJson?.let { tryOrNull { JSONObject(it) } } ?: return fileJson
+    if (o.has("file") || !o.has("key") || !o.has("iv")) return fileJson
+    return JSONObject().put("file", o).toString()
 }
 
 /** Reads back the key of a `file` JSON (for the tests and the interoperability check). */

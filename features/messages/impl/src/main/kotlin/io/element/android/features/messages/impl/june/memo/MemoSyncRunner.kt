@@ -14,6 +14,17 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** What one press of the sync button did. */
+internal enum class MemoButtonSync { Done, Failed, Busy }
+
+/** The short line the sync button shows after a press (앱6 항목 2). */
+internal fun memoSyncButtonText(result: MemoButtonSync): String = when (result) {
+    MemoButtonSync.Done -> "동기화했습니다"
+    MemoButtonSync.Failed -> "동기화하지 못했습니다 · 서버에 닿지 못함"
+    MemoButtonSync.Busy -> "이미 동기화하고 있습니다"
+}
 
 /** What the sync needs from the memo bot room. The room backend implements it; the tests use a fake. */
 internal interface MemoSyncTransport {
@@ -47,6 +58,7 @@ internal class MemoSyncRunner(
     private val fileSize: (String) -> Long? = { path -> File(path).takeIf { it.isFile }?.length() },
 ) {
     private val mutex = Mutex()
+    private val buttonRunning = AtomicBoolean(false)
 
     private fun device(): String = memoDeviceOf(db)
 
@@ -70,6 +82,25 @@ internal class MemoSyncRunner(
         val pulled = pullLocked()
         val pushed = if (pulled) uploadLocked(force = false) else false
         pulled && pushed
+    }
+
+    /**
+     * The sync button of the memo room top bar (앱6 항목 2): `sync_pull`, then every waiting attachment and note at once,
+     * ignoring their back-off. A second press while one runs does nothing ([MemoButtonSync.Busy]); the automatic syncs
+     * still wait for the same lock, so two syncs never run together.
+     */
+    suspend fun syncByButton(): MemoButtonSync {
+        if (!buttonRunning.compareAndSet(false, true)) return MemoButtonSync.Busy
+        return try {
+            mutex.withLock {
+                val pulled = pullLocked()
+                // What waits goes up even when the pull failed, like the automatic push after typing.
+                val pushed = uploadLocked(force = true)
+                if (pulled && pushed) MemoButtonSync.Done else MemoButtonSync.Failed
+            }
+        } finally {
+            buttonRunning.set(false)
+        }
     }
 
     /** Input stopped (2.5 s) or a retry is due: attachments then `sync_push`. [force] ignores the back-off. */

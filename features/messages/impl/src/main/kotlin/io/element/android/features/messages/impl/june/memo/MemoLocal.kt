@@ -227,6 +227,13 @@ internal fun mergeMemoNote(a: MemoNoteRecord, b: MemoNoteRecord): MemoNoteRecord
     val attach = if (aWins(MemoBundle.Attach)) a else b
     val loser = if (attach === a) b else a
     val keys = attach.attachments.map { it.key }.toSet()
+    // The server never knows the phone original: an attachment won by the server side keeps the phone path, type and
+    // size of the same attachment (앱6 원인 B: the photo was drawn from the server copy only, or lost its original).
+    val phone = loser.attachments.filter { it.localPath != null }.associateBy { it.key }
+    val won = attach.attachments.map { w ->
+        val p = phone[w.key]
+        if (w.localPath != null || p == null) w else w.copy(localPath = p.localPath, mime = w.mime ?: p.mime, bytes = w.bytes ?: p.bytes)
+    }
     return body.copy(
         folder = classes.folder,
         tags = classes.tags,
@@ -234,7 +241,7 @@ internal fun mergeMemoNote(a: MemoNoteRecord, b: MemoNoteRecord): MemoNoteRecord
         pinSuggested = mark.pinSuggested,
         pinDismissed = mark.pinDismissed,
         deleted = mark.deleted,
-        attachments = attach.attachments + loser.attachments.filter { it.key !in keys },
+        attachments = won + loser.attachments.filter { it.key !in keys },
         createdMs = minOf(a.createdMs, b.createdMs),
         revs = MemoRevs(body.revs.body, classes.revs.classes, mark.revs.mark, attach.revs.attach),
     )
@@ -390,10 +397,10 @@ private fun htmlEscape(s: String) = s.replace("&", "&amp;").replace("<", "&lt;")
 
 /** The tile preview of a local note: photo (uploaded or still local), link card or the first characters of the text. */
 internal fun memoLocalPreview(kind: String, preview: String, linkJson: String?, attachments: List<MemoLocalAttachment>): MemoPreview? {
-    val first = attachments.firstOrNull()
+    val shown = attachments.mapNotNull { it.toScreen() }
+    val first = shown.firstOrNull()
     if (first != null && (kind == "사진" || preview.isEmpty())) {
-        val source = first.mxc ?: first.localPath?.let { MEMO_LOCAL_FILE_PREFIX + it }
-        if (source != null) return MemoPreview.Photo(source, attachments.size, first.fileJson)
+        return MemoPreview.Photo(first.mxc, attachments.size, first.fileJson, shown.take(MEMO_CARD_PHOTOS))
     }
     linkJson?.let { tryOrNull { JSONObject(it) } }?.let { o ->
         val url = o.optString("url")
@@ -407,6 +414,15 @@ internal fun memoLocalPreview(kind: String, preview: String, linkJson: String?, 
         }
     }
     return if (preview.isEmpty()) null else MemoPreview.Text(preview)
+}
+
+/**
+ * What the screen draws for one attachment (앱6): the server copy (mxc + EncryptedFile) when uploaded, else the local
+ * file; the phone original is kept beside it so it is drawn first while it is there. Null when there is neither.
+ */
+internal fun MemoLocalAttachment.toScreen(): MemoAttachment? {
+    val source = mxc ?: localPath?.let { MEMO_LOCAL_FILE_PREFIX + it } ?: return null
+    return MemoAttachment(source, fileJson, localPath)
 }
 
 /** The note in the `노트변경` form (이벤트규약 v2 §5): the outbox payload and, in A4, the `sync_push` item. */

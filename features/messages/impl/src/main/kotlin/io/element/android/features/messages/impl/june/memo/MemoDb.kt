@@ -543,6 +543,8 @@ private class MemoRow(
     val pinSuggested: Boolean,
     val scheduleState: String?,
     val linkJson: String?,
+    /** The start of the plain body ([MEMO_CARD_TEXT_CHARS]), what the record card shows on up to 7 lines (앱6). */
+    val text: String,
 ) {
     fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>) = MemoItem(
         id = id,
@@ -555,13 +557,21 @@ private class MemoRow(
         pinned = pinned,
         pinSuggested = pinSuggested,
         scheduleState = scheduleState,
+        text = text,
     )
 }
 
 internal const val MEMO_TITLE_CHARS = 40
 
-private const val ROW_COLS = "id, folder, title, preview, kind, created_ms, pinned, pin_suggested, schedule_state, link_json"
-private const val ROW_COL_COUNT = 10
+/**
+ * Characters of the plain body a list reads for the record card (앱6 결정기록 5): enough for 7 lines. Read from
+ * `body_plain` at query time, so the notes stored before need no migration (the stored `preview` stays 90).
+ */
+internal const val MEMO_CARD_TEXT_CHARS = 400
+
+private const val ROW_COLS =
+    "id, folder, title, preview, kind, created_ms, pinned, pin_suggested, schedule_state, link_json, substr(body_plain, 1, $MEMO_CARD_TEXT_CHARS)"
+private const val ROW_COL_COUNT = 11
 
 private fun readRow(c: SqlCursor) = MemoRow(
     id = c.getString(0)!!,
@@ -574,6 +584,7 @@ private fun readRow(c: SqlCursor) = MemoRow(
     pinSuggested = c.bool(7),
     scheduleState = c.getString(8),
     linkJson = c.getString(9),
+    text = c.getString(10).orEmpty(),
 )
 
 /** Version 2 (A5): the upload try count of an attachment. */

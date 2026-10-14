@@ -1,0 +1,77 @@
+/*
+ * Copyright (c) 2026 Element June contributors.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
+ * Please see LICENSE files in the repository root for full details.
+ */
+
+package io.element.android.features.messages.impl.june.memo
+
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import io.element.android.compound.tokens.generated.CompoundIcons
+import io.element.android.libraries.architecture.bindings
+import io.element.android.libraries.designsystem.june.JuneSettings
+import io.element.android.libraries.designsystem.theme.components.CircularProgressIndicator
+import io.element.android.libraries.designsystem.theme.components.Icon
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Test tag of the sync button. */
+internal const val MEMO_SYNC_BUTTON_TAG = "memo_sync_button"
+
+/**
+ * The sync button of the memo bot room top bar (앱6 항목 2), in place of the "중단" (/stop) icon of the other rooms.
+ * A press syncs at once: `sync_pull`, the waiting attachments, then `sync_push` ([MemoSyncRunner.syncByButton]).
+ * A spinner shows while it runs, a short line tells how it ended. It never runs twice at the same time.
+ */
+@Composable
+internal fun MemoSyncButton(roomId: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current.applicationContext
+    val runner = remember(context, roomId) {
+        MemoSyncHub.runner(context, context.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+    }
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    Box(modifier.size(24.dp).testTag(MEMO_SYNC_BUTTON_TAG), contentAlignment = Alignment.Center) {
+        if (running) {
+            CircularProgressIndicator(modifier = Modifier.size(20.dp).padding(1.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(
+                modifier = Modifier.clickable {
+                    running = true
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { runner.syncByButton() }
+                        running = false
+                        Toast.makeText(context, memoSyncButtonText(result), Toast.LENGTH_SHORT).show()
+                    }
+                },
+                imageVector = CompoundIcons.Restart(),
+                contentDescription = "동기화",
+            )
+        }
+    }
+}
+
+/**
+ * The room id the top bar shows the sync button for: the memo bot room with its memo screen (not a thread, not the
+ * fake data mode, which has no server). Null in every other room, which keeps the "중단" icon.
+ */
+internal fun memoSyncRoomIdOf(context: Context, roomId: String, inThread: Boolean): String? =
+    roomId.takeIf { !inThread && JuneSettings.isMemoRoom(context, it) && !JuneSettings.memoFakeData(context) }

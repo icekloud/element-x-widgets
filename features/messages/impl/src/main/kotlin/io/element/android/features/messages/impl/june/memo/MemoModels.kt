@@ -96,7 +96,41 @@ internal data class MemoIndex(
 internal sealed interface MemoPreview {
     data class Text(val text: String) : MemoPreview
     data class Link(val url: String, val title: String?, val image: String?, val site: String?) : MemoPreview
-    data class Photo(val mxc: String, val count: Int, val fileJson: String? = null) : MemoPreview
+
+    /**
+     * [mxc] / [fileJson]: the first photo (the server list sends only that one). [photos]: the first ones of a local
+     * note (앱6, at most [MEMO_CARD_PHOTOS]), each with its phone original when it is still there.
+     */
+    data class Photo(val mxc: String, val count: Int, val fileJson: String? = null, val photos: List<MemoAttachment> = emptyList()) : MemoPreview {
+        /** The photos the record card draws in one row. */
+        val cells: List<MemoAttachment> get() = photos.ifEmpty { listOf(MemoAttachment(mxc, fileJson)) }
+    }
+}
+
+/** Photos drawn in one row of a record card (앱6 결정기록 3); more show as "+N" on the last one. */
+internal const val MEMO_CARD_PHOTOS = 4
+
+/** Photos of [p] that do not get their own cell on the record card (the "+N" of the last cell). */
+internal fun memoHiddenPhotos(p: MemoPreview.Photo): Int = (p.count - p.cells.take(MEMO_CARD_PHOTOS).size).coerceAtLeast(0)
+
+/** Lines of body text on a record card (앱6 항목 5); longer text ends with "…". */
+internal const val MEMO_CARD_LINES = 7
+
+/** The body text a record card shows above its chips (앱6 항목 4), or null (empty, or only the link address). */
+internal fun memoCardText(item: MemoItem): String? {
+    val text = (item.text ?: (item.preview as? MemoPreview.Text)?.text)?.trim() ?: return null
+    val link = (item.preview as? MemoPreview.Link)?.url
+    return text.takeIf { it.isNotBlank() && it != link }
+}
+
+/**
+ * The end of the small top line of a record card: the title, unless the body shown below already starts with it
+ * (a note's title is its first line, 앱6: shown once, in the bigger body text); the kind when there is neither.
+ */
+internal fun memoCardHeadTitle(item: MemoItem, text: String?): String = when {
+    item.title.isBlank() -> if (text == null) item.kind else ""
+    text != null && text.startsWith(item.title) -> ""
+    else -> item.title
 }
 
 internal data class MemoItem(
@@ -114,6 +148,8 @@ internal data class MemoItem(
     val matchField: String? = null,
     /** Waiting bot suggestions of this note (A5 chip `🤖 제안 N`, 설계 §d-③). */
     val proposals: Int = 0,
+    /** The start of the plain body of a local note (앱6): the record card shows it under photos and links too. */
+    val text: String? = null,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date
@@ -121,7 +157,11 @@ internal data class MemoItem(
     val hasSchedule: Boolean get() = scheduleState == "제안있음" || scheduleState == "수락됨"
 }
 
-internal data class MemoAttachment(val mxc: String, val fileJson: String? = null)
+/**
+ * An attachment as the screen draws it. [mxc] is the server copy, or the local file ([MEMO_LOCAL_FILE_PREFIX]) before
+ * the upload. [localPath] is the phone original, drawn first while it is there (앱6: also after the upload).
+ */
+internal data class MemoAttachment(val mxc: String, val fileJson: String? = null, val localPath: String? = null)
 
 internal data class MemoNote(
     val id: String,
