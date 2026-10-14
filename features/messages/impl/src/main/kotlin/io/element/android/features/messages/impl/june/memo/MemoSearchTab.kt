@@ -345,8 +345,6 @@ private fun MemoTagManager(controller: MemoController) {
 internal fun MemoNoteScreen(
     controller: MemoController,
     id: String,
-    canOpenAttachment: (MemoAttachment) -> Boolean = { false },
-    onAttachmentClick: (MemoAttachment) -> Unit = {},
 ) {
     val store = controller.store
     var note by remember(id) { mutableStateOf(store.cachedNote(id)) }
@@ -409,9 +407,9 @@ internal fun MemoNoteScreen(
                 if (n.truncated) Text("(본문이 길어 일부만 받았습니다)", color = ElementTheme.colors.textSecondary)
                 if (n.attachments.isNotEmpty()) {
                     FlowRow(Modifier.padding(vertical = 8.dp)) {
-                        n.attachments.forEach { a ->
-                            // Opens the media viewer of the room when the photo is in the loaded room timeline.
-                            val open = if (canOpenAttachment(a)) Modifier.clickable { onAttachmentClick(a) } else Modifier
+                        n.attachments.forEachIndexed { i, a ->
+                            // 앱7 항목 2: the memo viewer, from the phone file or the server copy (no room timeline).
+                            val open = Modifier.memoOpenPhoto(controller, n.attachments, i)
                             MemoThumbnail(
                                 a.mxc,
                                 a.fileJson,

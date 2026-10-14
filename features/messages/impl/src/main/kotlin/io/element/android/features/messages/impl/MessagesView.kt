@@ -638,7 +638,6 @@ private fun MessagesViewContent(
                     roomId = state.roomId.value,
                     useFakeData = JuneSettings.memoFakeData(juneContext),
                     timelineItems = state.timelineState.timelineItems,
-                    onPhotoClick = onContentClick,
                 )
             } else {
                 TimelineView(

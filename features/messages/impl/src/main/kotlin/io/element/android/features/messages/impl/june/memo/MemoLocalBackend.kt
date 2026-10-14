@@ -65,7 +65,9 @@ internal class MemoLocalBackend(
             val n = MemoNoteRecord(
                 id = id,
                 folder = folder,
-                title = memoTitleOf(text),
+                // 앱7 항목 1: what was typed goes to the body only. The title stays empty until the user writes one
+                // or accepts the bot's title suggestion; screens show the start of the body instead (memoDisplayTitle).
+                title = "",
                 body = text,
                 kind = kind,
                 createdMs = now,
@@ -293,6 +295,13 @@ internal class MemoLocalBackend(
                 folder?.let { if (!folderExists(it)) saveFolder(MemoFolderRow(it, defaultMemoFolderIcon(it), "사용자", nextOrder()), now) }
                 val rev = db.nextRev(device(), now)
                 save(n.copy(tags = tags?.distinct() ?: n.tags, folder = folder ?: n.folder, revs = n.revs.with(MemoBundle.Class, rev)), now)
+            }
+            "제목" -> {
+                // 앱7 항목 1: the review's title for an untitled note. A title the user wrote in the meantime wins.
+                val title = content.optString("제목").trim()
+                if (title.isEmpty() || n.title.isNotEmpty()) return
+                val rev = db.nextRev(device(), now)
+                save(n.copy(title = title, revs = n.revs.with(MemoBundle.Body, rev)), now)
             }
             "첨부분석" -> {
                 val extra = content.optString("본문추가").trimEnd()

@@ -549,7 +549,9 @@ private class MemoRow(
     fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>) = MemoItem(
         id = id,
         kind = kind,
-        title = title.ifEmpty { preview.lineSequence().firstOrNull().orEmpty().take(MEMO_TITLE_CHARS).ifEmpty { id } },
+        // 앱7 항목 1: an untitled note shows the start of its body here, for the screen only (never stored).
+        title = memoDisplayTitle(title, preview, id),
+        untitled = title.isEmpty(),
         preview = memoLocalPreview(kind, preview, linkJson, attachments),
         date = memoIso(createdMs),
         tags = tags,

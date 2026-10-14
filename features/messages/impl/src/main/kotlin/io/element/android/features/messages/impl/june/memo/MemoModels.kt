@@ -127,8 +127,13 @@ internal fun memoCardText(item: MemoItem): String? {
  * The end of the small top line of a record card: the title, unless the body shown below already starts with it
  * (a note's title is its first line, 앱6: shown once, in the bigger body text); the kind when there is neither.
  */
+/** 앱7 항목 1: the line a list shows for a note, the stored title or else the start of its body (not stored). */
+internal fun memoDisplayTitle(title: String, preview: String, id: String): String =
+    title.ifEmpty { preview.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().take(MEMO_TITLE_CHARS).ifEmpty { id } }
+
 internal fun memoCardHeadTitle(item: MemoItem, text: String?): String = when {
     item.title.isBlank() -> if (text == null) item.kind else ""
+    item.untitled -> if (text == null) item.kind else ""
     text != null && text.startsWith(item.title) -> ""
     else -> item.title
 }
@@ -150,6 +155,8 @@ internal data class MemoItem(
     val proposals: Int = 0,
     /** The start of the plain body of a local note (앱6): the record card shows it under photos and links too. */
     val text: String? = null,
+    /** 앱7 항목 1: no title was written or accepted; [title] is then only the start of the body, for the screen. */
+    val untitled: Boolean = false,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date
