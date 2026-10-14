@@ -21,8 +21,14 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
 import io.element.android.libraries.architecture.bindings
+import io.element.android.libraries.matrix.api.core.RoomId
+import io.element.android.libraries.matrix.api.core.UserId
+import io.element.android.libraries.matrix.api.widget.MatrixWidgetSettings
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import timber.log.Timber
 
 /**
  * The A4 sync of the memo screen (설계 §k-4), only while the screen is visible:
@@ -66,13 +72,32 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
     }
 
     // The answers of an encrypted room only reach the waiting call through the timeline (decrypted by the SDK).
+    // 진단앱수신: the SDK timeline leaves custom event types out, so this alone never saw an answer; kept for a room
+    // whose timeline would show them.
     LaunchedEffect(room, timelineItems) {
         memoAnswersOf(timelineItems).forEach(room::deliver)
     }
 
+    // 진단앱수신: the answers as the SDK receives them (decrypted), through a read-only widget driver of the room.
+    val readerReady = remember(roomId) { CompletableDeferred<Boolean>() }
+    val activeRooms = remember(bindings) { bindings.memoSyncActiveRooms() }
+    LaunchedEffect(room, roomId) {
+        val joined = sessionStore.getLatestSession()?.let { activeRooms.getActiveRoomMatching(UserId(it.userId), RoomId(roomId)) }
+        val driver = joined?.getEventReaderDriver(memoReaderWidgetSettings(), MEMO_RESPONSE_TYPES)?.getOrNull()
+        if (driver == null) {
+            Timber.i("June memo sync: %s", "응답 읽기 시작 못 함 (${if (joined == null) "방 없음" else "드라이버 없음"})")
+            readerReady.complete(false)
+            return@LaunchedEffect
+        }
+        runMemoAnswerReader(driver, room::deliver, readerReady) { Timber.i("June memo sync: %s", it) }
+    }
+
     // Shown: pull once (and push what waits). Each time the screen comes back, once more — never on a timer.
     LaunchedEffect(runner, visible) {
-        if (visible) runner.syncNow()
+        if (!visible) return@LaunchedEffect
+        // The first request waits (a short while) for the answer reader, so its answer is not missed.
+        withTimeoutOrNull(MEMO_READER_WAIT_MS) { readerReady.await() }
+        runner.syncNow()
     }
 
     // A local change while visible: wait for the input to stop, then one push. A new change restarts the wait.
@@ -86,3 +111,10 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
         retryTick++
     }
 }
+
+/** The settings of the in-app answer reader: started by its first message, the URL is never loaded. */
+private fun memoReaderWidgetSettings() = MatrixWidgetSettings(
+    id = MEMO_READER_WIDGET_ID,
+    initAfterContentLoad = true,
+    rawUrl = MEMO_READER_WIDGET_URL,
+)

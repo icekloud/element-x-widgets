@@ -291,6 +291,11 @@ internal class MemoSyncRunner(
         val result = MemoSync.applyAck(db, ack.content, notes, clock())
         applyProposalResults(ack.content.optJSONArray("제안결과"), answers)
         log("올리기 응답 받음 ${result.accepted} · 합침 ${result.merged} · 거절 ${result.rejected}")
+        // 진단앱수신: a merged note whose server body is newer came back without it; fetched like a truncated note.
+        result.wantedIds.take(MAX_GETS).forEach { id ->
+            val note = callOrNull(MemoOp.get(id)) as? MemoResponse.Note ?: return@forEach
+            db.transaction { MemoSync.applyChange(db, memoChangeOfNote(note.note)) }
+        }
         MemoLocalChanges.changed()
         if (result.pullAgain) pullLocked()
         return Pushed(true, notes.size)

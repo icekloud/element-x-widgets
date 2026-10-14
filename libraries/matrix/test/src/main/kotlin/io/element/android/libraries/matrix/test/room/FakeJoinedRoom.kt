@@ -65,6 +65,7 @@ class FakeJoinedRoom(
     private val progressCallbackValues: List<Pair<Long, Long>> = emptyList(),
     private val generateWidgetWebViewUrlResult: (MatrixWidgetSettings, String, String?, String?) -> Result<String> = { _, _, _, _ -> lambdaError() },
     private val getWidgetDriverResult: (MatrixWidgetSettings) -> Result<MatrixWidgetDriver> = { lambdaError() },
+    private val getEventReaderDriverResult: (MatrixWidgetSettings, List<String>) -> Result<MatrixWidgetDriver> = { _, _ -> lambdaError() },
     private val typingNoticeResult: (Boolean) -> Result<Unit> = { lambdaError() },
     private val inviteUserResult: (UserId) -> Result<Unit> = { lambdaError() },
     private val setNameResult: (String) -> Result<Unit> = { lambdaError() },
@@ -222,6 +223,10 @@ class FakeJoinedRoom(
 
     override fun getWidgetDriver(widgetSettings: MatrixWidgetSettings): Result<MatrixWidgetDriver> {
         return getWidgetDriverResult(widgetSettings)
+    }
+
+    override fun getEventReaderDriver(widgetSettings: MatrixWidgetSettings, eventTypes: List<String>): Result<MatrixWidgetDriver> {
+        return getEventReaderDriverResult(widgetSettings, eventTypes)
     }
 
     override suspend fun setSendQueueEnabled(enabled: Boolean) = simulateLongTask {

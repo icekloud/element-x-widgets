@@ -260,6 +260,14 @@ interface JoinedRoom : BaseRoom {
     fun getWidgetDriver(widgetSettings: MatrixWidgetSettings): Result<MatrixWidgetDriver>
 
     /**
+     * June: a [MatrixWidgetDriver] for an in-app reader (no WebView) that may only read the message-like events of
+     * [eventTypes], as the SDK delivers them (decrypted in an encrypted room). It may not send anything.
+     *
+     * The room timeline never shows events of a custom type, so this is the way to read them.
+     */
+    fun getEventReaderDriver(widgetSettings: MatrixWidgetSettings, eventTypes: List<String>): Result<MatrixWidgetDriver>
+
+    /**
      * Enables or disables the send queue of this room only; see [io.element.android.libraries.matrix.api.MatrixClient.setAllSendQueuesEnabled]
      * for the session-wide equivalent and for why a queue disables itself.
      *

@@ -32,6 +32,7 @@ import io.element.android.libraries.workmanager.api.WorkManagerScheduler
 import io.element.android.libraries.workmanager.api.WorkManagerWorkerType
 import io.element.android.libraries.workmanager.api.di.MetroWorkerFactory
 import io.element.android.libraries.workmanager.api.di.WorkerKey
+import io.element.android.services.appnavstate.api.ActiveRoomsHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,6 +44,9 @@ import java.util.concurrent.TimeUnit
 interface MemoSyncBindings {
     fun memoSyncSessionStore(): SessionStore
     fun memoSyncWorkManagerScheduler(): WorkManagerScheduler
+
+    /** 진단앱수신: the opened memo room, for the reader of the encrypted answers ([MemoAnswerReader]). */
+    fun memoSyncActiveRooms(): ActiveRoomsHolder
 }
 
 /**

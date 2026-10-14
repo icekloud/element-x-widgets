@@ -133,13 +133,17 @@ internal object MemoSync {
      * The merge is [mergeMemoNote] — the same rule the server runs, so both sides end up with the same note. A note
      * that is already what the server sent is not written again (no feedback loop, 규약 §3 `같음`).
      */
-    fun applyChange(db: MemoDb, change: JSONObject): Boolean {
-        val incoming = memoChangeFromJson(change) ?: return false
-        val mine = db.note(incoming.id)
+    fun applyChange(db: MemoDb, change: JSONObject, withoutBody: Boolean = false): Boolean {
+        val sent = memoChangeFromJson(change) ?: return false
+        val mine = db.note(sent.id)
         if (mine == null) {
-            db.writeNote(incoming.copy(dirty = false))
+            if (withoutBody) return false
+            db.writeNote(sent.copy(dirty = false))
             return true
         }
+        // 진단앱수신: the note of a `병합` ack has no body (서버 `note_to_change(body=False)`): its empty 본문 is not the
+        // server text, so our body bundle stays as it is. When the server one is newer, [needsBody] fetches it.
+        val incoming = if (withoutBody && sent.body.isEmpty()) sent.withBodyBundleOf(mine) else sent
         val merged = mergeMemoNote(mine, incoming)
         // Dirty means exactly "we hold something the server does not": the merged note differs from what it sent
         // (a bundle of ours won). When they are the same, the upload can be skipped (규약 §3 `같음`, no feedback loop).
@@ -148,6 +152,26 @@ internal object MemoSync {
         db.writeNote(merged.copy(dirty = dirty, serverRev = incoming.contentHash))
         return changedHere
     }
+
+    /** True when the body-less note of an ack carries a newer body than ours: the full note is fetched with `op:get`. */
+    fun needsBody(db: MemoDb, change: JSONObject): Boolean {
+        val sent = memoChangeFromJson(change) ?: return false
+        if (sent.deleted == MEMO_DELETED_TOMBSTONE || sent.body.isNotEmpty()) return false
+        val mine = db.note(sent.id) ?: return true
+        return sent.revs.body > mine.revs.body
+    }
+
+    /** [this] with the body bundle (text, title, kind, link, header and its stamp) of [mine]. */
+    private fun MemoNoteRecord.withBodyBundleOf(mine: MemoNoteRecord): MemoNoteRecord = copy(
+        title = mine.title,
+        body = mine.body,
+        kind = mine.kind,
+        linkJson = mine.linkJson,
+        headerJson = mine.headerJson,
+        originEvent = mine.originEvent,
+        scheduleState = mine.scheduleState,
+        revs = revs.with(MemoBundle.Body, mine.revs.body),
+    )
 
     private fun applyFolders(db: MemoDb, folders: JSONArray) {
         for (i in 0 until folders.length()) {
@@ -250,6 +274,7 @@ internal object MemoSync {
         var accepted = 0
         var rejected = 0
         var mergedBack = 0
+        val wanted = mutableListOf<String>()
         db.transaction {
             for (i in 0 until results.length()) {
                 val row = results.optJSONObject(i) ?: continue
@@ -264,7 +289,10 @@ internal object MemoSync {
                     "병합" -> {
                         mergedBack++
                         outbox?.let { db.dropOutbox(it.seq) }
-                        row.optJSONObject("노트")?.let { applyChange(db, it) }
+                        row.optJSONObject("노트")?.let { note ->
+                            if (needsBody(db, note)) wanted += id
+                            applyChange(db, note, withoutBody = true)
+                        }
                     }
                     else -> {
                         rejected++
@@ -280,7 +308,7 @@ internal object MemoSync {
         val serverSeq = content.optLong("서버순번", -1)
         if (serverSeq >= 0) db.setState(STATE_SERVER_SEQ, serverSeq.toString())
         db.log(nowMs, "sync_push", accepted + mergedBack + rejected, nowMs - started, "수락 $accepted 병합 $mergedBack 거절 $rejected")
-        return MemoAckResult(accepted, mergedBack, rejected, pullAgain = serverSeq > base(db))
+        return MemoAckResult(accepted, mergedBack, rejected, pullAgain = serverSeq > base(db), wantedIds = wanted)
     }
 
     /** The whole `sync_push` failed (server off, no network): every row waits longer (설계 §k-4 ③, 화면이 보일 때만 다시 시도). */
@@ -312,7 +340,14 @@ internal data class MemoSyncResult(
 internal data class MemoSegmentDiff(val wanted: List<String>, val push: List<String>)
 
 /** What one applied `app.june.memo.sync_ack` ended up doing. */
-internal data class MemoAckResult(val accepted: Int, val merged: Int, val rejected: Int, val pullAgain: Boolean)
+internal data class MemoAckResult(
+    val accepted: Int,
+    val merged: Int,
+    val rejected: Int,
+    val pullAgain: Boolean,
+    /** The merged notes whose newer server body the ack did not carry: fetched one by one with `op:get`. */
+    val wantedIds: List<String> = emptyList(),
+)
 
 /**
  * A `노트변경` (이벤트규약 v2 §5) as a local note row. Unknown or missing fields fall back the way the server does:
