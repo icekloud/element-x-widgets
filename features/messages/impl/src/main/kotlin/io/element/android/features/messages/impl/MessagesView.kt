@@ -74,6 +74,8 @@ import io.element.android.features.messages.impl.june.JuneEditKind
 import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
 import io.element.android.features.messages.impl.june.memo.MemoScreen
+import io.element.android.features.messages.impl.june.memo.MemoSyncButton
+import io.element.android.features.messages.impl.june.memo.memoSyncRoomIdOf
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
 import io.element.android.features.messages.impl.messagecomposer.AttachmentsBottomSheet
@@ -121,8 +123,6 @@ import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.text.toAnnotatedString
 import io.element.android.libraries.designsystem.text.toDp
 import io.element.android.libraries.designsystem.theme.components.BottomSheetDragHandle
-import io.element.android.libraries.designsystem.theme.components.DropdownMenu
-import io.element.android.libraries.designsystem.theme.components.DropdownMenuItem
 import io.element.android.libraries.designsystem.theme.components.Icon
 import io.element.android.libraries.designsystem.theme.components.Scaffold
 import io.element.android.libraries.designsystem.theme.components.Text
@@ -166,6 +166,7 @@ fun MessagesView(
     onThreadsListClick: () -> Unit,
     knockRequestsBannerView: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    onBotFilesClick: () -> Unit = {},
     forceJumpToBottomVisibility: Boolean = false,
     customReactionBottomSheet: @Composable () -> Unit,
 ) {
@@ -283,6 +284,12 @@ fun MessagesView(
                                     onJoinCallClick = onJoinCallClick,
                                     onThreadsListClick = onThreadsListClick,
                                     onSendQuickText = { state.eventSink(MessagesEvent.SendQuickText(it)) },
+                                    onBotFilesClick = { hidingKeyboard { onBotFilesClick() } },
+                                    memoSyncRoomId = memoSyncRoomIdOf(
+                                        LocalContext.current,
+                                        state.roomId.value,
+                                        inThread = state.timelineState.timelineMode is Timeline.Mode.Thread,
+                                    ),
                                 )
                             }
                         )
@@ -502,34 +509,27 @@ internal fun RowScope.MessagesMenuActions(
     onJoinCallClick: (isAudioCall: Boolean) -> Unit,
     onThreadsListClick: () -> Unit,
     onSendQuickText: (String) -> Unit = {},
+    onBotFilesClick: () -> Unit = {},
+    memoSyncRoomId: String? = null,
 ) {
-    // Element June: stop the bot's current task, and quick commands (edited in Settings > June 꾸미기)
+    // Element June: stop the bot's current task, and the list of files the bot sent in this room.
+    // The memo bot room has the sync button there instead (앱6 항목 2); every other room keeps "중단".
     var showStopConfirm by remember { mutableStateOf(false) }
-    var showQuick by remember { mutableStateOf(false) }
-    Icon(
-        modifier = Modifier.clickable { showStopConfirm = true },
-        imageVector = CompoundIcons.Stop(),
-        contentDescription = "중단",
-    )
-    Spacer(Modifier.width(12.dp))
-    Box {
+    if (memoSyncRoomId != null) {
+        MemoSyncButton(memoSyncRoomId)
+    } else {
         Icon(
-            modifier = Modifier.clickable { showQuick = true },
-            imageVector = CompoundIcons.ListBulleted(),
-            contentDescription = "빠른 명령",
+            modifier = Modifier.clickable { showStopConfirm = true },
+            imageVector = CompoundIcons.Stop(),
+            contentDescription = "중단",
         )
-        DropdownMenu(expanded = showQuick, onDismissRequest = { showQuick = false }) {
-            JuneSettings.quickCommands(LocalContext.current).forEach { text ->
-                DropdownMenuItem(
-                    text = { Text(text) },
-                    onClick = {
-                        showQuick = false
-                        onSendQuickText(text)
-                    },
-                )
-            }
-        }
     }
+    Spacer(Modifier.width(12.dp))
+    Icon(
+        modifier = Modifier.clickable(onClick = onBotFilesClick),
+        imageVector = CompoundIcons.ListBulleted(),
+        contentDescription = "봇이 보낸 파일",
+    )
     Spacer(Modifier.width(12.dp))
     if (showStopConfirm) {
         ConfirmationDialog(
@@ -638,8 +638,6 @@ private fun MessagesViewContent(
                     roomId = state.roomId.value,
                     useFakeData = JuneSettings.memoFakeData(juneContext),
                     timelineItems = state.timelineState.timelineItems,
-                    onLoadOlder = { state.timelineState.eventSink(TimelineEvent.LoadMore(Timeline.PaginationDirection.BACKWARDS)) },
-                    onPhotoClick = onContentClick,
                 )
             } else {
                 TimelineView(
@@ -732,15 +730,20 @@ private fun MessagesViewComposerBottomSheetContents(
                             onLinkClick = onLinkClick,
                         )
                     }
-                    // Element June: background processes of the bot, then its busy queue (edit / steer / cancel)
-                    JuneComposerPanels(
-                        roomId = state.roomId.value,
-                        editingEventId = juneEditingEventId(state.composerState.mode),
-                        onEdit = { event, kind ->
-                            val action = if (kind == JuneEditKind.Caption) TimelineItemAction.EditCaption else TimelineItemAction.Edit
-                            state.eventSink(MessagesEvent.HandleAction(action, event))
-                        },
-                    )
+                    // Element June: background processes of the bot, then its busy queue (edit / steer / cancel).
+                    // Not in the memo bot room shown as the memo screen: no bot conversation there (설계 §f, 결정 4).
+                    val juneMemoScreen = JuneSettings.isMemoRoom(LocalContext.current, state.roomId.value) &&
+                        state.timelineState.timelineMode !is Timeline.Mode.Thread
+                    if (!juneMemoScreen) {
+                        JuneComposerPanels(
+                            roomId = state.roomId.value,
+                            editingEventId = juneEditingEventId(state.composerState.mode),
+                            onEdit = { event, kind ->
+                                val action = if (kind == JuneEditKind.Caption) TimelineItemAction.EditCaption else TimelineItemAction.Edit
+                                state.eventSink(MessagesEvent.HandleAction(action, event))
+                            },
+                        )
+                    }
                 },
                 bottom = {
                     if (verificationViolation != null) {

@@ -24,8 +24,19 @@ internal const val MEMO_SEARCH_TYPE = "app.june.memo.search"
 internal const val MEMO_TAGS_TYPE = "app.june.memo.tags"
 internal const val MEMO_OK_TYPE = "app.june.memo.ok"
 internal const val MEMO_ERROR_TYPE = "app.june.memo.error"
+internal const val MEMO_SYNC_TYPE = "app.june.memo.sync"
+internal const val MEMO_SYNC_ACK_TYPE = "app.june.memo.sync_ack"
 
-internal val MEMO_RESPONSE_TYPES = listOf(MEMO_LIST_TYPE, MEMO_NOTE_TYPE, MEMO_SEARCH_TYPE, MEMO_TAGS_TYPE, MEMO_OK_TYPE, MEMO_ERROR_TYPE)
+internal val MEMO_RESPONSE_TYPES = listOf(
+    MEMO_LIST_TYPE,
+    MEMO_NOTE_TYPE,
+    MEMO_SEARCH_TYPE,
+    MEMO_TAGS_TYPE,
+    MEMO_OK_TYPE,
+    MEMO_ERROR_TYPE,
+    MEMO_SYNC_TYPE,
+    MEMO_SYNC_ACK_TYPE,
+)
 
 internal const val MEMO_INBOX = "받은편지함"
 internal const val MEMO_ARCHIVE = "보관함"
@@ -85,7 +96,56 @@ internal data class MemoIndex(
 internal sealed interface MemoPreview {
     data class Text(val text: String) : MemoPreview
     data class Link(val url: String, val title: String?, val image: String?, val site: String?) : MemoPreview
-    data class Photo(val mxc: String, val count: Int, val fileJson: String? = null) : MemoPreview
+
+    /**
+     * [mxc] / [fileJson]: the first photo (the server list sends only that one). [photos]: the first ones of a local
+     * note (앱6, at most [MEMO_CARD_PHOTOS]), each with its phone original when it is still there.
+     */
+    data class Photo(val mxc: String, val count: Int, val fileJson: String? = null, val photos: List<MemoAttachment> = emptyList()) : MemoPreview {
+        /** The photos the record card draws in one row. */
+        val cells: List<MemoAttachment> get() = photos.ifEmpty { listOf(MemoAttachment(mxc, fileJson)) }
+    }
+}
+
+/** Photos drawn in one row of a record card (앱6 결정기록 3); more show as "+N" on the last one. */
+internal const val MEMO_CARD_PHOTOS = 4
+
+/** Photos of [p] that do not get their own cell on the record card (the "+N" of the last cell). */
+internal fun memoHiddenPhotos(p: MemoPreview.Photo): Int = (p.count - p.cells.take(MEMO_CARD_PHOTOS).size).coerceAtLeast(0)
+
+/** Lines of body text on a record card (앱6 항목 5); longer text ends with "…". */
+internal const val MEMO_CARD_LINES = 7
+
+/** The body text a record card shows above its chips (앱6 항목 4), or null (empty, or only the link address). */
+internal fun memoCardText(item: MemoItem): String? {
+    val text = (item.text ?: (item.preview as? MemoPreview.Text)?.text)?.trim() ?: return null
+    val link = (item.preview as? MemoPreview.Link)?.url
+    return text.takeIf { it.isNotBlank() && it != link }
+}
+
+/**
+ * The end of the small top line of a record card: the title, unless the body shown below already starts with it
+ * (a note's title is its first line, 앱6: shown once, in the bigger body text); the kind when there is neither.
+ */
+/** 앱7 항목 1: the line a list shows for a note, the stored title or else the start of its body (not stored). */
+internal fun memoDisplayTitle(title: String, preview: String, id: String): String =
+    title.ifEmpty { preview.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().take(MEMO_TITLE_CHARS).ifEmpty { id } }
+
+/** Test tag of the photo upload mark of a record card (앱8). */
+internal const val MEMO_PHOTO_UPLOAD_MARK_TAG = "memo_photo_upload_mark"
+
+/** 앱8 항목 1 d: the small mark of a record card whose photos are not on the server yet, empty when all went up. */
+internal fun memoPhotoUploadMark(item: MemoItem): String = when {
+    item.photosFailed > 0 -> "⚠ 사진 ${item.photosFailed}장 못 올림"
+    item.photosWaiting > 0 -> "⏳ 사진 ${item.photosWaiting}장 올리기 전"
+    else -> ""
+}
+
+internal fun memoCardHeadTitle(item: MemoItem, text: String?): String = when {
+    item.title.isBlank() -> if (text == null) item.kind else ""
+    item.untitled -> if (text == null) item.kind else ""
+    text != null && text.startsWith(item.title) -> ""
+    else -> item.title
 }
 
 internal data class MemoItem(
@@ -101,6 +161,15 @@ internal data class MemoItem(
     val scheduleState: String? = null,
     val snippet: String? = null,
     val matchField: String? = null,
+    /** Waiting bot suggestions of this note (A5 chip `🤖 제안 N`, 설계 §d-③). */
+    val proposals: Int = 0,
+    /** The start of the plain body of a local note (앱6): the record card shows it under photos and links too. */
+    val text: String? = null,
+    /** 앱7 항목 1: no title was written or accepted; [title] is then only the start of the body, for the screen. */
+    val untitled: Boolean = false,
+    /** 앱8 항목 1 d: attachments of a local note still waiting for their upload, and those that failed. */
+    val photosWaiting: Int = 0,
+    val photosFailed: Int = 0,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date
@@ -108,7 +177,11 @@ internal data class MemoItem(
     val hasSchedule: Boolean get() = scheduleState == "제안있음" || scheduleState == "수락됨"
 }
 
-internal data class MemoAttachment(val mxc: String, val fileJson: String? = null)
+/**
+ * An attachment as the screen draws it. [mxc] is the server copy, or the local file ([MEMO_LOCAL_FILE_PREFIX]) before
+ * the upload. [localPath] is the phone original, drawn first while it is there (앱6: also after the upload).
+ */
+internal data class MemoAttachment(val mxc: String, val fileJson: String? = null, val localPath: String? = null)
 
 internal data class MemoNote(
     val id: String,
@@ -143,6 +216,10 @@ internal sealed interface MemoResponse {
     data class Tags(override val requestId: String, val tags: kotlin.collections.List<MemoTag>) : MemoResponse
     data class Ok(override val requestId: String, val op: String, val id: String?, val path: String?) : MemoResponse
     data class Error(override val requestId: String, val op: String, val reason: String) : MemoResponse
+
+    /** [v2] `app.june.memo.sync` / `app.june.memo.sync_ack`: the raw content, applied by [MemoSync]. */
+    data class Sync(override val requestId: String, val content: JSONObject) : MemoResponse
+    data class SyncAck(override val requestId: String, val content: JSONObject) : MemoResponse
 }
 
 internal fun JSONArray?.strings(): List<String> {
@@ -308,6 +385,8 @@ internal fun parseMemoResponse(type: String, content: JSONObject): MemoResponse?
         }
         MEMO_OK_TYPE -> MemoResponse.Ok(rid, content.optString("op"), content.optStringOrNull("id"), content.optStringOrNull("경로"))
         MEMO_ERROR_TYPE -> MemoResponse.Error(rid, content.optString("op"), content.optString("사유").ifEmpty { "알 수 없는 오류" })
+        MEMO_SYNC_TYPE -> MemoResponse.Sync(rid, content)
+        MEMO_SYNC_ACK_TYPE -> MemoResponse.SyncAck(rid, content)
         else -> null
     }
 }

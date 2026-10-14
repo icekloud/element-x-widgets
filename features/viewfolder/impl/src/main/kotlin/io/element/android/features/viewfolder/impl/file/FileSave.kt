@@ -11,11 +11,12 @@ package io.element.android.features.viewfolder.impl.file
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
+import io.element.android.libraries.androidutils.file.juneDownloadRelativePath
+import io.element.android.libraries.androidutils.file.juneLegacyDownloadDir
 import io.element.android.libraries.androidutils.file.saveWithUniqueFileName
 import io.element.android.libraries.androidutils.system.toast
 import io.element.android.libraries.core.coroutine.CoroutineDispatchers
@@ -68,7 +69,7 @@ class DefaultFileSave(
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
                 put(MediaStore.MediaColumns.MIME_TYPE, MimeTypes.OctetStream)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, juneDownloadRelativePath)
             }
             resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
         } ?: throw IOException("Unable to create the destination file")
@@ -82,7 +83,7 @@ class DefaultFileSave(
     private fun saveOnDiskUsingExternalStorageApi(path: String) {
         val file = File(path)
         val target = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            juneLegacyDownloadDir(),
             file.name
         )
         file.inputStream().use { input ->

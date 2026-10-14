@@ -58,6 +58,7 @@ dependencies {
     implementation(projects.libraries.audio.api)
     implementation(projects.libraries.voiceplayer.api)
     implementation(projects.libraries.voicerecorder.api)
+    implementation(projects.libraries.workmanager.api)
     implementation(projects.libraries.mediaplayer.api)
     implementation(projects.libraries.push.api)
     implementation(projects.libraries.sessionStorage.api) // Element June: background panel
@@ -89,8 +90,12 @@ dependencies {
     implementation(libs.matrix.emojibase.bindings)
     implementation(projects.features.knockrequests.api)
     implementation(projects.features.roommembermoderation.api)
+    // Element June memo bot: local encrypted database (already used by push and cachestore)
+    implementation(projects.libraries.encryptedDb)
+    implementation(libs.sqldelight.driver.android)
 
     testCommonDependencies(libs, true)
+    testImplementation(libs.sqldelight.driver.jvm)
     testImplementation(projects.libraries.matrix.test)
     testImplementation(projects.libraries.dateformatter.test)
     testImplementation(projects.libraries.push.test)

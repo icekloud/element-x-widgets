@@ -81,7 +81,9 @@ internal fun MemoSearchTab(controller: MemoController) {
     val tags by controller.store.tags.collectAsState()
     LaunchedEffect(controller.store) { if (tags.isEmpty()) controller.store.loadTags() }
 
-    fun run(q: MemoSearchQuery) {
+    // [submitted]: the user sent a search (keyboard, 🔍, voice, a recent line or a tag of the empty state). Only those
+    // go to the recent searches; toggling filter chips or removing a tag chip searches again without recording it.
+    fun run(q: MemoSearchQuery, submitted: Boolean = false) {
         val normalized = q.normalized()
         ui.query = normalized
         if (normalized.isEmpty) {
@@ -96,11 +98,13 @@ internal fun MemoSearchTab(controller: MemoController) {
                     val page = (r.response as? MemoResponse.Search)?.page
                     ui.results = page?.items.orEmpty()
                     ui.cursor = page?.nextCursor
-                    ui.recent.remove(normalized)
-                    ui.recent.add(0, normalized)
-                    while (ui.recent.size > 5) ui.recent.removeAt(ui.recent.lastIndex)
+                    if (submitted) {
+                        val next = memoRecentWith(ui.recent, normalized)
+                        ui.recent.clear()
+                        ui.recent.addAll(next)
+                    }
                 }
-                is MemoResult.Failed -> controller.error = r.reason to { run(normalized) }
+                is MemoResult.Failed -> controller.error = r.reason to { run(normalized, submitted) }
             }
             ui.searching = false
         }
@@ -108,7 +112,7 @@ internal fun MemoSearchTab(controller: MemoController) {
 
     val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val said = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (!said.isNullOrBlank()) run(ui.query.copy(text = (ui.query.text + " " + said).trim()))
+        if (!said.isNullOrBlank()) run(ui.query.copy(text = (ui.query.text + " " + said).trim()), submitted = true)
     }
 
     Column(Modifier.fillMaxSize().testTag(MemoTags.SEARCH)) {
@@ -123,7 +127,7 @@ internal fun MemoSearchTab(controller: MemoController) {
                     onValueChange = { v -> ui.query = ui.query.copy(text = v).normalized(keepTyping = true) },
                     placeholder = "검색 (#태그)",
                     singleLine = true,
-                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { run(ui.query) }),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { run(ui.query, submitted = true) }),
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -140,7 +144,7 @@ internal fun MemoSearchTab(controller: MemoController) {
                     )
                 }
             }.padding(8.dp))
-            Text("🔍", modifier = Modifier.clickable { run(ui.query) }.padding(8.dp))
+            Text("🔍", modifier = Modifier.clickable { run(ui.query, submitted = true) }.padding(8.dp))
         }
         // `#` autocomplete
         val prefix = memoTagPrefix(ui.query.text)
@@ -181,7 +185,12 @@ internal fun MemoSearchTab(controller: MemoController) {
             MemoChip("📌", selected = ui.query.pinned, onClick = { run(ui.query.copy(pinned = !ui.query.pinned)) })
         }
         if (!nav.searchResults) {
-            MemoSearchEmpty(controller, ui.recent.toImmutableList(), tags.toImmutableList(), onRun = ::run)
+            MemoSearchEmpty(
+                controller,
+                memoRecentWith(ui.recent, MemoSearchQuery()).toImmutableList(),
+                tags.toImmutableList(),
+                onRun = { q -> run(q, submitted = true) },
+            )
         } else {
             Text(
                 ui.query.describe(),
@@ -202,7 +211,13 @@ internal fun MemoSearchTab(controller: MemoController) {
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(ui.results, key = { it.id }) { item ->
-                    MemoResultRow(item, onOpen = { controller.go { it.openNote(item.id) } }, onTag = { t -> run(ui.query.withTag(t)) })
+                    MemoResultRow(
+                        item,
+                        onOpen = { controller.go { it.openNote(item.id) } },
+                        onTag = { t ->
+                            run(ui.query.withTag(t), submitted = true)
+                        },
+                    )
                 }
             }
         }
@@ -330,8 +345,6 @@ private fun MemoTagManager(controller: MemoController) {
 internal fun MemoNoteScreen(
     controller: MemoController,
     id: String,
-    canOpenAttachment: (MemoAttachment) -> Boolean = { false },
-    onAttachmentClick: (MemoAttachment) -> Unit = {},
 ) {
     val store = controller.store
     var note by remember(id) { mutableStateOf(store.cachedNote(id)) }
@@ -394,9 +407,9 @@ internal fun MemoNoteScreen(
                 if (n.truncated) Text("(본문이 길어 일부만 받았습니다)", color = ElementTheme.colors.textSecondary)
                 if (n.attachments.isNotEmpty()) {
                     FlowRow(Modifier.padding(vertical = 8.dp)) {
-                        n.attachments.forEach { a ->
-                            // Opens the media viewer of the room when the photo is in the loaded room timeline.
-                            val open = if (canOpenAttachment(a)) Modifier.clickable { onAttachmentClick(a) } else Modifier
+                        n.attachments.forEachIndexed { i, a ->
+                            // 앱7 항목 2: the memo viewer, from the phone file or the server copy (no room timeline).
+                            val open = Modifier.memoOpenPhoto(controller, n.attachments, i)
                             MemoThumbnail(
                                 a.mxc,
                                 a.fileJson,
@@ -406,6 +419,7 @@ internal fun MemoNoteScreen(
                                     .clip(RoundedCornerShape(6.dp))
                                     .then(open)
                                     .testTag(MemoTags.NOTE_ATTACHMENT),
+                                a.localPath,
                             )
                         }
                     }

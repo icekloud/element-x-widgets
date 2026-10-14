@@ -10,6 +10,10 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import io.element.android.libraries.mediaviewer.api.local.LocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.EditedLocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEdits
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditor
 import android.net.Uri
 import androidx.compose.runtime.remember
 import app.cash.molecule.RecompositionMode
@@ -31,6 +35,8 @@ import io.element.android.features.messages.impl.timeline.TimelineController
 import io.element.android.features.messages.impl.utils.FakeMentionSpanFormatter
 import io.element.android.features.messages.impl.utils.FakeTextPillificationHelper
 import io.element.android.features.messages.impl.utils.TextPillificationHelper
+import io.element.android.features.messages.impl.june.memo.MemoComposerInput
+import io.element.android.features.messages.impl.june.memo.MemoInputSink
 import io.element.android.libraries.architecture.AsyncAction
 import io.element.android.libraries.core.mimetype.MimeTypes
 import io.element.android.libraries.designsystem.utils.snackbar.SnackbarDispatcher
@@ -1726,6 +1732,87 @@ class MessageComposerPresenterTest : RobolectricTest() {
     ).apply {
         isTesting = true
         showTextFormatting = isRichTextEditorEnabled
+    }
+
+    // Element June memo bot v2 (설계 §f, A3): the memo room composer saves a local note, every other room sends as before.
+    @Test
+    fun `present - in the memo room the typed text becomes a local note and nothing is sent to the room`() = runTest {
+        val sendMessage = lambdaRecorder<String, String?, List<IntentionalMention>, MsgType, Boolean, Result<Unit>> { _, _, _, _, _ ->
+            Result.success(Unit)
+        }
+        val saved = mutableListOf<String>()
+        val sink = object : MemoInputSink {
+            override suspend fun saveText(text: String) = "n1".also { saved += text }
+            override suspend fun savePictures(uris: List<Uri>, caption: String?) = "n2"
+            override suspend fun saveVoice(file: File, mimeType: String) = "n3"
+        }
+        val detach = MemoComposerInput.attach(A_ROOM_ID.value, sink)
+        try {
+            val presenter = createPresenter(
+                isRichTextEditorEnabled = false,
+                room = FakeJoinedRoom(
+                    liveTimeline = FakeTimeline().apply { sendMessageLambda = sendMessage },
+                    typingNoticeResult = { Result.success(Unit) },
+                ),
+                slashCommandService = FakeSlashCommandService(parseResult = { _, _, _ -> SlashCommand.NotACommand }),
+            )
+            val permalinkBuilder = FakePermalinkBuilder(permalinkForUserLambda = { Result.success("") })
+            // Emit a new state when the text changes, as `present - send message with plain text enabled` does.
+            moleculeFlow(RecompositionMode.Immediate) {
+                val state = presenter.present()
+                val messageMarkdown = state.textEditorState.messageMarkdown(permalinkBuilder)
+                remember(state, messageMarkdown) { state }
+            }.test {
+                val initial = awaitFirstItem()
+                initial.textEditorState.setMarkdown("교토 빵집 메모")
+                awaitItem().eventSink(MessageComposerEvent.SendMessage)
+                waitForPredicate { saved.isNotEmpty() }
+                assertThat(saved).containsExactly("교토 빵집 메모")
+                sendMessage.assertions().isNeverCalled()
+                cancelAndIgnoreRemainingEvents()
+            }
+        } finally {
+            detach()
+        }
+    }
+
+    @Test
+    fun `present - another room still sends while the memo screen of the memo room is shown`() = runTest {
+        val sendMessage = lambdaRecorder<String, String?, List<IntentionalMention>, MsgType, Boolean, Result<Unit>> { _, _, _, _, _ ->
+            Result.success(Unit)
+        }
+        val sink = object : MemoInputSink {
+            override suspend fun saveText(text: String) = error("must not be called")
+            override suspend fun savePictures(uris: List<Uri>, caption: String?) = error("must not be called")
+            override suspend fun saveVoice(file: File, mimeType: String) = error("must not be called")
+        }
+        val detach = MemoComposerInput.attach("!memo:server", sink)
+        try {
+            val presenter = createPresenter(
+                isRichTextEditorEnabled = false,
+                room = FakeJoinedRoom(
+                    liveTimeline = FakeTimeline().apply { sendMessageLambda = sendMessage },
+                    typingNoticeResult = { Result.success(Unit) },
+                ),
+                slashCommandService = FakeSlashCommandService(parseResult = { _, _, _ -> SlashCommand.NotACommand }),
+            )
+            val permalinkBuilder = FakePermalinkBuilder(permalinkForUserLambda = { Result.success("") })
+            // Emit a new state when the text changes, as `present - send message with plain text enabled` does.
+            moleculeFlow(RecompositionMode.Immediate) {
+                val state = presenter.present()
+                val messageMarkdown = state.textEditorState.messageMarkdown(permalinkBuilder)
+                remember(state, messageMarkdown) { state }
+            }.test {
+                val initial = awaitFirstItem()
+                initial.textEditorState.setMarkdown(A_MESSAGE)
+                awaitItem().eventSink(MessageComposerEvent.SendMessage)
+                advanceUntilIdle()
+                sendMessage.assertions().isCalledOnce()
+                cancelAndIgnoreRemainingEvents()
+            }
+        } finally {
+            detach()
+        }
     }
 
     private suspend fun <T> ReceiveTurbine<T>.awaitFirstItem(): T {

@@ -100,6 +100,19 @@ internal data class MemoSearchQuery(
     }
 }
 
+/** How many recent searches the empty search tab keeps. */
+internal const val MEMO_RECENT_SEARCHES = 5
+
+/**
+ * The recent searches after [q] was submitted: [q] first, no duplicate, at most [limit]. A query without text and tags
+ * (only filter chips, [MemoSearchQuery.describe] empty) is never kept — it would show as an empty line.
+ */
+internal fun memoRecentWith(recent: List<MemoSearchQuery>, q: MemoSearchQuery, limit: Int = MEMO_RECENT_SEARCHES): List<MemoSearchQuery> {
+    val kept = recent.filter { it.describe().isNotEmpty() }
+    if (q.describe().isEmpty()) return kept.take(limit)
+    return (listOf(q) + kept.filter { it != q }).take(limit)
+}
+
 /** The tag being typed at the end of [text] ("가와라마치 #이" → "이"), or null when the last word is not a `#` word. */
 internal fun memoTagPrefix(text: String): String? {
     val last = text.substringAfterLast(' ').substringAfterLast('\n')

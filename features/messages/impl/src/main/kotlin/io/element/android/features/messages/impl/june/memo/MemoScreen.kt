@@ -35,15 +35,17 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -56,15 +58,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.compose.AsyncImage
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesTo
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.features.messages.impl.R
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
-import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.theme.components.ModalBottomSheet
@@ -75,11 +74,9 @@ import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-
-private const val INDEX_POLL_MILLIS = 3_000L
+import java.io.File
 
 /** Test tags of the memo screen (Compose UI tests). */
 internal object MemoTags {
@@ -93,10 +90,19 @@ internal object MemoTags {
     const val TILE_TITLE = "memo_tile_title"
     const val TILE_TAGS = "memo_tile_tags"
     const val RECORD = "memo_record"
+    const val RECORD_ROW = "memo_record_row"
     const val FOLDER_ROOT = "memo_folder_root"
     const val SEARCH = "memo_search"
     const val ERROR = "memo_error"
     const val NOTE_ATTACHMENT = "memo_note_attachment"
+    const val RECORD_PHOTO = "memo_record_photo"
+    const val RECORD_TEXT = "memo_record_text"
+    const val PHOTO_RETRY = "memo_photo_retry"
+    const val VIEWER = "memo_viewer"
+    const val VIEWER_COUNTER = "memo_viewer_counter"
+    const val VIEWER_CLOSE = "memo_viewer_close"
+    const val VIEWER_RETRY = "memo_viewer_retry"
+    const val VIEWER_LOADING = "memo_viewer_loading"
 }
 
 @ContributesTo(AppScope::class)
@@ -121,6 +127,9 @@ internal class MemoController(
     val nav: MutableState<MemoLocation>,
 ) {
     var sheet by mutableStateOf<MemoSheet?>(null)
+
+    /** 앱7 항목 2: the photos open full screen (not a sheet: back closes it first). */
+    var viewer by mutableStateOf<MemoViewerRequest?>(null)
     var error by mutableStateOf<Pair<String, (() -> Unit)?>?>(null)
 
     /** Tag filters per folder: kept when going back (요구 F "태그 필터는 뒤로가기로 해제 안 함"). */
@@ -162,32 +171,29 @@ internal fun MemoScreen(
     roomId: String,
     useFakeData: Boolean,
     timelineItems: ImmutableList<TimelineItem>,
-    onLoadOlder: () -> Unit,
-    onPhotoClick: (TimelineItem.Event) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val backend: MemoBackend = remember(roomId, useFakeData) {
-        if (useFakeData) FakeMemoBackend() else MemoRoomBackend(context.bindings<MemoBindings>().memoSessionStore(), roomId)
+    // v2 (설계 A2): the screens read and write the local database; nothing goes to the room until the sync (A4).
+    // The fake backend stays for the developer setting and the sync tests.
+    val local = remember { MemoLocalBackend({ MemoDatabase.get(context) }) }
+    val backend: MemoBackend = remember(roomId, useFakeData) { if (useFakeData) FakeMemoBackend() else local }
+    // The composer below writes local notes while this screen is shown (설계 §f, A3): nothing goes to the room.
+    DisposableEffect(roomId, local) {
+        val detach = MemoComposerInput.attach(roomId, MemoLocalInputSink(context.applicationContext, local))
+        onDispose { detach() }
     }
     val store = remember(backend) { MemoStore(backend) }
     val scope = rememberCoroutineScope()
     val nav = remember(roomId) { mutableStateOf(MemoLocation()) }
     val controller = remember(store) { MemoController(store, scope, nav) }
-    val timeline = remember(timelineItems) { memoTimeline(timelineItems) }
 
-    // Answers seen in the room timeline (decrypted by the SDK) reach the waiting requests first.
-    LaunchedEffect(timeline.answers, backend) {
-        (backend as? MemoRoomBackend)?.let { b -> timeline.answers.forEach(b::deliver) }
+    // The index is read again when the local notes change (no polling, 설계 §k).
+    val localVersion by MemoLocalChanges.version.collectAsState()
+    LaunchedEffect(store, localVersion) {
+        store.refreshIndex()
     }
-    // The index is read while the screen is shown (like the June background panel).
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(store) {
-        while (true) {
-            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) store.refreshIndex()
-            delay(INDEX_POLL_MILLIS)
-        }
-    }
+    if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion)
 
     val state = nav.value
     var discardAsked by remember { mutableStateOf(false) }
@@ -214,16 +220,14 @@ internal fun MemoScreen(
     val index by store.index.collectAsState()
     Column(modifier = modifier.fillMaxSize()) {
         controller.error?.let { (reason, retry) -> MemoErrorBanner(reason, retry, onClose = { controller.error = null }) }
+        if (!useFakeData) MemoAttachmentBanners(local, localVersion)
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val note = state.note
             when {
-                note != null -> MemoNoteScreen(
-                    controller,
-                    note,
-                    canOpenAttachment = { a -> a.mxc in timeline.photosByMxc },
-                    onAttachmentClick = { a -> timeline.photosByMxc[a.mxc]?.let(onPhotoClick) },
-                )
-                state.tab == MemoTab.Record -> MemoRecordTab(controller, timeline, onLoadOlder, onPhotoClick)
+                // 앱7 항목 2: a photo of the note opens the memo viewer from the phone file or the server copy, so the
+                // room timeline (photosByMxc) is no longer needed here.
+                note != null -> MemoNoteScreen(controller, note)
+                state.tab == MemoTab.Record -> MemoRecordTab(controller, localVersion)
                 state.tab == MemoTab.Folders -> MemoFoldersTab(controller)
                 else -> MemoSearchTab(controller)
             }
@@ -235,6 +239,7 @@ internal fun MemoScreen(
         )
     }
     MemoSheetHost(controller)
+    controller.viewer?.let { MemoPhotoViewer(it, onClose = { controller.viewer = null }) }
 }
 
 @Composable
@@ -339,152 +344,170 @@ internal fun MemoChip(
     )
 }
 
+/**
+ * One memo photo (앱6 원인분석_사진.md). The phone original [localPath] first while it is there, else the server copy:
+ * [fileJson] wrapped as `{"file": …}` so the SDK decrypts it ([memoMediaSourceJson]). A photo that cannot be drawn
+ * shows "↻ 다시" instead of an empty grey box; the local original falls back to the server copy first.
+ */
 @Composable
-internal fun MemoThumbnail(mxc: String, fileJson: String?, modifier: Modifier = Modifier) {
-    AsyncImage(
-        model = MediaRequestData(MediaSource(mxc, fileJson), MediaRequestData.Kind.Thumbnail(320)),
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier.background(ElementTheme.colors.bgSubtleSecondary),
-    )
-}
-
-// ---------------------------------------------------------------- 기록 탭
-
-@Composable
-private fun MemoRecordTab(
-    controller: MemoController,
-    timeline: MemoTimeline,
-    onLoadOlder: () -> Unit,
-    onPhotoClick: (TimelineItem.Event) -> Unit,
-) {
-    // Newest card at the bottom, right above the composer (reverse layout: index 0 = newest).
-    val cards = remember(timeline.entries) { buildMemoCards(timeline.entries).asReversed() }
-    val listState = rememberLazyListState()
-    val loadOlder by rememberUpdatedState(onLoadOlder)
-    LaunchedEffect(listState, cards.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
-            .distinctUntilChanged()
-            .collect { last -> if (cards.isNotEmpty() && last >= cards.size - 3) loadOlder() }
-    }
-    if (cards.isEmpty()) {
-        Box(Modifier.fillMaxSize().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
-            Text("아래 입력창에 붙여넣기 / 📷 / 🎤 로 메모를 남기세요", color = ElementTheme.colors.textSecondary)
-        }
-        return
-    }
-    LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize().testTag(MemoTags.RECORD)) {
-        items(cards, key = { it.key }) { card ->
-            MemoCardView(controller, card, timeline, onPhotoClick)
-        }
-    }
-}
-
-@Composable
-internal fun MemoCardView(
-    controller: MemoController,
-    card: MemoCard,
-    timeline: MemoTimeline,
-    onPhotoClick: (TimelineItem.Event) -> Unit,
-) {
-    var expanded by remember(card.key) { mutableStateOf(false) }
-    val info = card.info
-    val target = card.target
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .border(
-                1.dp,
-                if (info?.review == MemoReviewState.Proposed) ElementTheme.colors.textActionAccent else ElementTheme.colors.borderInteractiveSecondary,
-                RoundedCornerShape(10.dp),
-            )
-            .combinedClickable(
-                onClick = { expanded = !expanded },
-                onLongClick = {
-                    if (target.isKnown) {
-                        controller.sheet = MemoSheet.Actions(
-                            card.headline(),
-                            listOf(
-                                "📌 고정" to cardAction(controller, card, MemoCardAction.Pin),
-                                "고정 해제" to cardAction(controller, card, MemoCardAction.Unpin),
-                                "🗑 휴지통" to cardAction(controller, card, MemoCardAction.Trash),
-                            ),
-                        )
-                    }
-                },
-            )
-            .padding(8.dp),
-    ) {
-        if (!card.isBotOnly) {
+internal fun MemoThumbnail(mxc: String, fileJson: String?, modifier: Modifier = Modifier, localPath: String? = null) {
+    val local = localPath ?: mxc.takeIf { it.startsWith(MEMO_LOCAL_FILE_PREFIX) }?.removePrefix(MEMO_LOCAL_FILE_PREFIX)
+    val hasServer = !mxc.startsWith(MEMO_LOCAL_FILE_PREFIX)
+    var useLocal by remember(local) { mutableStateOf(local != null && File(local).isFile) }
+    var failed by remember(mxc, local) { mutableStateOf(!useLocal && !hasServer) }
+    var attempt by remember { mutableIntStateOf(0) }
+    Box(modifier.background(ElementTheme.colors.bgSubtleSecondary), contentAlignment = Alignment.Center) {
+        if (failed) {
             Text(
-                "나 · " + card.headline(),
-                style = ElementTheme.typography.fontBodySmRegular,
-                color = ElementTheme.colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            val photos = card.inputs.filter { it.kind == MemoEntryKind.Photo }
-            if (photos.isNotEmpty()) {
-                Row(modifier = Modifier.padding(vertical = 4.dp)) {
-                    photos.take(4).forEach { p ->
-                        val thumb = timeline.thumbnails[p.key]
-                        AsyncImage(
-                            model = thumb,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .padding(end = 4.dp)
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(ElementTheme.colors.bgSubtleSecondary)
-                                .clickable { timeline.events[p.key]?.let(onPhotoClick) },
-                        )
+                "↻ 다시",
+                modifier = Modifier
+                    .clickable {
+                        useLocal = local != null && File(local).isFile
+                        failed = !useLocal && !hasServer
+                        attempt++
                     }
-                    if (photos.size > 4) Text("+${photos.size - 4}", color = ElementTheme.colors.textSecondary)
-                }
-            }
-        }
-        if (info != null) {
-            FlowRow(modifier = Modifier.padding(top = 4.dp)) {
-                if (info.inbox) {
-                    MemoChip("📥 받은편지함" + (info.confidence?.let { " · 확신 $it" } ?: ""))
-                } else {
-                    info.folder?.let { MemoChip("📁 $it", accent = true, onClick = { if (target.isKnown) controller.pickFolderThenMove(target) }) }
-                }
-                info.tags.forEach { tag -> MemoChip("#$tag", onClick = { if (target.isKnown) controller.editTagsOf(target, info.tags) }) }
-                info.review?.let { MemoChip(it.label, accent = it == MemoReviewState.Proposed) }
-                if (info.pinSuggested) MemoChip("📌?", accent = true, onClick = { memoCardOp(card, MemoCardAction.Pin)?.let(controller::run) })
-            }
-            if (info.inbox && info.candidates.isNotEmpty()) {
-                FlowRow {
-                    Text("후보: ", style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary)
-                    info.candidates.forEach { c -> MemoChip(c, accent = true, onClick = { memoCardOp(card, MemoCardAction.MoveTo(c))?.let(controller::run) }) }
-                }
-            }
-        } else if (card.replies.isEmpty()) {
-            Text("⏳ 메모봇 처리 중…", style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary)
-        }
-        // The bot answer itself stays folded inside the card; a tap on the card unfolds it.
-        if (card.replies.isNotEmpty()) {
-            if (expanded || card.isBotOnly) {
-                card.replies.forEach { r -> Text(r.text, style = ElementTheme.typography.fontBodySmRegular, modifier = Modifier.padding(top = 4.dp)) }
-            } else {
-                Text(
-                    "봇 답 ▸",
-                    style = ElementTheme.typography.fontBodyXsRegular,
-                    color = ElementTheme.colors.textSecondary,
-                    modifier = Modifier.padding(top = 2.dp)
+                    .padding(4.dp)
+                    .testTag(MemoTags.PHOTO_RETRY),
+                style = ElementTheme.typography.fontBodyXsRegular,
+                color = ElementTheme.colors.textSecondary,
+            )
+        } else {
+            key(attempt, useLocal) {
+                AsyncImage(
+                    model = memoPhotoModel(mxc, fileJson, local.takeIf { useLocal }),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onError = {
+                        if (useLocal && hasServer) {
+                            useLocal = false
+                        } else {
+                            failed = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
     }
 }
 
-private fun cardAction(controller: MemoController, card: MemoCard, action: MemoCardAction): () -> Unit = {
-    memoCardOp(card, action)?.let { op -> controller.run(op) }
+/** What Coil loads for a memo photo: the local file, or the SDK request with the json the SDK can decrypt. */
+internal fun memoPhotoModel(mxc: String, fileJson: String?, localPath: String?): Any =
+    localPath?.let(::File) ?: MediaRequestData(MediaSource(mxc, memoMediaSourceJson(fileJson)), MediaRequestData.Kind.Thumbnail(320))
+
+/** The photos of a record card in one row (앱6 결정기록 3): up to [MEMO_CARD_PHOTOS], the rest as "+N" on the last one. */
+@Composable
+private fun MemoPhotoRow(p: MemoPreview.Photo, modifier: Modifier = Modifier, onOpen: (Int) -> Unit = {}) {
+    val cells = p.cells.take(MEMO_CARD_PHOTOS)
+    val hidden = memoHiddenPhotos(p)
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        cells.forEachIndexed { i, a ->
+            Box(Modifier.size(72.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpen(i) }.testTag(MemoTags.RECORD_PHOTO)) {
+                MemoThumbnail(a.mxc, a.fileJson, Modifier.fillMaxSize(), a.localPath)
+                if (i == cells.lastIndex && hidden > 0) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+                        Text("+$hidden", color = Color.White, style = ElementTheme.typography.fontBodyLgMedium)
+                    }
+                }
+            }
+        }
+    }
 }
+
+// ---------------------------------------------------------------- 기록 탭
+
+@Composable
+internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
+    val store = controller.store
+    val key = remember { MemoListKey.of(MEMO_ALL_FOLDERS, emptyList()) }
+    val lists by store.lists.collectAsState()
+    val list = lists[key] ?: MemoListCache()
+    // v2 (A3): the record tab is the newest local notes. A note typed below is saved at once and shows here
+    // (local change signal), with no answer to wait for.
+    LaunchedEffect(store, localVersion) { store.loadFirst(key, force = true) }
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState, list.items.size) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+            .distinctUntilChanged()
+            .collect { last -> if (memoShouldLoadMore(store.list(key), last)) store.loadMore(key) }
+    }
+    if (list.items.isEmpty()) {
+        Box(Modifier.fillMaxSize().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
+            Text("아래 입력창에 붙여넣기 / 📷 / 🎤 로 메모를 남기세요", color = ElementTheme.colors.textSecondary)
+        }
+        return
+    }
+    // Newest note at the bottom, right above the composer (reverse layout: index 0 = newest).
+    LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize().testTag(MemoTags.RECORD)) {
+        items(list.items, key = { it.id }) { item -> MemoRecordRow(controller, item) }
+    }
+}
+
+/** One local note of the record tab: what was saved, where it is filed, its tags. A tap opens it. */
+@Composable
+internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
+    val target = MemoTarget(item.id)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(10.dp))
+            .combinedClickable(
+                onClick = { controller.go { it.openNote(item.id) } },
+                onLongClick = { controller.sheet = memoItemActions(controller, item) },
+            )
+            .padding(8.dp)
+            .testTag(MemoTags.RECORD_ROW),
+    ) {
+        val text = memoCardText(item)
+        Text(
+            ("나 · ${memoRecordTime(item.date)} · ${memoKindIcon(item.kind)} " + memoCardHeadTitle(item, text)).trimEnd(),
+            style = ElementTheme.typography.fontBodySmRegular,
+            color = ElementTheme.colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        val uploadMark = memoPhotoUploadMark(item)
+        if (uploadMark.isNotEmpty()) {
+            Text(
+                uploadMark,
+                style = ElementTheme.typography.fontBodyXsRegular,
+                color = if (item.photosFailed > 0) ElementTheme.colors.textCriticalPrimary else ElementTheme.colors.textSecondary,
+                maxLines = 1,
+                modifier = Modifier.testTag(MEMO_PHOTO_UPLOAD_MARK_TAG),
+            )
+        }
+        when (val p = item.preview) {
+            is MemoPreview.Photo -> MemoPhotoRow(p, Modifier.padding(vertical = 4.dp)) { i -> controller.viewer = MemoViewerRequest(p.cells, i) }
+            is MemoPreview.Link -> Text(p.url, style = ElementTheme.typography.fontBodySmRegular, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            is MemoPreview.Text, null -> Unit
+        }
+        // 앱6 항목 4·5: the body right above the folder and tag chips, a bit bigger (14 sp), up to 7 lines; the card
+        // grows with it (no fixed height).
+        text?.let {
+            Text(
+                it,
+                modifier = Modifier.padding(top = 2.dp).testTag(MemoTags.RECORD_TEXT),
+                style = ElementTheme.typography.fontBodyMdRegular,
+                maxLines = MEMO_CARD_LINES,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        FlowRow(modifier = Modifier.padding(top = 4.dp)) {
+            MemoChip(
+                (if (item.folder == MEMO_INBOX) "📥 " else "📁 ") + item.folder,
+                accent = item.folder != MEMO_INBOX,
+                onClick = { controller.pickFolderThenMove(target) },
+            )
+            item.tags.forEach { tag -> MemoChip("#$tag", onClick = { controller.editTagsOf(target, item.tags) }) }
+            if (item.pinned) MemoChip("📌")
+        }
+    }
+}
+
+/** "10-12 11:31" from "2026-10-12T11:31:00+09:00". */
+internal fun memoRecordTime(date: String): String = if (date.length >= 16) date.substring(5, 16).replace('T', ' ') else date
 
 // ---------------------------------------------------------------- 시트·대화상자
 

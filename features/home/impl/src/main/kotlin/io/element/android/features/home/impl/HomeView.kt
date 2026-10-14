@@ -34,8 +34,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
@@ -51,6 +52,7 @@ import io.element.android.features.home.impl.components.HomeTopBar
 import io.element.android.features.home.impl.components.RoomListContentView
 import io.element.android.features.home.impl.components.RoomListMenuAction
 import io.element.android.features.home.impl.model.RoomListRoomSummary
+import io.element.android.features.home.impl.roomlist.RoomListContentState
 import io.element.android.features.home.impl.roomlist.RoomListContextMenu
 import io.element.android.features.home.impl.roomlist.RoomListDeclineInviteMenu
 import io.element.android.features.home.impl.roomlist.RoomListEvent
@@ -63,13 +65,11 @@ import io.element.android.features.home.impl.spacefilters.SpaceFiltersState
 import io.element.android.features.home.impl.spacefilters.SpaceFiltersView
 import io.element.android.features.home.impl.spaces.HomeSpacesView
 import io.element.android.libraries.androidutils.throttler.FirstThrottler
+import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
-import io.element.android.libraries.designsystem.theme.components.FloatingActionButton
 import io.element.android.libraries.designsystem.theme.components.HorizontalFloatingToolbar
 import io.element.android.libraries.designsystem.theme.components.HorizontalFloatingToolbarItem
-import io.element.android.libraries.designsystem.theme.components.HorizontalFloatingToolbarSeparator
-import io.element.android.libraries.designsystem.theme.components.Icon
 import io.element.android.libraries.designsystem.theme.components.Scaffold
 import io.element.android.libraries.designsystem.utils.lazyColumnContentPadding
 import io.element.android.libraries.designsystem.utils.scaffoldScrollableContentInsets
@@ -77,8 +77,7 @@ import io.element.android.libraries.designsystem.utils.snackbar.SnackbarHost
 import io.element.android.libraries.designsystem.utils.snackbar.rememberSnackbarHostState
 import io.element.android.libraries.matrix.api.core.EventId
 import io.element.android.libraries.matrix.api.core.RoomId
-import io.element.android.libraries.ui.strings.CommonStrings
-import kotlinx.coroutines.launch
+import kotlinx.collections.immutable.toImmutableList
 
 @Composable
 fun HomeView(
@@ -191,6 +190,10 @@ private fun HomeScaffold(
     }
 
     val hazeState = rememberHazeState()
+    // Element June (추가요청 1~3): the bottom bar only holds the memo button, which opens the memo room set in the June
+    // settings, and the memo room is not listed with the other rooms. Without a memo room there is no bottom bar.
+    // The chats, spaces and + buttons are only left out of the bar: their screens and code stay.
+    val juneMemoRoomId = JuneSettings.memoRoomId(LocalContext.current)
     val roomsLazyListState = rememberLazyListState()
     val spacesLazyListState = rememberLazyListState()
 
@@ -230,42 +233,12 @@ private fun HomeScaffold(
             )
         },
         floatingActionButton = {
-            val coroutineScope = rememberCoroutineScope()
-            HomeBottomBar(
-                // The Scaffold uses top-only insets so the scrollable content can go edge-to-edge behind the
-                // navigation bar, so the floating toolbar has to apply the bottom inset itself to avoid overlapping it.
-                modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
-                currentHomeNavigationBarItem = state.currentHomeNavigationBarItem,
-                onItemClick = { item ->
-                    // scroll to top if selecting the same item
-                    if (item == state.currentHomeNavigationBarItem) {
-                        val lazyListStateTarget = when (item) {
-                            HomeNavigationBarItem.Chats -> roomsLazyListState
-                            HomeNavigationBarItem.Spaces -> spacesLazyListState
-                        }
-                        coroutineScope.launch {
-                            if (lazyListStateTarget.firstVisibleItemIndex > 10) {
-                                lazyListStateTarget.scrollToItem(10)
-                            }
-                            // Also reset the scrollBehavior height offset as it's not triggered by programmatic scrolls
-                            scrollBehavior.state.heightOffset = 0f
-                            lazyListStateTarget.animateScrollToItem(0)
-                        }
-                    } else {
-                        state.eventSink(HomeEvent.SelectHomeNavigationBarItem(item))
-                    }
-                },
-                floatingActionButton = {
-                    when (state.currentHomeNavigationBarItem) {
-                        HomeNavigationBarItem.Chats -> {
-                            HomeFloatingActionButton(onStartChatClick, CommonStrings.action_create_room)
-                        }
-                        HomeNavigationBarItem.Spaces -> {
-                            HomeFloatingActionButton(onCreateSpaceClick, CommonStrings.action_create_space)
-                        }
-                    }
-                },
-            )
+            if (juneMemoRoomId != null) {
+                JuneMemoBottomBar(
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
+                    onClick = { onRoomClick(RoomId(juneMemoRoomId)) },
+                )
+            }
         },
         floatingActionButtonPosition = FabPosition.Center,
         contentWindowInsets = scaffoldScrollableContentInsets,
@@ -277,13 +250,14 @@ private fun HomeScaffold(
                 bottom = padding.calculateBottomPadding(),
                 top = padding.calculateTopPadding()
             )
+            // Room left at the end of the list for the bottom bar, none when there is no bar (추가요청 3 ③)
             val contentPadding = PaddingValues(
-                bottom = 96.dp,
+                bottom = if (juneMemoRoomId != null) 96.dp else 0.dp,
             )
             when (state.currentHomeNavigationBarItem) {
                 HomeNavigationBarItem.Chats -> {
                     RoomListContentView(
-                        contentState = roomListState.contentState,
+                        contentState = roomListState.contentState.withoutJuneMemoRoom(juneMemoRoomId),
                         filtersState = roomListState.filtersState,
                         spaceFiltersState = roomListState.spaceFiltersState,
                         lazyListState = roomsLazyListState,
@@ -325,45 +299,32 @@ private fun HomeScaffold(
     )
 }
 
-@Composable
-private fun HomeFloatingActionButton(
-    onClick: () -> Unit,
-    contentDescription: Int,
-    modifier: Modifier = Modifier,
-) {
-    FloatingActionButton(onClick = onClick, modifier = modifier) {
-        Icon(
-            imageVector = CompoundIcons.Plus(),
-            contentDescription = stringResource(id = contentDescription),
-        )
-    }
-}
+/** Test tag of the memo button of the home bottom bar. */
+internal const val JUNE_HOME_MEMO_BUTTON = "june_home_memo_button"
 
+/** The room list without the memo room (it opens from the memo button). Other states are returned as they are. */
+internal fun RoomListContentState.withoutJuneMemoRoom(memoRoomId: String?): RoomListContentState =
+    if (memoRoomId == null || this !is RoomListContentState.Rooms || summaries.none { it.roomId.value == memoRoomId }) {
+        this
+    } else {
+        copy(summaries = summaries.filter { it.roomId.value != memoRoomId }.toImmutableList())
+    }
+
+/** Element June: the bottom bar with the memo button only (추가요청 3). */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun HomeBottomBar(
-    currentHomeNavigationBarItem: HomeNavigationBarItem,
-    onItemClick: (HomeNavigationBarItem) -> Unit,
+private fun JuneMemoBottomBar(
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    floatingActionButton: (@Composable () -> Unit)?,
 ) {
-    HorizontalFloatingToolbar(
-        floatingActionButton = floatingActionButton,
-        modifier = modifier
-            .zIndex(1f),
-    ) {
-        HomeNavigationBarItem.entries.forEachIndexed { index, item ->
-            if (index > 0) {
-                HorizontalFloatingToolbarSeparator()
-            }
-            val isSelected = currentHomeNavigationBarItem == item
-            HorizontalFloatingToolbarItem(
-                icon = item.icon(isSelected),
-                tooltipLabel = stringResource(item.labelRes),
-                isSelected = isSelected,
-                onClick = { onItemClick(item) },
-            )
-        }
+    HorizontalFloatingToolbar(modifier = modifier.zIndex(1f)) {
+        HorizontalFloatingToolbarItem(
+            icon = CompoundIcons.Document(),
+            tooltipLabel = "메모",
+            isSelected = false,
+            onClick = onClick,
+            modifier = Modifier.testTag(JUNE_HOME_MEMO_BUTTON),
+        )
     }
 }
 

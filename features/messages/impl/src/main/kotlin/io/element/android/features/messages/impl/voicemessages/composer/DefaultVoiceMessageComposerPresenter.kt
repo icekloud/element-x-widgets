@@ -30,11 +30,14 @@ import io.element.android.features.messages.api.MessageComposerContext
 import io.element.android.features.messages.api.timeline.voicemessages.composer.VoiceMessageComposerEvent
 import io.element.android.features.messages.api.timeline.voicemessages.composer.VoiceMessageComposerPresenter
 import io.element.android.features.messages.api.timeline.voicemessages.composer.VoiceMessageComposerState
+import io.element.android.features.messages.impl.june.memo.MemoComposerInput
 import io.element.android.libraries.audio.api.AudioFocus
 import io.element.android.libraries.audio.api.AudioFocusRequester
+import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.di.RoomScope
 import io.element.android.libraries.di.annotations.SessionCoroutineScope
 import io.element.android.libraries.matrix.api.core.EventId
+import io.element.android.libraries.matrix.api.room.JoinedRoom
 import io.element.android.libraries.matrix.api.timeline.Timeline
 import io.element.android.libraries.mediaupload.api.MediaSenderFactory
 import io.element.android.libraries.permissions.api.PermissionsEvent
@@ -66,7 +69,8 @@ class DefaultVoiceMessageComposerPresenter(
     mediaSenderFactory: MediaSenderFactory,
     private val player: VoiceMessageComposerPlayer,
     private val messageComposerContext: MessageComposerContext,
-    permissionsPresenterFactory: PermissionsPresenter.Factory
+    permissionsPresenterFactory: PermissionsPresenter.Factory,
+    private val room: JoinedRoom,
 ) : VoiceMessageComposerPresenter {
     @ContributesBinding(RoomScope::class)
     @AssistedFactory
@@ -361,6 +365,16 @@ class DefaultVoiceMessageComposerPresenter(
         waveform: List<Float>,
         inReplyToEventId: EventId? = null,
     ): Result<Unit> {
+        // Element June memo bot v2 (설계 §f): in the memo room the recording becomes a local note, nothing goes to the room
+        MemoComposerInput.forRoom(room.roomId.value)?.let { sink ->
+            val saved = runCatchingExceptions { sink.saveVoice(file, mimeType) }.map { }
+            if (saved.isFailure) {
+                Timber.e(saved.exceptionOrNull(), "Voice memo error")
+                return saved
+            }
+            voiceRecorder.deleteRecording()
+            return saved
+        }
         val result = mediaSender.sendVoiceMessage(
             uri = file.toUri(),
             mimeType = mimeType,

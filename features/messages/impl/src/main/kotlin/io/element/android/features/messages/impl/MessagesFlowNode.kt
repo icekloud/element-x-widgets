@@ -39,6 +39,9 @@ import io.element.android.features.location.api.ShowLocationMode
 import io.element.android.features.messages.api.MessagesEntryPoint
 import io.element.android.features.messages.impl.attachments.Attachment
 import io.element.android.features.messages.impl.attachments.preview.AttachmentsPreviewNode
+import io.element.android.features.messages.impl.june.botfiles.JuneBotFile
+import io.element.android.features.messages.impl.june.botfiles.JuneBotFileKind
+import io.element.android.features.messages.impl.june.botfiles.JuneBotFilesNode
 import io.element.android.features.messages.impl.pinned.DefaultPinnedEventsTimelineProvider
 import io.element.android.features.messages.impl.pinned.list.PinnedMessagesListNode
 import io.element.android.features.messages.impl.report.ReportMessageNode
@@ -211,6 +214,9 @@ class MessagesFlowNode(
         data object ThreadsList : NavTarget
 
         @Parcelize
+        data object JuneBotFiles : NavTarget
+
+        @Parcelize
         data class AvatarPreview(val name: String, val avatarUrl: String) : NavTarget
     }
 
@@ -362,6 +368,10 @@ class MessagesFlowNode(
 
                     override fun navigateToThreadsList() {
                         backstack.push(NavTarget.ThreadsList)
+                    }
+
+                    override fun navigateToBotFiles() {
+                        backstack.push(NavTarget.JuneBotFiles)
                     }
 
                     override fun navigateToDeveloperSettings() {
@@ -681,6 +691,19 @@ class MessagesFlowNode(
                 }
                 createNode<ThreadsListNode>(buildContext, listOf(callback))
             }
+            NavTarget.JuneBotFiles -> {
+                val callback = object : JuneBotFilesNode.Callback {
+                    override fun openBotFile(file: JuneBotFile) {
+                        backstack.push(file.toMediaViewerNavTarget())
+                    }
+
+                    override fun viewBotFileInTimeline(eventId: EventId) {
+                        // Same as the pinned messages list: reopen the chat on the message that carried the file
+                        this@MessagesFlowNode.viewInTimeline(eventId)
+                    }
+                }
+                createNode<JuneBotFilesNode>(buildContext, listOf(callback))
+            }
             is NavTarget.AvatarPreview -> {
                 val callback = object : MediaViewerEntryPoint.Callback {
                     override fun onDone() {
@@ -707,6 +730,24 @@ class MessagesFlowNode(
                 )
             }
         }
+    }
+
+    private fun JuneBotFile.toMediaViewerNavTarget(): NavTarget.MediaViewer {
+        val timelineMode = Timeline.Mode.Live
+        return NavTarget.MediaViewer(
+            mode = when (kind) {
+                JuneBotFileKind.Image,
+                JuneBotFileKind.Video -> MediaViewerEntryPoint.MediaViewerMode.TimelineImagesAndVideos(timelineMode)
+                JuneBotFileKind.Audio,
+                JuneBotFileKind.File -> MediaViewerEntryPoint.MediaViewerMode.TimelineFilesAndAudios(timelineMode)
+            },
+            eventId = eventId,
+            mediaInfo = mediaInfo,
+            mediaSource = mediaSource,
+            thumbnailSource = thumbnailSource,
+            canUseOverlay = false,
+            blurHash = blurHash,
+        )
     }
 
     private fun viewInTimeline(eventId: EventId) {

@@ -11,10 +11,15 @@ package io.element.android.features.messages.impl.june.memo
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -31,8 +36,9 @@ private const val POLL_MILLIS = 800L
  *
  * - index: GET of the state event `app.june.memo.index` (plus the split keys, 규약 §1 ②)
  * - memo_op: PUT of a room message event, like the other June ops (kill, steer)
- * - answers: the first of ① [deliver] (answer events seen in the open room timeline, already decrypted by the SDK)
- *   and ② a poll of `/messages` filtered on the answer types (works while the room is not encrypted)
+ * - answers: the first of ① [deliver] (answer events read by [MemoAnswerReader] while the screen is open, already
+ *   decrypted by the SDK; the room timeline itself never shows them) and ② a poll of `/messages` filtered on the
+ *   answer types (works while the room is not encrypted)
  *
  * The access token never leaves this class and is never logged.
  */
@@ -76,6 +82,21 @@ internal class MemoRoomBackend(
             mergeMemoIndex(main, main.splitKeys.mapNotNull { key -> state(MEMO_INDEX_TYPE, key) })
         } catch (e: Exception) {
             Timber.d("June memo: index fetch failed (%s)", e.javaClass.simpleName)
+            null
+        }
+    }
+
+    /** The raw `제안[]` items of the index (main + split keys), for the local suggestion table (A5). */
+    suspend fun fetchProposalItems(): List<JSONObject>? = withContext(Dispatchers.IO) {
+        try {
+            val main = state(MEMO_INDEX_TYPE, "") ?: return@withContext emptyList()
+            val parts = listOf(main) + parseMemoIndex(main).splitKeys.mapNotNull { key -> state(MEMO_INDEX_TYPE, key) }
+            parts.flatMap { part ->
+                val a = part.optJSONArray("제안") ?: JSONArray()
+                (0 until a.length()).mapNotNull { a.optJSONObject(it) }
+            }
+        } catch (e: Exception) {
+            Timber.d("June memo: proposals fetch failed (%s)", e.javaClass.simpleName)
             null
         }
     }
@@ -168,4 +189,90 @@ internal class MemoRoomBackend(
     }
 }
 
-internal val MEMO_ANSWER_TYPES = listOf(MEMO_LIST_TYPE, MEMO_NOTE_TYPE, MEMO_SEARCH_TYPE, MEMO_TAGS_TYPE, MEMO_OK_TYPE, MEMO_ERROR_TYPE)
+internal val MEMO_ANSWER_TYPES = MEMO_RESPONSE_TYPES
+
+/**
+ * The sync transport over the memo bot room (A4): the same send + answer path as the screens used in v1, with a
+ * timeout, the proposals of the index state and the media upload of the encrypted attachments (A5).
+ */
+internal class MemoRoomSyncTransport(
+    private val sessionStore: SessionStore,
+    private val room: MemoRoomBackend,
+    private val timeoutMillis: Long = MEMO_SYNC_TIMEOUT_MILLIS,
+) : MemoSyncTransport {
+    override suspend fun call(op: MemoOp): MemoResponse =
+        withTimeout(timeoutMillis) { room.call(op, UUID.randomUUID().toString()) }
+
+    override suspend fun fetchProposals(): List<JSONObject>? = room.fetchProposalItems()
+
+    /**
+     * 앱8: limited to [MEMO_UPLOAD_TIMEOUT_MILLIS] as a whole. The blocking write has no timeout of its own, so a
+     * watcher closes the connection as soon as the call is cancelled (time out, press limit): the write then throws.
+     */
+    override suspend fun upload(bytes: ByteArray): String = withTimeout(MEMO_UPLOAD_TIMEOUT_MILLIS) {
+        withContext(Dispatchers.IO) {
+            val s = sessionStore.getLatestSession() ?: throw MemoSendException("세션이 없습니다")
+            val conn = URL(s.homeserverUrl.trimEnd('/') + "/_matrix/media/v3/upload").openConnection() as HttpURLConnection
+            coroutineScope {
+                // Started at once (not dispatched), so its finally runs even when the cancel comes right away.
+                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
+                try {
+                    uploadOn(conn, s.accessToken, bytes)
+                } finally {
+                    watcher.cancel()
+                }
+            }
+        }
+    }
+
+    private fun uploadOn(conn: HttpURLConnection, token: String, bytes: ByteArray): String {
+        return try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 60_000
+            conn.doOutput = true
+            conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty("Content-Type", "application/octet-stream")
+            conn.setFixedLengthStreamingMode(bytes.size)
+            conn.outputStream.use { it.write(bytes) }
+            if (conn.responseCode !in 200..299) throw MemoSendException("올리지 못했습니다 (${conn.responseCode})")
+            val uri = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optString("content_uri")
+            if (!uri.startsWith("mxc://")) throw MemoSendException("올린 주소가 없습니다")
+            uri
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** `m.upload.size` of the media config (authenticated v1 path, then the older v3 one). Null when neither answers. */
+    override suspend fun maxUploadSize(): Long? = withContext(Dispatchers.IO) {
+        val s = sessionStore.getLatestSession() ?: return@withContext null
+        listOf("/_matrix/client/v1/media/config", "/_matrix/media/v3/config").firstNotNullOfOrNull { path ->
+            val conn = URL(s.homeserverUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
+            try {
+                conn.connectTimeout = 8_000
+                conn.readTimeout = 10_000
+                conn.setRequestProperty("Authorization", "Bearer ${s.accessToken}")
+                if (conn.responseCode != 200) return@firstNotNullOfOrNull null
+                JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("m.upload.size").takeIf { it > 0 }
+            } catch (e: Exception) {
+                Timber.d("June memo: media config not read (%s)", e.javaClass.simpleName)
+                null
+            } finally {
+                conn.disconnect()
+            }
+        }
+    }
+}
+
+/** A sync answer can take longer than a screen read: the server reads its files at that time (규약 §3). */
+internal const val MEMO_SYNC_TIMEOUT_MILLIS = 30_000L
+
+/** 앱8: one attachment upload at most, the write included (it has no timeout of its own). */
+internal const val MEMO_UPLOAD_TIMEOUT_MILLIS = 60_000L

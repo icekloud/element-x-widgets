@@ -154,6 +154,9 @@ class MessagesNode(
 
         fun navigateToThreadsList()
 
+        /** Element June: the files the bot sent in this room. */
+        fun navigateToBotFiles()
+
         fun navigateToAvatarPreview(username: String, avatarUrl: String)
     }
 
@@ -353,6 +356,7 @@ class MessagesNode(
                         )
                     },
                     onThreadsListClick = callback::navigateToThreadsList,
+                    onBotFilesClick = callback::navigateToBotFiles,
                 )
             }
             roomMemberModerationRenderer.Render(
