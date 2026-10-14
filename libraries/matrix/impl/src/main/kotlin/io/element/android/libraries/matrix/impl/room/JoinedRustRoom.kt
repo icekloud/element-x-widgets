@@ -86,6 +86,7 @@ import org.matrix.rustcomponents.sdk.TypingNotificationsListener
 import org.matrix.rustcomponents.sdk.UserPowerLevelUpdate
 import org.matrix.rustcomponents.sdk.WidgetCapabilities
 import org.matrix.rustcomponents.sdk.WidgetCapabilitiesProvider
+import org.matrix.rustcomponents.sdk.WidgetEventFilter
 import org.matrix.rustcomponents.sdk.getElementCallRequiredPermissions
 import org.matrix.rustcomponents.sdk.use
 import timber.log.Timber
@@ -481,6 +482,28 @@ class JoinedRustRoom(
                     override suspend fun acquireCapabilities(capabilities: WidgetCapabilities): WidgetCapabilities {
                         return getElementCallRequiredPermissions(sessionId.value, baseRoom.deviceId.value)
                     }
+                },
+            )
+        }
+    }
+
+    override fun getEventReaderDriver(widgetSettings: MatrixWidgetSettings, eventTypes: List<String>): Result<MatrixWidgetDriver> {
+        return runCatchingExceptions {
+            // Whatever the reader asks for, it only gets to read these types; nothing to send.
+            val readOnly = WidgetCapabilities(
+                read = eventTypes.map { WidgetEventFilter.MessageLikeWithType(it) },
+                send = emptyList(),
+                requiresClient = false,
+                updateDelayedEvent = false,
+                sendDelayedEvent = false,
+                downloadFiles = false,
+                rtcTransports = false,
+            )
+            RustWidgetDriver(
+                widgetSettings = widgetSettings,
+                room = innerRoom,
+                widgetCapabilitiesProvider = object : WidgetCapabilitiesProvider {
+                    override suspend fun acquireCapabilities(capabilities: WidgetCapabilities): WidgetCapabilities = readOnly
                 },
             )
         }

@@ -36,8 +36,9 @@ private const val POLL_MILLIS = 800L
  *
  * - index: GET of the state event `app.june.memo.index` (plus the split keys, 규약 §1 ②)
  * - memo_op: PUT of a room message event, like the other June ops (kill, steer)
- * - answers: the first of ① [deliver] (answer events seen in the open room timeline, already decrypted by the SDK)
- *   and ② a poll of `/messages` filtered on the answer types (works while the room is not encrypted)
+ * - answers: the first of ① [deliver] (answer events read by [MemoAnswerReader] while the screen is open, already
+ *   decrypted by the SDK; the room timeline itself never shows them) and ② a poll of `/messages` filtered on the
+ *   answer types (works while the room is not encrypted)
  *
  * The access token never leaves this class and is never logged.
  */
