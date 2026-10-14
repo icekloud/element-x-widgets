@@ -147,6 +147,7 @@ internal fun MemoProposalCard(controller: MemoController, p: MemoProposal) {
         val head = when {
             p.isSchedule -> "📅 일정 제안"
             p.isFolderCreate -> "📁 폴더 제안"
+            p.kind == "제목" -> "🏷 제목 제안"
             else -> "제안"
         }
         Text("$head · ${p.summary}", style = ElementTheme.typography.fontBodySmMedium, color = ElementTheme.colors.textActionAccent)
@@ -400,7 +401,7 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
         Box(Modifier.fillMaxWidth().height(72.dp).testTag(MemoTags.TILE_PREVIEW)) {
             when (val p = item.preview) {
                 is MemoPreview.Photo -> {
-                    MemoThumbnail(p.mxc, p.fileJson, Modifier.fillMaxSize(), p.cells.first().localPath)
+                    MemoThumbnail(p.mxc, p.fileJson, Modifier.fillMaxSize().memoOpenPhoto(controller, p.cells, 0), p.cells.first().localPath)
                     if (p.count > 1) MemoCorner("${p.count}장", Modifier.align(Alignment.TopEnd))
                 }
                 is MemoPreview.Link -> if (p.image != null) {
@@ -439,13 +440,16 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
                 )
             }
         }
-        Text(
-            item.title,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp).testTag(MemoTags.TILE_TITLE),
-            style = ElementTheme.typography.fontBodySmMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
+        // 앱7 항목 1: an untitled text note is its body in the preview box above, so no second title line.
+        if (!(item.untitled && item.preview is MemoPreview.Text)) {
+            Text(
+                item.title,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp).testTag(MemoTags.TILE_TITLE),
+                style = ElementTheme.typography.fontBodySmMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
         Text(
             "${item.shortDate} · ${memoKindIcon(item.kind)} ${item.kind}",
             modifier = Modifier.padding(horizontal = 6.dp),

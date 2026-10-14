@@ -98,6 +98,11 @@ internal object MemoTags {
     const val RECORD_PHOTO = "memo_record_photo"
     const val RECORD_TEXT = "memo_record_text"
     const val PHOTO_RETRY = "memo_photo_retry"
+    const val VIEWER = "memo_viewer"
+    const val VIEWER_COUNTER = "memo_viewer_counter"
+    const val VIEWER_CLOSE = "memo_viewer_close"
+    const val VIEWER_RETRY = "memo_viewer_retry"
+    const val VIEWER_LOADING = "memo_viewer_loading"
 }
 
 @ContributesTo(AppScope::class)
@@ -122,6 +127,9 @@ internal class MemoController(
     val nav: MutableState<MemoLocation>,
 ) {
     var sheet by mutableStateOf<MemoSheet?>(null)
+
+    /** 앱7 항목 2: the photos open full screen (not a sheet: back closes it first). */
+    var viewer by mutableStateOf<MemoViewerRequest?>(null)
     var error by mutableStateOf<Pair<String, (() -> Unit)?>?>(null)
 
     /** Tag filters per folder: kept when going back (요구 F "태그 필터는 뒤로가기로 해제 안 함"). */
@@ -163,7 +171,6 @@ internal fun MemoScreen(
     roomId: String,
     useFakeData: Boolean,
     timelineItems: ImmutableList<TimelineItem>,
-    onPhotoClick: (TimelineItem.Event) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -180,7 +187,6 @@ internal fun MemoScreen(
     val scope = rememberCoroutineScope()
     val nav = remember(roomId) { mutableStateOf(MemoLocation()) }
     val controller = remember(store) { MemoController(store, scope, nav) }
-    val photosByMxc = remember(timelineItems) { memoPhotosByMxc(timelineItems) }
 
     // The index is read again when the local notes change (no polling, 설계 §k).
     val localVersion by MemoLocalChanges.version.collectAsState()
@@ -218,12 +224,9 @@ internal fun MemoScreen(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val note = state.note
             when {
-                note != null -> MemoNoteScreen(
-                    controller,
-                    note,
-                    canOpenAttachment = { a -> a.mxc in photosByMxc },
-                    onAttachmentClick = { a -> photosByMxc[a.mxc]?.let(onPhotoClick) },
-                )
+                // 앱7 항목 2: a photo of the note opens the memo viewer from the phone file or the server copy, so the
+                // room timeline (photosByMxc) is no longer needed here.
+                note != null -> MemoNoteScreen(controller, note)
                 state.tab == MemoTab.Record -> MemoRecordTab(controller, localVersion)
                 state.tab == MemoTab.Folders -> MemoFoldersTab(controller)
                 else -> MemoSearchTab(controller)
@@ -236,6 +239,7 @@ internal fun MemoScreen(
         )
     }
     MemoSheetHost(controller)
+    controller.viewer?.let { MemoPhotoViewer(it, onClose = { controller.viewer = null }) }
 }
 
 @Composable
@@ -393,12 +397,12 @@ internal fun memoPhotoModel(mxc: String, fileJson: String?, localPath: String?):
 
 /** The photos of a record card in one row (앱6 결정기록 3): up to [MEMO_CARD_PHOTOS], the rest as "+N" on the last one. */
 @Composable
-private fun MemoPhotoRow(p: MemoPreview.Photo, modifier: Modifier = Modifier) {
+private fun MemoPhotoRow(p: MemoPreview.Photo, modifier: Modifier = Modifier, onOpen: (Int) -> Unit = {}) {
     val cells = p.cells.take(MEMO_CARD_PHOTOS)
     val hidden = memoHiddenPhotos(p)
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         cells.forEachIndexed { i, a ->
-            Box(Modifier.size(72.dp).clip(RoundedCornerShape(6.dp)).testTag(MemoTags.RECORD_PHOTO)) {
+            Box(Modifier.size(72.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpen(i) }.testTag(MemoTags.RECORD_PHOTO)) {
                 MemoThumbnail(a.mxc, a.fileJson, Modifier.fillMaxSize(), a.localPath)
                 if (i == cells.lastIndex && hidden > 0) {
                     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
@@ -465,7 +469,7 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
             overflow = TextOverflow.Ellipsis
         )
         when (val p = item.preview) {
-            is MemoPreview.Photo -> MemoPhotoRow(p, Modifier.padding(vertical = 4.dp))
+            is MemoPreview.Photo -> MemoPhotoRow(p, Modifier.padding(vertical = 4.dp)) { i -> controller.viewer = MemoViewerRequest(p.cells, i) }
             is MemoPreview.Link -> Text(p.url, style = ElementTheme.typography.fontBodySmRegular, maxLines = 1, overflow = TextOverflow.Ellipsis)
             is MemoPreview.Text, null -> Unit
         }

@@ -380,7 +380,8 @@ private const val SNIPPET_SIDE = 30
  */
 internal fun memoSnippet(word: String?, item: MemoItem, plain: String): Pair<String, String>? {
     if (word.isNullOrEmpty()) return null
-    val fields = listOf("제목" to item.title, "본문" to plain, "태그" to item.tags.joinToString(" "), "폴더" to item.folder)
+    // 앱7 항목 1: an untitled note has no title to match, only the start of its body shown in its place.
+    val fields = listOf("제목" to (if (item.untitled) "" else item.title), "본문" to plain, "태그" to item.tags.joinToString(" "), "폴더" to item.folder)
     val (field, text) = fields.firstOrNull { it.second.contains(word, ignoreCase = true) } ?: return "" to "본문"
     val line = text.replace('\n', ' ')
     val at = line.indexOf(word, ignoreCase = true)
@@ -456,10 +457,6 @@ internal fun MemoNoteRecord.toChangeJson(): JSONObject {
     }
     return o.put("rev", rev).put("기기", modified.device.ifEmpty { MEMO_DEVICE_SERVER }).put("순번", modified.seq)
 }
-
-/** Title of a new note: the first non empty line of its plain text, cut to [MEMO_TITLE_CHARS]. */
-internal fun memoTitleOf(text: String): String =
-    memoPlainText(text).lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(MEMO_TITLE_CHARS).orEmpty()
 
 private val SINGLE_URL = Regex("^https?://\\S+$")
 

@@ -44,7 +44,8 @@ class MemoLocalBackendTest : RobolectricTest() {
         val (db, backend, store) = setup()
         val id = backend.create("교토 빵집 메모\n가와라마치 7시")
         val n = db.note(id)!!
-        assertEquals("교토 빵집 메모", n.title)
+        // 앱7 항목 1: typed text goes to the body only, the title stays empty.
+        assertEquals("", n.title)
         assertEquals("텍스트", n.kind)
         assertEquals(MEMO_INBOX, n.folder)
         assertTrue(n.dirty)
@@ -138,7 +139,8 @@ class MemoLocalBackendTest : RobolectricTest() {
         val r = store.search(MemoSearchQuery(text = "교토 #빵집")) as MemoResult.Ok
         val items = (r.response as MemoResponse.Search).page.items
         assertEquals(listOf(a), items.map { it.id })
-        assertEquals("제목", items.single().matchField)
+        // 앱7 항목 1: no title was written, so the word is found in the body.
+        assertEquals("본문", items.single().matchField)
         val all = store.search(MemoSearchQuery(text = "교토", includeHidden = true)) as MemoResult.Ok
         assertEquals(2, (all.response as MemoResponse.Search).page.items.size)
         val period = store.search(MemoSearchQuery(text = "교토", period = MemoPeriod.Today, includeHidden = true)) as MemoResult.Ok
