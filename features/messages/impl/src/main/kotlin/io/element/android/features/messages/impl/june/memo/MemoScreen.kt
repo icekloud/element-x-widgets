@@ -40,6 +40,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,6 +95,9 @@ internal object MemoTags {
     const val SEARCH = "memo_search"
     const val ERROR = "memo_error"
     const val NOTE_ATTACHMENT = "memo_note_attachment"
+    const val RECORD_PHOTO = "memo_record_photo"
+    const val RECORD_TEXT = "memo_record_text"
+    const val PHOTO_RETRY = "memo_photo_retry"
 }
 
 @ContributesTo(AppScope::class)
@@ -335,18 +340,74 @@ internal fun MemoChip(
     )
 }
 
+/**
+ * One memo photo (앱6 원인분석_사진.md). The phone original [localPath] first while it is there, else the server copy:
+ * [fileJson] wrapped as `{"file": …}` so the SDK decrypts it ([memoMediaSourceJson]). A photo that cannot be drawn
+ * shows "↻ 다시" instead of an empty grey box; the local original falls back to the server copy first.
+ */
 @Composable
-internal fun MemoThumbnail(mxc: String, fileJson: String?, modifier: Modifier = Modifier) {
-    AsyncImage(
-        model = if (mxc.startsWith(MEMO_LOCAL_FILE_PREFIX)) {
-            File(mxc.removePrefix(MEMO_LOCAL_FILE_PREFIX))
+internal fun MemoThumbnail(mxc: String, fileJson: String?, modifier: Modifier = Modifier, localPath: String? = null) {
+    val local = localPath ?: mxc.takeIf { it.startsWith(MEMO_LOCAL_FILE_PREFIX) }?.removePrefix(MEMO_LOCAL_FILE_PREFIX)
+    val hasServer = !mxc.startsWith(MEMO_LOCAL_FILE_PREFIX)
+    var useLocal by remember(local) { mutableStateOf(local != null && File(local).isFile) }
+    var failed by remember(mxc, local) { mutableStateOf(!useLocal && !hasServer) }
+    var attempt by remember { mutableIntStateOf(0) }
+    Box(modifier.background(ElementTheme.colors.bgSubtleSecondary), contentAlignment = Alignment.Center) {
+        if (failed) {
+            Text(
+                "↻ 다시",
+                modifier = Modifier
+                    .clickable {
+                        useLocal = local != null && File(local).isFile
+                        failed = !useLocal && !hasServer
+                        attempt++
+                    }
+                    .padding(4.dp)
+                    .testTag(MemoTags.PHOTO_RETRY),
+                style = ElementTheme.typography.fontBodyXsRegular,
+                color = ElementTheme.colors.textSecondary,
+            )
         } else {
-            MediaRequestData(MediaSource(mxc, fileJson), MediaRequestData.Kind.Thumbnail(320))
-        },
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier.background(ElementTheme.colors.bgSubtleSecondary),
-    )
+            key(attempt, useLocal) {
+                AsyncImage(
+                    model = memoPhotoModel(mxc, fileJson, local.takeIf { useLocal }),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onError = {
+                        if (useLocal && hasServer) {
+                            useLocal = false
+                        } else {
+                            failed = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+/** What Coil loads for a memo photo: the local file, or the SDK request with the json the SDK can decrypt. */
+internal fun memoPhotoModel(mxc: String, fileJson: String?, localPath: String?): Any =
+    localPath?.let(::File) ?: MediaRequestData(MediaSource(mxc, memoMediaSourceJson(fileJson)), MediaRequestData.Kind.Thumbnail(320))
+
+/** The photos of a record card in one row (앱6 결정기록 3): up to [MEMO_CARD_PHOTOS], the rest as "+N" on the last one. */
+@Composable
+private fun MemoPhotoRow(p: MemoPreview.Photo, modifier: Modifier = Modifier) {
+    val cells = p.cells.take(MEMO_CARD_PHOTOS)
+    val hidden = memoHiddenPhotos(p)
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        cells.forEachIndexed { i, a ->
+            Box(Modifier.size(72.dp).clip(RoundedCornerShape(6.dp)).testTag(MemoTags.RECORD_PHOTO)) {
+                MemoThumbnail(a.mxc, a.fileJson, Modifier.fillMaxSize(), a.localPath)
+                if (i == cells.lastIndex && hidden > 0) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+                        Text("+$hidden", color = Color.White, style = ElementTheme.typography.fontBodyLgMedium)
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- 기록 탭
@@ -395,23 +456,29 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
             .padding(8.dp)
             .testTag(MemoTags.RECORD_ROW),
     ) {
+        val text = memoCardText(item)
         Text(
-            "나 · ${memoRecordTime(item.date)} · ${memoKindIcon(item.kind)} " + item.title.ifBlank { item.kind },
+            ("나 · ${memoRecordTime(item.date)} · ${memoKindIcon(item.kind)} " + memoCardHeadTitle(item, text)).trimEnd(),
             style = ElementTheme.typography.fontBodySmRegular,
             color = ElementTheme.colors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         when (val p = item.preview) {
-            is MemoPreview.Photo -> Row(modifier = Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                MemoThumbnail(p.mxc, p.fileJson, Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)))
-                if (p.count > 1) Text(" +${p.count - 1}", color = ElementTheme.colors.textSecondary)
-            }
-            is MemoPreview.Text -> p.text.takeIf { it.isNotBlank() && it != item.title }?.let {
-                Text(it, style = ElementTheme.typography.fontBodySmRegular, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
+            is MemoPreview.Photo -> MemoPhotoRow(p, Modifier.padding(vertical = 4.dp))
             is MemoPreview.Link -> Text(p.url, style = ElementTheme.typography.fontBodySmRegular, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            null -> Unit
+            is MemoPreview.Text, null -> Unit
+        }
+        // 앱6 항목 4·5: the body right above the folder and tag chips, a bit bigger (14 sp), up to 7 lines; the card
+        // grows with it (no fixed height).
+        text?.let {
+            Text(
+                it,
+                modifier = Modifier.padding(top = 2.dp).testTag(MemoTags.RECORD_TEXT),
+                style = ElementTheme.typography.fontBodyMdRegular,
+                maxLines = MEMO_CARD_LINES,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         FlowRow(modifier = Modifier.padding(top = 4.dp)) {
             MemoChip(

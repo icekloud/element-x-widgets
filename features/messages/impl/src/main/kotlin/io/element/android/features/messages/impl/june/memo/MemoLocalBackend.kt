@@ -159,10 +159,7 @@ internal class MemoLocalBackend(
             .put("고정제안", n.pinSuggested)
             .put("삭제", n.deleted)
         n.scheduleState?.let { header.put("일정상태", it) }
-        val files = n.attachments.mapNotNull { a ->
-            val source = a.mxc ?: a.localPath?.let { MEMO_LOCAL_FILE_PREFIX + it } ?: return@mapNotNull null
-            MemoAttachment(source, a.fileJson)
-        }
+        val files = n.attachments.mapNotNull { it.toScreen() }
         return MemoResponse.Note(rid, MemoNote(n.id, header, n.body, files, truncated = false))
     }
 

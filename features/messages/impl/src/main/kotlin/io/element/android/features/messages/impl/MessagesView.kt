@@ -74,6 +74,8 @@ import io.element.android.features.messages.impl.june.JuneEditKind
 import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
 import io.element.android.features.messages.impl.june.memo.MemoScreen
+import io.element.android.features.messages.impl.june.memo.MemoSyncButton
+import io.element.android.features.messages.impl.june.memo.memoSyncRoomIdOf
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
 import io.element.android.features.messages.impl.messagecomposer.AttachmentsBottomSheet
@@ -283,6 +285,11 @@ fun MessagesView(
                                     onThreadsListClick = onThreadsListClick,
                                     onSendQuickText = { state.eventSink(MessagesEvent.SendQuickText(it)) },
                                     onBotFilesClick = { hidingKeyboard { onBotFilesClick() } },
+                                    memoSyncRoomId = memoSyncRoomIdOf(
+                                        LocalContext.current,
+                                        state.roomId.value,
+                                        inThread = state.timelineState.timelineMode is Timeline.Mode.Thread,
+                                    ),
                                 )
                             }
                         )
@@ -503,14 +510,20 @@ internal fun RowScope.MessagesMenuActions(
     onThreadsListClick: () -> Unit,
     onSendQuickText: (String) -> Unit = {},
     onBotFilesClick: () -> Unit = {},
+    memoSyncRoomId: String? = null,
 ) {
-    // Element June: stop the bot's current task, and the list of files the bot sent in this room
+    // Element June: stop the bot's current task, and the list of files the bot sent in this room.
+    // The memo bot room has the sync button there instead (앱6 항목 2); every other room keeps "중단".
     var showStopConfirm by remember { mutableStateOf(false) }
-    Icon(
-        modifier = Modifier.clickable { showStopConfirm = true },
-        imageVector = CompoundIcons.Stop(),
-        contentDescription = "중단",
-    )
+    if (memoSyncRoomId != null) {
+        MemoSyncButton(memoSyncRoomId)
+    } else {
+        Icon(
+            modifier = Modifier.clickable { showStopConfirm = true },
+            imageVector = CompoundIcons.Stop(),
+            contentDescription = "중단",
+        )
+    }
     Spacer(Modifier.width(12.dp))
     Icon(
         modifier = Modifier.clickable(onClick = onBotFilesClick),

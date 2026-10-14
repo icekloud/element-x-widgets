@@ -421,6 +421,7 @@ internal fun MemoNoteScreen(
                                     .clip(RoundedCornerShape(6.dp))
                                     .then(open)
                                     .testTag(MemoTags.NOTE_ATTACHMENT),
+                                a.localPath,
                             )
                         }
                     }
