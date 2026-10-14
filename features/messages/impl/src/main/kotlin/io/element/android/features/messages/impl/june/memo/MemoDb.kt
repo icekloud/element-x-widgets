@@ -560,6 +560,8 @@ private class MemoRow(
         pinSuggested = pinSuggested,
         scheduleState = scheduleState,
         text = text,
+        photosWaiting = attachments.count { it.state == MEMO_ATTACH_LOCAL || it.state == MEMO_ATTACH_UPLOADING },
+        photosFailed = attachments.count { it.state == MEMO_ATTACH_FAILED },
     )
 }
 

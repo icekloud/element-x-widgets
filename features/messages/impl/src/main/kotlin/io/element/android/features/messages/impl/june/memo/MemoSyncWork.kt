@@ -57,7 +57,12 @@ internal object MemoSyncHub {
     private fun entry(context: Context, sessionStore: SessionStore, roomId: String): Pair<MemoRoomBackend, MemoSyncRunner> =
         runners.getOrPut(roomId) {
             val room = MemoRoomBackend(sessionStore, roomId)
-            room to MemoSyncRunner(MemoDatabase.get(context), MemoRoomSyncTransport(sessionStore, room))
+            room to MemoSyncRunner(
+                MemoDatabase.get(context),
+                MemoRoomSyncTransport(sessionStore, room),
+                // 앱8 항목 1 e: step names and counts only (no token, address or key ever reaches this line).
+                log = { Timber.i("June memo sync: %s", it) },
+            )
         }
 
     fun runner(context: Context, sessionStore: SessionStore, roomId: String): MemoSyncRunner = entry(context, sessionStore, roomId).second

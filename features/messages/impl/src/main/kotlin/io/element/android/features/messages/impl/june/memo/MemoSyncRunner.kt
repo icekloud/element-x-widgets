@@ -9,21 +9,50 @@ package io.element.android.features.messages.impl.june.memo
 
 import io.element.android.libraries.core.data.tryOrNull
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** What one press of the sync button did. */
-internal enum class MemoButtonSync { Done, Failed, Busy }
+/** What one press of the sync button did. [Partial]: the notes went up, some photos wait for a later try (앱8). */
+internal enum class MemoButtonSync { Done, Partial, Failed, TimedOut, Busy }
 
 /** The short line the sync button shows after a press (앱6 항목 2). */
 internal fun memoSyncButtonText(result: MemoButtonSync): String = when (result) {
     MemoButtonSync.Done -> "동기화했습니다"
+    MemoButtonSync.Partial -> "노트는 올렸습니다 · 사진은 나중에 다시 시도합니다"
     MemoButtonSync.Failed -> "동기화하지 못했습니다 · 서버에 닿지 못함"
+    MemoButtonSync.TimedOut -> "동기화가 ${MemoSyncRunner.BUTTON_TIMEOUT_MS / 1000}초 안에 끝나지 않았습니다 · 나중에 다시 시도합니다"
     MemoButtonSync.Busy -> "이미 동기화하고 있습니다"
+}
+
+/** One press of the sync button in numbers (앱8 항목 1 d): what went up, what came down, the photos still waiting. */
+internal data class MemoSyncReport(
+    val result: MemoButtonSync,
+    val sent: Int = 0,
+    val received: Int = 0,
+    val photosLeft: Int = 0,
+)
+
+/** The line shown after every press (앱8 항목 1 d): never nothing. */
+internal fun memoSyncReportText(r: MemoSyncReport): String = when (r.result) {
+    MemoButtonSync.Done -> when {
+        r.sent == 0 && r.received == 0 -> "동기화했습니다 · 바뀐 것 없음"
+        else -> "동기화했습니다 · 올림 ${r.sent}건 · 받음 ${r.received}건"
+    }
+    MemoButtonSync.Partial -> "노트 ${r.sent}건을 올렸습니다 · 사진 ${r.photosLeft}장은 나중에 다시 시도합니다"
+    MemoButtonSync.Failed -> if (r.sent > 0) {
+        "노트 ${r.sent}건만 올렸습니다 · 서버에 닿지 못함"
+    } else {
+        memoSyncButtonText(MemoButtonSync.Failed)
+    }
+    else -> memoSyncButtonText(r.result)
 }
 
 /** What the sync needs from the memo bot room. The room backend implements it; the tests use a fake. */
@@ -56,9 +85,18 @@ internal class MemoSyncRunner(
     private val encrypt: (ByteArray) -> MemoEncryptedFile = ::memoEncryptAttachment,
     /** The size of a local file without reading it, null when unknown (then the stored size is used). */
     private val fileSize: (String) -> Long? = { path -> File(path).takeIf { it.isFile }?.length() },
+    /** One line per step (앱8 항목 1 e): counts and step names only, never a token, an address or a key. */
+    private val log: (String) -> Unit = {},
 ) {
     private val mutex = Mutex()
     private val buttonRunning = AtomicBoolean(false)
+
+    /** When the last pull round ended well, so a press right after the screen's own pull does not pull again. */
+    @Volatile
+    private var lastPullOkMs = 0L
+
+    /** Notes that came down during the current round (the press report). */
+    private var receivedInRound = 0
 
     private fun device(): String = memoDeviceOf(db)
 
@@ -78,51 +116,96 @@ internal class MemoSyncRunner(
     }
 
     /** Screen shown: pull what changed, then send what waits. Returns false when the server could not be reached. */
-    suspend fun syncNow(): Boolean = mutex.withLock {
-        val pulled = pullLocked()
-        val pushed = if (pulled) uploadLocked(force = false) else false
-        pulled && pushed
-    }
+    suspend fun syncNow(): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+        mutex.withLock {
+            log("화면 동기화 시작")
+            val pulled = pullLocked()
+            val pushed = if (pulled) uploadLocked(force = false).ok else false
+            log("화면 동기화 끝 받기=$pulled 올리기=$pushed")
+            pulled && pushed
+        }
+    } ?: false.also { log("화면 동기화 시간 초과") }
 
     /**
-     * The sync button of the memo room top bar (앱6 항목 2): `sync_pull`, then every waiting attachment and note at once,
-     * ignoring their back-off. A second press while one runs does nothing ([MemoButtonSync.Busy]); the automatic syncs
-     * still wait for the same lock, so two syncs never run together.
+     * The sync button of the memo room top bar (앱6 항목 2): `sync_pull`, the waiting notes at once, then the
+     * attachments and the notes they completed, ignoring every back-off. A second press while one runs does nothing
+     * ([MemoButtonSync.Busy]); the automatic syncs wait for the same lock, so two syncs never run together.
+     *
+     * 앱8: the whole press is limited to [BUTTON_TIMEOUT_MS]. The notes go up before any photo (a stuck upload held the
+     * lock and the notes behind it before), and when the time runs out during the photos the press ends as
+     * [MemoButtonSync.Partial]: the lock and the button are always free again afterwards.
      */
-    suspend fun syncByButton(): MemoButtonSync {
-        if (!buttonRunning.compareAndSet(false, true)) return MemoButtonSync.Busy
+    suspend fun syncByButton(): MemoButtonSync = syncByButtonReport().result
+
+    suspend fun syncByButtonReport(): MemoSyncReport {
+        if (!buttonRunning.compareAndSet(false, true)) return MemoSyncReport(MemoButtonSync.Busy)
+        val start = clock()
         return try {
-            mutex.withLock {
-                val pulled = pullLocked()
-                // What waits goes up even when the pull failed, like the automatic push after typing.
-                val pushed = uploadLocked(force = true)
-                if (pulled && pushed) MemoButtonSync.Done else MemoButtonSync.Failed
+            var report: MemoSyncReport? = null
+            val finished = withTimeoutOrNull(BUTTON_TIMEOUT_MS) {
+                mutex.withLock {
+                    receivedInRound = 0
+                    log("버튼 동기화 시작")
+                    // The screen pulled a moment ago (it opens with one): one pull is enough (앱8 추가 점검).
+                    val pulled = if (clock() - lastPullOkMs < RECENT_PULL_MS) true.also { log("받기 생략(방금 받음)") } else pullLocked()
+                    // What waits goes up even when the pull failed, like the automatic push after typing.
+                    val notes = pushNotesLocked(force = true)
+                    var sent = notes.sent
+                    report = MemoSyncReport(if (pulled && notes.ok) MemoButtonSync.Done else MemoButtonSync.Failed, sent, receivedInRound, pendingPhotos())
+                    val left = BUTTON_TIMEOUT_MS - (clock() - start)
+                    val photosOk = withTimeoutOrNull(left.coerceAtLeast(1)) { uploadAttachments(force = true) }
+                    if (photosOk == null) log("버튼 동기화: 사진 올리기 시간 초과")
+                    // The photos that went up complete their notes: those go up again with the mxc.
+                    val again = pushNotesLocked(force = true)
+                    sent += again.sent
+                    val photosLeft = pendingPhotos()
+                    val result = when {
+                        !pulled || !notes.ok || !again.ok -> MemoButtonSync.Failed
+                        photosOk != true || photosLeft > 0 -> MemoButtonSync.Partial
+                        else -> MemoButtonSync.Done
+                    }
+                    MemoSyncReport(result, sent, receivedInRound, photosLeft)
+                }
             }
+            // Out of time before the photos: what the notes did is still said; with nothing known, a time out.
+            (finished ?: report?.let { it.copy(result = if (it.result == MemoButtonSync.Done) MemoButtonSync.Partial else it.result) }
+                ?: MemoSyncReport(MemoButtonSync.TimedOut))
+                .also { log("버튼 동기화 끝 ${it.result} 올림=${it.sent} 받음=${it.received} 사진대기=${it.photosLeft} ${clock() - start}ms") }
         } finally {
             buttonRunning.set(false)
         }
     }
 
-    /** Input stopped (2.5 s) or a retry is due: attachments then `sync_push`. [force] ignores the back-off. */
-    suspend fun push(force: Boolean = false): Boolean = mutex.withLock { uploadLocked(force) }
+    /** Input stopped (2.5 s) or a retry is due: `sync_push`, attachments, then their notes. [force] ignores the back-off. */
+    suspend fun push(force: Boolean = false): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+        mutex.withLock { uploadLocked(force).ok }
+    } ?: false.also { log("올리기 시간 초과") }
 
     /**
      * The one-time job after the screen went away (관리자 결정 2026-10-13 1-1 (가)): the attachments only, without
      * waiting for their back-off (WorkManager has its own). No `sync_push`: its answer can only be read through the
      * open room timeline in an encrypted room, so the notes and the suggestion answers go up at the next screen open.
      */
-    suspend fun pushAttachments(): Boolean = mutex.withLock { uploadAttachments(force = true) }
+    suspend fun pushAttachments(): Boolean = withTimeoutOrNull(JOB_TIMEOUT_MS) {
+        mutex.withLock { uploadAttachments(force = true) }
+    } ?: false.also { log("사진 작업 시간 초과") }
+
+    /** Attachments still waiting for their upload (the press report and the card mark). */
+    private fun pendingPhotos(): Int = db.pendingAttachments().size
 
     // ---------------------------------------------------------------- pull
 
     private suspend fun pullLocked(): Boolean {
         var withSegments = true
         repeat(MAX_PULL_ROUNDS) {
+            log("받기 요청")
             val content = when (val r = callOrNull(MemoOp("sync_pull", MemoSync.pullArgs(db, device(), withSegments).toArgs()))) {
                 is MemoResponse.Sync -> r.content
-                else -> return false
+                else -> return false.also { log("받기 실패(답 없음)") }
             }
             val result = MemoSync.applySync(db, content, clock())
+            receivedInRound += result.applied
+            log("받기 적용 ${result.applied}건 · 다시받을 ${result.wantedIds.size + result.truncatedIds.size}건 · 올릴 ${result.pushIds.size}건")
             // ① server newer / ④ unknown here, and the notes sent cut short: fetched one by one (규약 §3).
             (result.truncatedIds + result.wantedIds).distinct().take(MAX_GETS).forEach { id ->
                 val note = callOrNull(MemoOp.get(id)) as? MemoResponse.Note ?: return@forEach
@@ -133,10 +216,12 @@ internal class MemoSyncRunner(
             if (result.applied > 0 || result.wantedIds.isNotEmpty() || result.truncatedIds.isNotEmpty()) MemoLocalChanges.changed()
             if (!result.morePages) {
                 syncSuggestions()
+                lastPullOkMs = clock()
                 return true
             }
             withSegments = false
         }
+        lastPullOkMs = clock()
         return true
     }
 
@@ -173,23 +258,42 @@ internal class MemoSyncRunner(
 
     // ---------------------------------------------------------------- push
 
-    private suspend fun uploadLocked(force: Boolean): Boolean {
+    /** What one push step did: [ok] false when the server could not be reached, [sent] notes sent and answered. */
+    private data class Pushed(val ok: Boolean, val sent: Int)
+
+    /**
+     * 앱8 항목 1 b: the notes first (a note waiting for its photo goes up without it: the server keeps it and adds the
+     * photo when the stamped note comes), then the attachments, then the notes the attachments completed. A stuck or
+     * failing photo upload no longer holds the notes back.
+     */
+    private suspend fun uploadLocked(force: Boolean): Pushed {
+        val first = pushNotesLocked(force)
         val attachmentsOk = uploadAttachments(force)
+        val again = pushNotesLocked(force)
+        return Pushed(first.ok && again.ok && attachmentsOk, first.sent + again.sent)
+    }
+
+    /** One `sync_push` of the notes and suggestion answers that wait (all of them with [force]). */
+    private suspend fun pushNotesLocked(force: Boolean): Pushed {
         val now = clock()
         val due = if (force) db.outbox() else db.outboxDue(now)
         val notes = due.filter { it.kind == MEMO_OUTBOX_NOTE }.take(MemoSync.PUSH_BATCH)
         val answers = due.filter { it.kind == MEMO_OUTBOX_PROPOSAL }
-        val args = MemoSync.pushArgs(notes, device(), JSONArray(answers.mapNotNull { tryOrNull { JSONObject(it.payload) } })) ?: return attachmentsOk
+        val args = MemoSync.pushArgs(notes, device(), JSONArray(answers.mapNotNull { tryOrNull { JSONObject(it.payload) } }))
+            ?: return Pushed(true, 0)
+        log("올리기 요청 노트 ${notes.size}건 · 제안응답 ${answers.size}건")
         val ack = callOrNull(MemoOp("sync_push", args.toArgs())) as? MemoResponse.SyncAck
         if (ack == null) {
+            log("올리기 실패(답 없음)")
             MemoSync.failUploads(db, notes + answers, now, "서버에 닿지 못함")
-            return false
+            return Pushed(false, 0)
         }
         val result = MemoSync.applyAck(db, ack.content, notes, clock())
         applyProposalResults(ack.content.optJSONArray("제안결과"), answers)
+        log("올리기 응답 받음 ${result.accepted} · 합침 ${result.merged} · 거절 ${result.rejected}")
         MemoLocalChanges.changed()
         if (result.pullAgain) pullLocked()
-        return attachmentsOk
+        return Pushed(true, notes.size)
     }
 
     private fun applyProposalResults(results: JSONArray?, sent: List<MemoOutboxRow>) {
@@ -231,29 +335,22 @@ internal class MemoSyncRunner(
                     continue
                 }
             }
+            log("사진 올리기 ${sealed.cipher.size}바이트")
             val mxc = try {
                 transport.upload(sealed.cipher)
             } catch (e: CancellationException) {
-                throw e
+                // The upload's own time out is a failed try (see callOrNull); a cancel of the sync goes up.
+                if (e !is TimeoutCancellationException) throw e
+                currentCoroutineContext().ensureActive()
+                uploadFailed(a)
+                log("사진 올리기 시간 초과")
+                return false
             } catch (e: Exception) {
-                val tries = a.tries + 1
-                val failed = tries >= MEMO_ATTACH_MAX_TRIES
-                val retryAt = MemoSync.nextTryMs(tries, clock())
-                db.transaction {
-                    db.updateAttachment(
-                        a.id,
-                        null,
-                        null,
-                        if (failed) MEMO_ATTACH_FAILED else MEMO_ATTACH_LOCAL,
-                        tries,
-                        retryAt,
-                        if (failed) MEMO_ATTACH_ERR_UPLOAD else null,
-                    )
-                    db.holdAttachments(retryAt)
-                }
-                if (failed) MemoLocalChanges.changed()
+                log("사진 올리기 실패 (${e.javaClass.simpleName})")
+                uploadFailed(a)
                 return false
             }
+            log("사진 올림")
             val now = clock()
             db.transaction {
                 db.updateAttachment(a.id, mxc, sealed.fileJson(mxc, a.mime).toString(), MEMO_ATTACH_DONE, 0)
@@ -267,6 +364,27 @@ internal class MemoSyncRunner(
             MemoLocalChanges.changed()
         }
         return true
+    }
+
+    /** One failed upload try of [a]: its next try, or 실패 after [MEMO_ATTACH_MAX_TRIES]. */
+    private fun uploadFailed(a: MemoLocalAttachment) {
+        val tries = a.tries + 1
+        val failed = tries >= MEMO_ATTACH_MAX_TRIES
+        val retryAt = MemoSync.nextTryMs(tries, clock())
+        db.transaction {
+            db.updateAttachment(
+                a.id,
+                null,
+                null,
+                if (failed) MEMO_ATTACH_FAILED else MEMO_ATTACH_LOCAL,
+                tries,
+                retryAt,
+                if (failed) MEMO_ATTACH_ERR_UPLOAD else null,
+            )
+            db.holdAttachments(retryAt)
+        }
+        // The card mark follows the attachment state (앱8 항목 1 d).
+        MemoLocalChanges.changed()
     }
 
     /** One attachment read and encrypted, or the reason it cannot be uploaded. */
@@ -295,11 +413,22 @@ internal class MemoSyncRunner(
         }
     }
 
+    /**
+     * 앱8 원인: the answer wait of [MemoSyncTransport.call] ends with a [TimeoutCancellationException], which is a
+     * [CancellationException]. Rethrown, it ended the whole sync quietly: no `sync_push` after the pull, and the button
+     * neither stopped spinning nor said anything. A time out of the call itself is a failed call; only a cancel of this
+     * sync (the screen left, the press limit) still goes up.
+     */
     private suspend fun callOrNull(op: MemoOp): MemoResponse? = try {
         transport.call(op)
+    } catch (e: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive()
+        log("${op.op} 답 시간 초과")
+        null
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        log("${op.op} 보내지 못함 (${e.javaClass.simpleName})")
         null
     }
 
@@ -312,6 +441,18 @@ internal class MemoSyncRunner(
 
         /** Delay between the last local change and the `sync_push` (설계 §k-4 ②). */
         const val PUSH_DELAY_MS = 2_500L
+
+        /** 앱8: one press of the sync button at most; the lock and the button are free again after it. */
+        const val BUTTON_TIMEOUT_MS = 90_000L
+
+        /** 앱8: one automatic round (screen shown, input stopped) at most. */
+        const val AUTO_TIMEOUT_MS = 120_000L
+
+        /** 앱8: one run of the one-time upload job at most (WorkManager tries again later). */
+        const val JOB_TIMEOUT_MS = 300_000L
+
+        /** 앱8: a press within this time after a good pull (the screen's own) does not pull again. */
+        const val RECENT_PULL_MS = 10_000L
     }
 }
 

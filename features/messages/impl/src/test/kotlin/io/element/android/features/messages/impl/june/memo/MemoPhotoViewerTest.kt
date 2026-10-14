@@ -8,14 +8,18 @@
 package io.element.android.features.messages.impl.june.memo
 
 import io.element.android.libraries.matrix.ui.media.MediaRequestData
+import io.element.android.tests.testutils.robolectric.RobolectricTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/** 앱7 항목 2: where the full screen viewer draws a photo from, and its states. */
-class MemoPhotoViewerTest {
+/**
+ * 앱7 항목 2: where the full screen viewer draws a photo from, and its states. Robolectric like the other memo tests
+ * (앱8): `org.json` is only the android.jar stub on a plain JVM test, where `JSONObject.put` returns null.
+ */
+class MemoPhotoViewerTest : RobolectricTest() {
     private val sealed = memoEncryptAttachment(byteArrayOf(1, 2, 3)).fileJson("mxc://hs/a", "image/jpeg").toString()
 
     @Test
