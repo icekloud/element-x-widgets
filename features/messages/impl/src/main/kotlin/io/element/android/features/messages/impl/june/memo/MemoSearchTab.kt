@@ -6,7 +6,7 @@
  * Please see LICENSE files in the repository root for full details.
  */
 
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 
 package io.element.android.features.messages.impl.june.memo
 
@@ -16,15 +16,21 @@ import android.speech.RecognizerIntent
 import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,6 +39,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -54,6 +62,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.designsystem.theme.components.Text
@@ -61,6 +72,7 @@ import io.element.android.libraries.designsystem.theme.components.TextField
 import io.noties.markwon.Markwon
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Search tab state, kept across tab switches (the query stays when coming back). */
@@ -380,13 +392,16 @@ internal fun MemoNoteScreen(
             }
         }
     }
-    LaunchedEffect(id) { if (note == null) load() }
     val nav = controller.nav.value
+    // 앱12 D: while the editor is open the note is never read again — a change coming from the server must not take
+    // the place of what is being typed. Back in the reading screen every local change (the auto save included) shows.
+    val localVersion by MemoLocalChanges.version.collectAsState()
+    LaunchedEffect(id, nav.editing, localVersion) { if (!nav.editing) load() }
     val index by store.index.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            // 앱10 C: `‹ #번호  제목  날짜` (no author), the date of the user's last change, else the creation.
+            // 앱10 C / 앱12 A: `‹ #번호  제목` on the left, the dates right aligned beside it.
             val title = note?.let { memoNoteScreenHead(it) } ?: "메모"
             val goBack = {
                 when (val b = nav.back()) {
@@ -401,6 +416,7 @@ internal fun MemoNoteScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).clickable(onClick = goBack).testTag(MemoTags.NOTE_HEAD),
             )
+            note?.let { MemoNoteDates(it) }
             if (note != null && !nav.editing) {
                 Text(
                     "편집",
@@ -416,12 +432,17 @@ internal fun MemoNoteScreen(
                 Text("다시", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable(onClick = load).padding(horizontal = 8.dp))
             }
             n == null -> Text("불러오는 중…", modifier = Modifier.padding(12.dp), color = ElementTheme.colors.textSecondary)
-            nav.editing -> MemoNoteEditor(controller, n, onSave = { saved ->
-                note = saved
-                // Read again: the photos copied just now, the date of this change and the number.
-                load()
-            })
-            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+            nav.editing -> MemoNoteEditor(controller, n)
+            // 앱12 C (관리자: "메모 화면에서 꾹 누르면 편집모드로"): a long press anywhere on the reading area starts the
+            // editor. Over the body text itself the Android text selection takes the press first (결정기록 3).
+            else -> Column(
+                Modifier
+                    .fillMaxSize()
+                    .memoLongPressEdit(controller)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp)
+                    .testTag(MemoTags.NOTE_READ)
+            ) {
                 Text(
                     "📁 ${n.folder}" + if (n.pinned) " · 📌" else "",
                     style = ElementTheme.typography.fontBodySmRegular,
@@ -456,10 +477,48 @@ internal fun MemoNoteScreen(
     }
 }
 
-/** The head of an open note: `#12  제목  2026-10-15`; an untitled note without number shows "메모" as before. */
+/**
+ * The head of an open note: `#12  제목`; an untitled note without number shows "메모" as before. 앱12 A: the date is
+ * no longer part of it — it is drawn right aligned, on its own two lines ([MemoNoteDates]).
+ */
 internal fun memoNoteScreenHead(n: MemoNote): String {
     val title = n.header.optString("제목").ifEmpty { if (n.number > 0) "" else "메모" }
-    return memoNoteHead(n.number, title, n.shownDate.take(10))
+    return memoNoteHead(n.number, title, "")
+}
+
+/**
+ * 앱12 A (관리자: "날짜표기를 우측 정렬하고 폰트크기를 한단계 낮추고 진한회색으로"): `작성 …` and, when the user changed
+ * the note later, `수정 …` under it. One step below the head text, in the grey halfway between the body and the
+ * secondary colour of the theme (dark theme follows).
+ */
+@Composable
+private fun MemoNoteDates(note: MemoNote) {
+    val lines = memoNoteDateLines(note)
+    if (lines.isEmpty()) return
+    val color = lerp(ElementTheme.colors.textSecondary, ElementTheme.colors.textPrimary, MEMO_DATE_TONE)
+    Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 6.dp).testTag(MemoTags.NOTE_DATE)) {
+        lines.forEach { line ->
+            Text(line, style = ElementTheme.typography.fontBodyMdRegular, color = color, maxLines = 1)
+        }
+    }
+}
+
+/** How far the date colour sits between the secondary and the primary text colour. */
+private const val MEMO_DATE_TONE = 0.5f
+
+/** 추가요청 1: the photo row of the editor keeps this much height at most, so a long body is not pushed away. */
+private val MEMO_EDIT_PHOTOS_HEIGHT = 190.dp
+
+/** 앱12 C: a long press on the reading area opens the editor (nothing on a short press, no ripple). */
+@Composable
+private fun Modifier.memoLongPressEdit(controller: MemoController): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    return combinedClickable(
+        interactionSource = interaction,
+        indication = null,
+        onLongClick = { memoReadingLongPress(controller.nav.value, controller.select.active)?.let { next -> controller.go { next } } },
+        onClick = {},
+    )
 }
 
 /** Markdown body, drawn with Markwon like the June file viewer (viewfolder). */
@@ -476,20 +535,57 @@ private fun MemoMarkdown(body: String) {
     )
 }
 
+/**
+ * 앱12 B·D·E: the note editor without a [저장] button. What is typed is kept outside the screen ([MemoEditHub]) and
+ * written into the local note [MEMO_EDIT_SAVE_DELAY_MS] after the typing stops, and once more when the editor leaves
+ * the screen (back, another tab, the app going to the background). [취소], bottom right, goes back to the state the
+ * editor was opened with. The photos go with the last save only (결정기록 4).
+ */
 @Composable
-private fun MemoNoteEditor(controller: MemoController, note: MemoNote, onSave: (MemoNote) -> Unit) {
-    val title0 = note.header.optString("제목")
-    val tags0 = note.tags.joinToString(" ") { "#$it" }
-    var title by remember(note.id) { mutableStateOf(title0) }
-    var tags by remember(note.id) { mutableStateOf(tags0) }
-    var body by remember(note.id) { mutableStateOf(note.body) }
-    // 앱10 D: the photos are edited here too; nothing changes before [저장] (a removed one can be brought back).
-    var photos by remember(note.id) { mutableStateOf(MemoPhotoEdit(note.attachments)) }
-    var saving by remember(note.id) { mutableStateOf(false) }
+private fun MemoNoteEditor(controller: MemoController, note: MemoNote) {
     val context = LocalContext.current.applicationContext
-    val dirty = title != title0 || tags != tags0 || body != note.body || photos.changed
-    LaunchedEffect(dirty) { controller.go { it.edited(dirty) } }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+    val sessions by MemoEditHub.sessions.collectAsState()
+    LaunchedEffect(note.id) { MemoEditHub.open(note.id, memoEditDraftOf(note)) }
+    val state = sessions[note.id] ?: return
+    val persist: suspend (MemoEditState, Boolean) -> MemoSaveResult = { current, finish ->
+        // New picks are copied next to the database first, like the photos of a new note (앱8 order).
+        val picked = if (finish) current.draft.photos.picked.map(Uri::parse) else emptyList()
+        val added = memoCopyPictures(context, picked).map(::memoPhotoArg)
+        val op = memoEditOp(note.id, current.saved, current.draft, added, includePhotos = finish)
+        val saved = memoEditSaved(current.saved, current.draft, includePhotos = finish)
+        when (val r = op?.let { controller.store.request(it) }) {
+            null -> MemoSaveResult(saved)
+            is MemoResult.Ok -> MemoSaveResult(saved)
+            is MemoResult.Failed -> MemoSaveResult(null, r.reason)
+        }
+    }
+    // The typing stopped for a moment: write the text. A new keystroke starts the wait again.
+    LaunchedEffect(note.id, state.draft) {
+        if (!state.textDirty) return@LaunchedEffect
+        delay(MEMO_EDIT_SAVE_DELAY_MS)
+        MemoEditHub.save(note.id) { current -> persist(current, false) }
+    }
+    // Leaving the screen: the last save, photos included. The screen's scope is gone by then, so the hub runs it.
+    // The app going to the background keeps the composition, so the text is written on ON_STOP too (the photo marks
+    // wait for the end of the editing, 결정기록 4).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, note.id) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                MemoEditHub.saveLater(note.id, dropWhenDone = false) { current -> persist(current, false) }
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            MemoEditHub.saveLater(note.id) { current -> persist(current, true) }
+        }
+    }
+    val typed: (MemoEditDraft) -> Unit = { draft -> MemoEditHub.typed(note.id, draft) }
+    // 추가요청 1 (관리자: "메모가 길어질경우 메모장안에서 스크롤이 안되어 불편"): the body takes the height that is
+    // left and scrolls inside itself; the keyboard shrinks the editor ([imePadding]) so the line with the cursor stays
+    // in sight. The photos keep their own small scroll instead of pushing the body away.
+    Column(Modifier.fillMaxSize().imePadding().padding(12.dp)) {
         // 앱10 C: the number is the server's, shown and never edited here.
         Text(
             if (note.number > 0) "#${note.number}" else "번호 없음 · 동기화 때 서버가 매깁니다",
@@ -497,47 +593,68 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote, onSave: (
             color = ElementTheme.colors.textSecondary,
             modifier = Modifier.padding(bottom = 4.dp).testTag(MemoTags.NOTE_NUMBER),
         )
-        TextField(value = title, onValueChange = { title = it }, label = "제목", singleLine = true, modifier = Modifier.fillMaxWidth())
-        TextField(value = tags, onValueChange = { tags = it }, label = "태그", singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
-        TextField(value = body, onValueChange = { body = it }, label = "본문", minLines = 8, modifier = Modifier.fillMaxWidth())
-        MemoEditorPhotos(photos, onChange = { photos = it })
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            Text("취소", modifier = Modifier.clickable { controller.go { it.stopEditing() } }.padding(12.dp))
-            Text("저장", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable(enabled = !saving) {
-                saving = true
-                val newTags = memoParseTagInput(tags)
-                controller.scope.launch {
-                    // New picks are copied next to the database first, like the photos of a new note (앱8 order).
-                    val added = memoCopyPictures(context, photos.picked.map(Uri::parse)).map(::memoPhotoArg)
-                    val op = MemoOp.edit(
-                        MemoTarget(noteId = note.id),
-                        body = body.takeIf { it != note.body },
-                        title = title.takeIf { it != title0 },
-                        tags = newTags.takeIf { tags != tags0 },
-                        photosRemoved = photos.removedKeys,
-                        photosAdded = added,
-                    )
-                    // One save at a time (a second press would copy the new photos twice); a failed one can be pressed again.
-                    val r = controller.store.request(op)
-                    saving = false
-                    when (r) {
-                        is MemoResult.Ok -> {
-                            controller.error = null
-                            onSave(memoEditedNote(note, title, newTags, body, photos))
-                            controller.go { it.stopEditing() }
-                            controller.store.refreshIndex()
-                        }
-                        is MemoResult.Failed -> controller.error = r.reason to null
-                    }
-                }
-            }.padding(12.dp))
+        TextField(
+            value = state.draft.title,
+            onValueChange = { v -> typed(state.draft.copy(title = v)) },
+            label = "제목",
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        TextField(
+            value = state.draft.tags,
+            onValueChange = { v -> typed(state.draft.copy(tags = v)) },
+            label = "태그",
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        )
+        // 추가요청 1: the body gets the height that is left (never a fixed 8 lines inside an endless column), so a
+        // long note scrolls inside the field itself.
+        TextField(
+            value = state.draft.body,
+            onValueChange = { v -> typed(state.draft.copy(body = v)) },
+            label = "본문",
+            modifier = Modifier.fillMaxWidth().weight(1f).testTag(MemoTags.EDIT_BODY),
+        )
+        Column(Modifier.heightIn(max = MEMO_EDIT_PHOTOS_HEIGHT).verticalScroll(rememberScrollState())) {
+            MemoEditorPhotos(state.draft.photos, onChange = { p -> typed(state.draft.copy(photos = p)) })
+        }
+        val status = memoEditStatus(state)
+        if (status.isNotEmpty()) {
+            Text(
+                status,
+                style = ElementTheme.typography.fontBodyXsRegular,
+                color = if (state.failure != null) ElementTheme.colors.textCriticalPrimary else ElementTheme.colors.textSecondary,
+                modifier = Modifier.padding(top = 4.dp).testTag(MemoTags.EDIT_STATUS),
+            )
+        }
+        // 앱12 B (관리자: "취소 저장 버튼을 우측 하단에"): only 취소 is left, at the bottom right.
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+            Text(
+                "취소",
+                color = ElementTheme.colors.textActionAccent,
+                modifier = Modifier.clickable { askMemoEditCancel(controller, state) }.padding(12.dp).testTag(MemoTags.EDIT_CANCEL),
+            )
         }
     }
 }
 
-/** What the note screen shows right after [저장] until the note is read again (the new photos come with that read). */
-internal fun memoEditedNote(note: MemoNote, title: String, tags: List<String>, body: String, photos: MemoPhotoEdit): MemoNote = note.copy(
-    body = body,
-    header = org.json.JSONObject(note.header.toString()).put("제목", title).put("태그", org.json.JSONArray(tags)),
-    attachments = note.attachments.filterNot(photos::isRemoved),
-)
+/**
+ * [취소]: one question, then the note goes back to the state the editor was opened with. The auto save may already
+ * have written part of it, so the undo is sent as a normal change (it syncs like any other); the photo marks are
+ * simply dropped, nothing was written for them.
+ */
+private fun askMemoEditCancel(controller: MemoController, state: MemoEditState) {
+    val leave = {
+        MemoEditHub.drop(state.noteId)
+        controller.go { it.stopEditing() }
+    }
+    if (!state.revertable) {
+        leave()
+        return
+    }
+    controller.sheet = MemoSheet.Confirm("편집한 내용을 되돌리고 나갈까요?", "되돌리기") {
+        val op = memoEditCancelOp(state.noteId, state.saved, state.entry)
+        leave()
+        if (op != null) controller.run(op)
+    }
+}
