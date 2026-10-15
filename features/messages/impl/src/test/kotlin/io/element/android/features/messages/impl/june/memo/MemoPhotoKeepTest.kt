@@ -66,13 +66,23 @@ class MemoPhotoKeepTest : RobolectricTest() {
     /** The review moved the note and tagged it (server stamp on the `분류` bundle only). */
     private fun JSONObject.reviewed(): JSONObject {
         getJSONObject("rev").put("분류", JSONArray().put(memoIso(now + 60_000)).put("서버").put(40))
-        return put("폴더", "집·생활").put("태그", JSONArray().put("사진")).put("수정", memoIso(now + 60_000))
-            .put("기기", "서버").put("순번", 40)
+        return put("폴더", "집·생활")
+            .put("태그", JSONArray().put("사진"))
+            .put("수정", memoIso(now + 60_000))
+            .put("기기", "서버")
+            .put("순번", 40)
     }
 
     /** The same EncryptedFile, whatever order its fields came back in. */
     private fun assertSameKey(json: String?) {
-        assertTrue("key: $json", json != null && JSONObject(fakeKey).similar(JSONObject(json)))
+        assertTrue("key: $json", json != null && canon(JSONObject(fakeKey)) == canon(JSONObject(json)))
+    }
+
+    /** Field order free form of a JSON value (Android's org.json has no `similar`). */
+    private fun canon(v: Any?): Any? = when (v) {
+        is JSONObject -> v.keys().asSequence().sorted().associateWith { canon(v.get(it)) }
+        is JSONArray -> (0 until v.length()).map { canon(v.get(it)) }
+        else -> v
     }
 
     /** A `sync_push` answer: the server merged the note ([change] is what it kept). */

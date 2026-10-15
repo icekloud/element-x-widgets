@@ -74,6 +74,7 @@ import io.element.android.libraries.matrix.api.media.MediaSource
 import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -329,7 +330,7 @@ internal fun MemoScreen(
                 else -> MemoSearchTab(controller)
             }
         }
-        if (controller.select.active && state.note == null) MemoSelectBar(controller, controller.visibleIds)
+        if (controller.select.active && state.note == null) MemoSelectBar(controller, controller.visibleIds.toImmutableList())
         MemoTabBar(
             selected = state.tab,
             onSelect = { tab -> controller.go { it.closeNote().selectTab(tab) } },
@@ -560,7 +561,7 @@ internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
     val pinned = memoPinnedOfAll(controller, localVersion)
     LaunchedEffect(list.items) { controller.visibleIds = list.items.map { it.id } }
     Column(Modifier.fillMaxSize()) {
-        MemoPinStrip(controller, pinned)
+        MemoPinStrip(controller, pinned.toImmutableList())
         if (list.items.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
                 Text("아래 입력창에 붙여넣기 / 📷 / 🎤 로 메모를 남기세요", color = ElementTheme.colors.textSecondary)
