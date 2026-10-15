@@ -23,7 +23,6 @@ internal data class MemoLocation(
     /** Note open over the current tab. */
     val note: String? = null,
     val editing: Boolean = false,
-    val editDirty: Boolean = false,
     /** The search tab shows results (a query was run), not its empty state. */
     val searchResults: Boolean = false,
     val tagManager: Boolean = false,
@@ -33,17 +32,15 @@ internal data class MemoLocation(
 
     fun selectTab(tab: MemoTab) = copy(tab = tab)
 
-    fun openFolder(path: String) = copy(tab = MemoTab.Folders, folder = path, note = null, editing = false, editDirty = false)
+    fun openFolder(path: String) = copy(tab = MemoTab.Folders, folder = path, note = null, editing = false)
 
-    fun openNote(id: String) = copy(note = id, editing = false, editDirty = false)
+    fun openNote(id: String) = copy(note = id, editing = false)
 
-    fun startEditing() = copy(editing = true, editDirty = false)
+    fun startEditing() = copy(editing = true)
 
-    fun edited(dirty: Boolean) = copy(editDirty = dirty)
+    fun stopEditing() = copy(editing = false)
 
-    fun stopEditing() = copy(editing = false, editDirty = false)
-
-    fun closeNote() = copy(note = null, editing = false, editDirty = false)
+    fun closeNote() = copy(note = null, editing = false)
 
     fun showSearchResults(shown: Boolean) = copy(searchResults = shown)
 
@@ -51,7 +48,9 @@ internal data class MemoLocation(
 
     /** What the back key does now. */
     fun back(): MemoBack = when {
-        note != null && editing && editDirty -> MemoBack.ConfirmDiscard
+        // 앱12 B: there is no [저장] button any more. Back ends the editing (what was typed is saved on the way out,
+        // 결정기록 2); pressing it again closes the note as before. Nothing is asked.
+        note != null && editing -> MemoBack.To(stopEditing())
         note != null -> MemoBack.To(closeNote())
         tab == MemoTab.Folders && folder != null -> {
             val parent = folder.substringBeforeLast('/', "")
@@ -63,14 +62,10 @@ internal data class MemoLocation(
         tab == MemoTab.Search -> MemoBack.To(copy(tab = MemoTab.Record))
         else -> MemoBack.Exit
     }
-
-    /** After the "save / discard" question of [MemoBack.ConfirmDiscard] was answered. */
-    fun afterDiscardConfirmed() = closeNote()
 }
 
 internal sealed interface MemoBack {
     data class To(val state: MemoLocation) : MemoBack
-    data object ConfirmDiscard : MemoBack
     data object Exit : MemoBack
 }
 

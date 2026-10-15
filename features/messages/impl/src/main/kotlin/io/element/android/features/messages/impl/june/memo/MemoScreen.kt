@@ -108,6 +108,12 @@ internal object MemoTags {
     const val NOTE_HEAD = "memo_note_head"
     const val NOTE_NUMBER = "memo_note_number"
 
+    /** 앱12 A·B·C: the date lines of the head, the reading area (long press) and the editor's 취소 and save line. */
+    const val NOTE_DATE = "memo_note_date"
+    const val NOTE_READ = "memo_note_read"
+    const val EDIT_CANCEL = "memo_edit_cancel"
+    const val EDIT_STATUS = "memo_edit_status"
+
     /** 앱10 D: the photos of the note editor. */
     const val EDIT_PHOTO_ADD = "memo_edit_photo_add"
     const val EDIT_PHOTO = "memo_edit_photo"
@@ -278,7 +284,6 @@ internal fun MemoScreen(
     if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion)
 
     val state = nav.value
-    var discardAsked by remember { mutableStateOf(false) }
     // 앱11 C: the top bar icon turns the selection mode on and off; ending it here (종료, back, a bulk action) turns
     // the icon off too.
     val selectRooms by MemoSelectHub.rooms.collectAsState()
@@ -290,23 +295,10 @@ internal fun MemoScreen(
     BackHandler(enabled = state.handlesBack) {
         when (val b = state.back()) {
             is MemoBack.To -> nav.value = b.state
-            MemoBack.ConfirmDiscard -> discardAsked = true
             MemoBack.Exit -> Unit
         }
     }
     BackHandler(enabled = controller.select.active) { controller.endSelect() }
-    if (discardAsked) {
-        ConfirmationDialog(
-            content = "편집한 내용을 버리고 나갈까요?",
-            submitText = "버리기",
-            cancelText = "계속 편집",
-            onSubmitClick = {
-                discardAsked = false
-                nav.value = nav.value.afterDiscardConfirmed()
-            },
-            onDismiss = { discardAsked = false },
-        )
-    }
 
     val index by store.index.collectAsState()
     Column(modifier = modifier.fillMaxSize()) {
@@ -749,10 +741,6 @@ private fun MemoSheetHost(controller: MemoController) {
 
 /** Known tags the tag sheet offers to pick (앱11 C). */
 private const val MEMO_PICK_TAGS = 30
-
-/** "#교토 이동, 빵집" → [교토, 이동, 빵집]. */
-internal fun memoParseTagInput(text: String): List<String> =
-    text.split(' ', ',', '\n').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }.distinct()
 
 @Composable
 private fun MemoDatePicker(onPick: (String) -> Unit, onDismiss: () -> Unit) {

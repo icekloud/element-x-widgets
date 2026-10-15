@@ -47,7 +47,8 @@ internal fun MemoEditorPhotos(edit: MemoPhotoEdit, onChange: (MemoPhotoEdit) -> 
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text(
-            "사진 ${edit.count}장" + if (edit.changed) " (저장하면 바뀜)" else "",
+            // 앱12 D: there is no [저장] button any more; the photo marks are applied when the editing ends (결정기록 4).
+            "사진 ${edit.count}장" + if (edit.changed) " (편집을 마치면 반영)" else "",
             style = ElementTheme.typography.fontBodySmRegular,
             color = ElementTheme.colors.textSecondary,
         )

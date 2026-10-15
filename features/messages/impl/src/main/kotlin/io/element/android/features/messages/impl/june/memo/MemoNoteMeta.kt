@@ -108,3 +108,25 @@ internal const val MEMO_HEAD_GAP = "  "
 
 /** The date a screen shows: the last change of the user, else the creation (`2026-10-15T11:31:00+09:00`). */
 internal fun memoShownDate(createdIso: String, userModifiedIso: String?): String = userModifiedIso?.takeIf { it.isNotEmpty() } ?: createdIso
+
+/** `2026-10-15T19:23:04+09:00` → `2026-10-15 19:23` (KST, to the minute). A shorter value is shown as it is. */
+internal fun memoMinuteTime(iso: String): String = if (iso.length >= MEMO_MINUTE_CHARS) iso.take(MEMO_MINUTE_CHARS).replace('T', ' ') else iso
+
+private const val MEMO_MINUTE_CHARS = 16
+
+/**
+ * The date block of an open note (앱12 A, 관리자: "첫 작성일과 최근 수정일 둘다 2줄에 걸쳐"): `작성 …` always, `수정 …`
+ * under it only when the user changed the note later. A `수정` that is not after the creation (the same minute, or an
+ * odd earlier value) is left out; a note without a creation date shows only what it has.
+ */
+internal fun memoNoteDateLines(createdIso: String, userModifiedIso: String?): List<String> {
+    val created = memoMinuteTime(createdIso)
+    val modified = memoMinuteTime(userModifiedIso.orEmpty())
+    return buildList {
+        if (created.isNotEmpty()) add("작성 $created")
+        if (modified.isNotEmpty() && modified > created) add("수정 $modified")
+    }
+}
+
+internal fun memoNoteDateLines(note: MemoNote): List<String> =
+    memoNoteDateLines(note.created, note.header.optString(MEMO_FIELD_USER_MODIFIED))
