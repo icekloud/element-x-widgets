@@ -460,7 +460,7 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
         // 앱7 항목 1: an untitled text note is its body in the preview box above, so no second title line.
         if (!(item.untitled && item.preview is MemoPreview.Text)) {
             Text(
-                item.title,
+                memoNumbered(item.number, item.title),
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp).testTag(MemoTags.TILE_TITLE),
                 style = ElementTheme.typography.fontBodySmMedium,
                 maxLines = 2,
@@ -537,7 +537,7 @@ private fun MemoListRow(controller: MemoController, item: MemoItem) {
         Text(memoKindIcon(item.kind), modifier = Modifier.padding(end = 8.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                (if (item.pinned) "📌 " else "") + item.title,
+                (if (item.pinned) "📌 " else "") + memoNumbered(item.number, item.title),
                 style = ElementTheme.typography.fontBodyMdMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

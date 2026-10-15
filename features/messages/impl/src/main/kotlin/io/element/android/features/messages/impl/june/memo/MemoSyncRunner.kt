@@ -502,6 +502,9 @@ internal fun memoChangeOfNote(note: MemoNote): JSONObject {
         .put("머리말", h)
     h.optJSONObject("rev")?.let { o.put("rev", it) }
     h.optJSONObject("링크")?.let { o.put("링크", it) }
+    // 앱10: a `get` answer has no top level besides its header, so the number and the user time are read from there.
+    h.optInt(MEMO_FIELD_NUMBER, 0).takeIf { it > 0 }?.let { o.put(MEMO_FIELD_NUMBER, it) }
+    h.optString(MEMO_FIELD_USER_MODIFIED).takeIf { it.isNotEmpty() }?.let { o.put(MEMO_FIELD_USER_MODIFIED, it) }
     val files = JSONArray()
     note.attachments.forEach { a ->
         val f = JSONObject().put("mxc", a.mxc)
@@ -529,10 +532,19 @@ internal const val MEMO_ANSWERED_KEEP = 300
 
 /** The suggestion ids the server confirmed as answered (앱9 C), newest last. */
 internal fun memoAnsweredProposals(db: MemoDb): Set<String> =
-    db.state(STATE_ANSWERED)?.let { runCatching { JSONArray(it).strings() }.getOrNull() }.orEmpty().toSet()
+    memoAnsweredList(db).toSet()
+
+private fun memoAnsweredList(db: MemoDb): List<String> {
+    val raw = db.state(STATE_ANSWERED) ?: return emptyList()
+    return try {
+        JSONArray(raw).strings()
+    } catch (e: org.json.JSONException) {
+        emptyList()
+    }
+}
 
 internal fun memoRememberAnswered(db: MemoDb, ids: List<String>) {
-    val old = db.state(STATE_ANSWERED)?.let { runCatching { JSONArray(it).strings() }.getOrNull() }.orEmpty()
+    val old = memoAnsweredList(db)
     val all = (old.filter { it !in ids } + ids.distinct()).takeLast(MEMO_ANSWERED_KEEP)
     db.setState(STATE_ANSWERED, JSONArray(all).toString())
 }

@@ -44,8 +44,25 @@ internal data class MemoOp(val op: String, val args: Map<String, Any?> = emptyMa
 
         fun move(target: MemoTarget, folder: String) = note("move", target, mapOf("folder" to folder))
         fun editTags(target: MemoTarget, tags: List<String>) = note("edit", target, mapOf("태그" to tags))
-        fun edit(target: MemoTarget, body: String?, title: String?, tags: List<String>?) =
-            note("edit", target, linkedMapOf("본문" to body, "제목" to title, "태그" to tags))
+        /** 앱10 D: [photosRemoved] keys and [photosAdded] new files ([memoPhotoArg]) of the editor, null = unchanged. */
+        fun edit(
+            target: MemoTarget,
+            body: String?,
+            title: String?,
+            tags: List<String>?,
+            photosRemoved: List<String>? = null,
+            photosAdded: List<Map<String, Any?>>? = null,
+        ) = note(
+            "edit",
+            target,
+            linkedMapOf(
+                "본문" to body,
+                "제목" to title,
+                "태그" to tags,
+                MEMO_ARG_PHOTOS_REMOVED to photosRemoved?.takeIf { it.isNotEmpty() },
+                MEMO_ARG_PHOTOS_ADDED to photosAdded?.takeIf { it.isNotEmpty() },
+            ),
+        )
         fun pin(target: MemoTarget) = note("pin", target)
         fun unpin(target: MemoTarget) = note("unpin", target)
         fun dismissPin(target: MemoTarget) = note("dismiss_pin", target)

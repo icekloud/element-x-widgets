@@ -135,9 +135,12 @@ internal object MemoSync {
      */
     fun applyChange(db: MemoDb, change: JSONObject, withoutBody: Boolean = false): Boolean {
         val sent = memoChangeFromJson(change) ?: return false
-        val mine = db.note(sent.id)
+        // 앱10: the number and the user time are kept apart from the note row (no dirty flag, no upload).
+        val metaChanged = memoApplyNoteMeta(db, change)
+        // A header stored by 앱9 may still hold the server number: compared without it, like the one that comes in.
+        val mine = db.note(sent.id)?.let { it.copy(headerJson = memoHeaderJsonWithoutMeta(it.headerJson)) }
         if (mine == null) {
-            if (withoutBody) return false
+            if (withoutBody) return metaChanged
             db.writeNote(sent.copy(dirty = false))
             return true
         }
@@ -150,7 +153,7 @@ internal object MemoSync {
         val dirty = !memoSameNote(merged, incoming)
         val changedHere = !memoSameNote(merged, mine)
         db.writeNote(merged.copy(dirty = dirty, serverRev = incoming.contentHash))
-        return changedHere
+        return changedHere || metaChanged
     }
 
     /** True when the body-less note of an ack carries a newer body than ours: the full note is fetched with `op:get`. */
@@ -259,9 +262,15 @@ internal object MemoSync {
         return args
     }
 
-    /** Queues [note] for the next upload (one row per note: a newer change replaces the waiting one, 설계 §k-4 ②). */
-    fun enqueueNote(db: MemoDb, note: MemoNoteRecord, nowMs: Long) =
-        db.enqueue(MEMO_OUTBOX_NOTE, note.id, note.toChangeJson().toString(), nowMs)
+    /**
+     * Queues [note] for the next upload (one row per note: a newer change replaces the waiting one, 설계 §k-4 ②). 앱10:
+     * the time of the user's last change goes with it (`사용자수정`, 규약 추가 결정 2); the number never goes up.
+     */
+    fun enqueueNote(db: MemoDb, note: MemoNoteRecord, nowMs: Long) {
+        val change = note.toChangeJson()
+        memoNoteMeta(db, note.id).userModifiedMs.takeIf { it > 0 }?.let { change.put(MEMO_FIELD_USER_MODIFIED, memoIso(it)) }
+        db.enqueue(MEMO_OUTBOX_NOTE, note.id, change.toString(), nowMs)
+    }
 
     /**
      * Applies one `app.june.memo.sync_ack`: removes what went through, holds back what failed, stores the merged notes
@@ -285,6 +294,8 @@ internal object MemoSync {
                         accepted++
                         outbox?.let { db.dropOutbox(it.seq) }
                         db.note(id)?.let { db.writeNote(it.copy(dirty = false, serverRev = it.contentHash)) }
+                        // 앱10: a new note gets its number in this answer (규약-번호사진 1).
+                        row.optJSONObject("노트")?.let { memoApplyNoteMeta(db, it) }
                     }
                     "병합" -> {
                         mergedBack++
@@ -403,7 +414,7 @@ internal fun memoChangeFromJson(o: JSONObject): MemoNoteRecord? {
         tags = tags,
         attachments = attachments,
         linkJson = o.optJSONObject("링크")?.toString(),
-        headerJson = header?.toString(),
+        headerJson = memoHeaderWithoutMeta(header)?.toString(),
         serverRev = serverHash,
     )
 }

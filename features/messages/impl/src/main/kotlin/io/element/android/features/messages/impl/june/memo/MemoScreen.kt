@@ -104,6 +104,9 @@ internal object MemoTags {
     const val SEARCH = "memo_search"
     const val ERROR = "memo_error"
     const val NOTE_ATTACHMENT = "memo_note_attachment"
+    const val NOTE_HEAD = "memo_note_head"
+    const val NOTE_NUMBER = "memo_note_number"
+    const val RECORD_HEAD = "memo_record_head"
     const val RECORD_PHOTO = "memo_record_photo"
     const val RECORD_TEXT = "memo_record_text"
     const val PHOTO_RETRY = "memo_photo_retry"
@@ -298,7 +301,7 @@ internal fun MemoScreen(
             controller = controller,
             directives = directives,
             // A finished instruction changed notes or tags on the server: one sync brings them down.
-            onSynced = {
+            onSync = {
                 runner?.syncNow()
                 store.refreshIndex()
             },
@@ -525,12 +528,14 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
             .testTag(MemoTags.RECORD_ROW),
     ) {
         val text = memoCardText(item)
+        // 앱10 C (관리자): `#번호  제목  날짜`, no author ("나") any more; the date is the user's last change, else the creation.
         Text(
-            ("나 · ${memoRecordTime(item.date)} · ${memoKindIcon(item.kind)} " + memoCardHeadTitle(item, text)).trimEnd(),
+            memoRecordHead(item, text),
             style = ElementTheme.typography.fontBodySmRegular,
             color = ElementTheme.colors.textSecondary,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag(MemoTags.RECORD_HEAD),
         )
         val uploadMark = memoPhotoUploadMark(item)
         if (uploadMark.isNotEmpty()) {
@@ -569,6 +574,9 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
         }
     }
 }
+
+/** The head line of a record card: `#12  제목  10-15 11:31` ([memoNoteHead]). */
+internal fun memoRecordHead(item: MemoItem, text: String?): String = memoNoteHead(item.number, memoCardHeadTitle(item, text), memoRecordTime(item.date))
 
 /** "10-12 11:31" from "2026-10-12T11:31:00+09:00". */
 internal fun memoRecordTime(date: String): String = if (date.length >= 16) date.substring(5, 16).replace('T', ' ') else date

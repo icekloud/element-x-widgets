@@ -204,7 +204,10 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         val tags = tagsOf(ids)
         val attachments = attachmentsOf(ids)
         val proposals = suggestionCounts(ids)
-        return rows.map { it.toItem(tags[it.id].orEmpty(), attachments[it.id].orEmpty()).copy(proposals = proposals[it.id] ?: 0) }
+        val metas = memoNoteMetas(this, ids)
+        return rows.map {
+            it.toItem(tags[it.id].orEmpty(), attachments[it.id].orEmpty(), metas[it.id] ?: MemoNoteMeta()).copy(proposals = proposals[it.id] ?: 0)
+        }
     }
 
     private fun tagsOf(ids: List<String>): Map<String, List<String>> = inChunks(ids) { chunk ->
@@ -356,6 +359,11 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
     fun state(key: String): String? = query("SELECT value FROM sync_state WHERE key = ?", listOf(key)) { c -> c.getString(0) }.firstOrNull()
 
     fun setState(key: String, value: String) = exec("INSERT OR REPLACE INTO sync_state(key, value) VALUES (?, ?)", listOf(key, value))
+
+    /** The values of [keys] that are kept (앱10: the note numbers of one list page). */
+    fun states(keys: List<String>): Map<String, String> = inChunks(keys) { chunk ->
+        query("SELECT key, value FROM sync_state WHERE key IN (${marks(chunk.size)})", chunk) { c -> c.getString(0)!! to c.getString(1)!! }
+    }.toMap()
 
     /** A new change stamp of this device: [nowMs] with the next per device sequence number (설계 §c-2). */
     fun nextRev(device: String, nowMs: Long): MemoRev {
@@ -546,14 +554,16 @@ private class MemoRow(
     /** The start of the plain body ([MEMO_CARD_TEXT_CHARS]), what the record card shows on up to 7 lines (앱6). */
     val text: String,
 ) {
-    fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>) = MemoItem(
+    fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>, meta: MemoNoteMeta = MemoNoteMeta()) = MemoItem(
         id = id,
         kind = kind,
         // 앱7 항목 1: an untitled note shows the start of its body here, for the screen only (never stored).
         title = memoDisplayTitle(title, preview, id),
         untitled = title.isEmpty(),
         preview = memoLocalPreview(kind, preview, linkJson, attachments),
-        date = memoIso(createdMs),
+        // 앱10: the date shown is the last change of the user, else the creation; the number is the server's.
+        date = memoIso(meta.userModifiedMs.takeIf { it > 0 } ?: createdMs),
+        number = meta.number,
         tags = tags,
         folder = folder,
         pinned = pinned,

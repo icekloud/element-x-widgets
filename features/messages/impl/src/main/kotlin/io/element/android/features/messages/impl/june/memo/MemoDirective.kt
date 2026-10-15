@@ -241,7 +241,11 @@ internal class MemoDirectives(
 
     private fun read(): List<MemoDirective> {
         val raw = db.state(STATE_DIRECTIVES) ?: return emptyList()
-        val a = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+        val a = try {
+            JSONArray(raw)
+        } catch (e: org.json.JSONException) {
+            return emptyList()
+        }
         return (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(MemoDirective::fromJson) }
     }
 
