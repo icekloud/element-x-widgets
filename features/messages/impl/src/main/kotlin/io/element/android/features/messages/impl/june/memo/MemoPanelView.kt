@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -92,13 +93,22 @@ internal fun MemoPanelContent(
         pollOnce()
     }
     // After a send: from 5 s, every 5 s in the first minute, then every 15 s, at most 3 minutes; only while open.
-    val openKey = sentList.filter { it.isOpen }.joinToString { it.id + it.status }
+    // 추가요청 3: a send cut short ("보내는중" after the area closed) is asked about too.
+    val openKey = sentList.filter { it.isOpen || it.status == MemoDirectiveStatus.SENDING }.joinToString { it.id + it.status }
     LaunchedEffect(directives, openKey) {
         directives ?: return@LaunchedEffect
         while (true) {
             val wait = directives.nextPollInMs() ?: break
             delay(wait)
             pollOnce()
+        }
+    }
+    // 추가요청 3: "처리 중… (N초)" counts up once a second while something is on its way.
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(openKey) {
+        while (openKey.isNotEmpty()) {
+            nowMs = System.currentTimeMillis()
+            delay(1_000)
         }
     }
 
@@ -166,7 +176,7 @@ internal fun MemoPanelContent(
                     )
                 }
                 items(sentList, key = { "d-" + it.id }) { d ->
-                    MemoDirectiveRow(d, onResend = { scope.launch { directives?.resend(d.id) } })
+                    MemoDirectiveRow(d, nowMs, onResend = { scope.launch { directives?.resend(d.id) } })
                 }
             }
         }
@@ -213,7 +223,7 @@ internal fun MemoPanelContent(
 
 /** "내 지시 → 메모봇 답": the sentence on the right, the answer (or the state) on the left. */
 @Composable
-private fun MemoDirectiveRow(d: MemoDirective, onResend: () -> Unit) {
+private fun MemoDirectiveRow(d: MemoDirective, nowMs: Long, onResend: () -> Unit) {
     Column(Modifier.fillMaxWidth().testTag(MemoTags.PANEL_DIRECTIVE)) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
             Text(
@@ -230,7 +240,7 @@ private fun MemoDirectiveRow(d: MemoDirective, onResend: () -> Unit) {
         Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             val critical = d.status == MemoDirectiveStatus.NOT_SENT || d.status == MemoDirectiveStatus.FAILED || d.status == MemoDirectiveStatus.REFUSED
             Text(
-                "🤖 " + memoDirectiveAnswerText(d),
+                "🤖 " + memoDirectiveAnswerText(d, nowMs),
                 modifier = Modifier
                     .widthIn(max = 300.dp)
                     .clip(RoundedCornerShape(10.dp))

@@ -31,6 +31,7 @@ internal object MemoSync {
     const val STATE_CURSOR = "sync_cursor"
     const val STATE_SKEW = "clock_skew"
     const val STATE_SERVER_SEQ = "server_seq"
+    const val STATE_PHOTO_REPAIR = "photo_repair_a11"
 
     /** Uploads of one `sync_push` (the server reads at most `sy.PAGE` = 200 of them). */
     const val PUSH_BATCH = 50
@@ -55,6 +56,19 @@ internal object MemoSync {
 
     /** True when a `sync_pull` is worth making right now (설계 §k-4: no polling, this answers "is there anything new"). */
     fun needsPull(db: MemoDb): Boolean = serverSeq(db) > base(db) || cursor(db) != null
+
+    /**
+     * 앱11 E: once per phone, the next pull asks for every note again (기준 0, the server sends its full copies with the
+     * keys). A photo list the 앱10 phone emptied kept the same stamps, so the compare sync cannot see it; the full copy
+     * fills it in again ([mergeMemoNote]). Returns true when it moved 기준 back now.
+     */
+    fun repairPhotosOnce(db: MemoDb): Boolean {
+        if (db.state(STATE_PHOTO_REPAIR) != null) return false
+        db.setState(STATE_PHOTO_REPAIR, "1")
+        db.setState(STATE_BASE, "0")
+        db.setState(STATE_CURSOR, "")
+        return true
+    }
 
     // ---- sync_pull
 
@@ -380,7 +394,9 @@ internal fun memoChangeFromJson(o: JSONObject): MemoNoteRecord? {
     val files = o.optJSONArray("첨부")
     val attachments = buildList {
         for (i in 0 until (files?.length() ?: 0)) {
-            val f = files?.optJSONObject(i) ?: continue
+            // 앱11 E: the server writes an item without its key as the plain mxc (every `sync_push` answer). It was
+            // skipped here, so the list came in empty and the photo went off the phone.
+            val f = files?.optJSONObject(i) ?: files?.optString(i)?.takeIf { it.startsWith("mxc://") }?.let { JSONObject().put("mxc", it) } ?: continue
             val mxc = f.optString("mxc").takeIf { it.isNotEmpty() } ?: continue
             add(
                 MemoLocalAttachment(

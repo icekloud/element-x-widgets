@@ -129,7 +129,8 @@ internal fun memoCardText(item: MemoItem): String? {
  */
 /** 앱7 항목 1: the line a list shows for a note, the stored title or else the start of its body (not stored). */
 internal fun memoDisplayTitle(title: String, preview: String, id: String): String =
-    title.ifEmpty { preview.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().take(MEMO_TITLE_CHARS).ifEmpty { id } }
+    // 앱11 B: never the note id (it showed on the folder tab); the screens draw `#번호  날짜` instead ([memoItemLine]).
+    title.ifEmpty { preview.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().take(MEMO_TITLE_CHARS) }.takeIf { it != id }.orEmpty()
 
 /** Test tag of the photo upload mark of a record card (앱8). */
 internal const val MEMO_PHOTO_UPLOAD_MARK_TAG = "memo_photo_upload_mark"
@@ -172,6 +173,8 @@ internal data class MemoItem(
     val photosFailed: Int = 0,
     /** 앱10: the note number the server gave (`#N`), 0 before the first sync. [date] is the date shown. */
     val number: Int = 0,
+    /** 앱11 D: the photos of a note with text, drawn under its text on the cards (null: none, or [preview] is them). */
+    val photos: MemoPreview.Photo? = null,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date

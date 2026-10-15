@@ -75,8 +75,25 @@ internal data class MemoDirective(
     }
 }
 
-/** The line under one instruction: the bot's message, or what the phone knows (never the word "제안"). */
-internal fun memoDirectiveAnswerText(d: MemoDirective): String = when (d.status) {
+/**
+ * The line under one instruction: the bot's message, or what the phone knows (never the word "제안"). 추가요청 3:
+ * with [nowMs], an instruction still on its way shows how long it has been ("처리 중… (N초)"), and one older than the
+ * automatic look-ups says that a refresh asks again.
+ */
+internal fun memoDirectiveAnswerText(d: MemoDirective, nowMs: Long? = null): String {
+    val waiting = d.status == MemoDirectiveStatus.SENDING || d.isOpen
+    if (nowMs == null || !waiting || d.sentMs <= 0) return memoDirectiveBaseText(d)
+    val age = ((nowMs - d.sentMs).coerceAtLeast(0) / 1000).toInt()
+    return when {
+        age * 1000L >= LAST_POLL_MS -> "오래 걸려요 (${age}초) · 새로고침을 누르면 다시 확인해요"
+        d.status == MemoDirectiveStatus.SENDING -> "보내는 중… (${age}초)"
+        d.message.isNotEmpty() -> "${d.message} (${age}초)"
+        d.status == MemoDirectiveStatus.RECEIVED -> "메모봇이 받았어요 · 처리 중… (${age}초)"
+        else -> "처리 중… (${age}초)"
+    }
+}
+
+private fun memoDirectiveBaseText(d: MemoDirective): String = when (d.status) {
     MemoDirectiveStatus.SENDING -> "보내는 중…"
     MemoDirectiveStatus.NOT_SENT -> "보내지 못했어요"
     MemoDirectiveStatus.RECEIVED -> d.message.ifEmpty { "메모봇이 받았어요 · 처리하는 중" }
@@ -89,24 +106,31 @@ internal fun memoDirectiveAnswerText(d: MemoDirective): String = when (d.status)
 }
 
 /**
- * When the area asks again after a send (규약-지시 흐름 3: from 5 s, at most 3 min): every 5 s in the first minute,
- * then every 15 s. Null = no more automatic look-ups (opening the area or a refresh still asks).
+ * When the area asks again after a send (규약-지시 흐름 3, at most 3 min). 추가요청 3: the bot answers most
+ * instructions in about 20 s, so the first 30 s ask every 3 s (10 look-ups), then every 5 s up to one minute, then
+ * every 15 s. Null = no more automatic look-ups (opening the area or a refresh still asks).
  */
 internal fun memoDirectivePollDelayMs(sentMs: Long, nowMs: Long): Long? {
     val age = (nowMs - sentMs).coerceAtLeast(0)
     return when {
         age < FIRST_POLL_MS -> FIRST_POLL_MS - age
+        age < QUICK_UNTIL_MS -> QUICK_POLL_MS
         age < FAST_UNTIL_MS -> FAST_POLL_MS
         age < LAST_POLL_MS -> SLOW_POLL_MS
         else -> null
     }
 }
 
-private const val FIRST_POLL_MS = 5_000L
+private const val FIRST_POLL_MS = 3_000L
+private const val QUICK_POLL_MS = 3_000L
+private const val QUICK_UNTIL_MS = 30_000L
 private const val FAST_POLL_MS = 5_000L
 private const val FAST_UNTIL_MS = 60_000L
 private const val SLOW_POLL_MS = 15_000L
 private const val LAST_POLL_MS = 180_000L
+
+/** The server's answer for an id it never got (`지시조회`): the instruction did not arrive, it can go again. */
+private const val NOT_FOUND_WORDS = "찾지 못"
 
 private const val STATE_DIRECTIVES = "directives"
 private const val ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -136,6 +160,14 @@ internal class MemoDirectives(
 
     private var loaded = false
 
+    /** 추가요청 3: ids whose send is running right now. Any other "보내는중" was cut short (screen closed). */
+    private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Open on the server, or not known: a send cut short or one that timed out may have arrived all the same. */
+    private fun MemoDirective.asked(): Boolean = isOpen || cutShort() || status == MemoDirectiveStatus.NOT_SENT
+
+    private fun MemoDirective.cutShort(): Boolean = status == MemoDirectiveStatus.SENDING && id !in inFlight
+
     /**
      * Reads what the database keeps (after a restart). The first time, an instruction left "보내는중" by a process that
      * ended during the send becomes "못보냄": it can be sent again with its id.
@@ -155,8 +187,10 @@ internal class MemoDirectives(
 
     fun hasOpen(): Boolean = _items.value.any { it.isOpen }
 
-    /** Next automatic look-up, from the newest open instruction; null when none is due any more. */
-    fun nextPollInMs(): Long? = _items.value.filter { it.isOpen }.maxOfOrNull { it.sentMs }?.let { memoDirectivePollDelayMs(it, clock()) }
+    /** Next automatic look-up, from the newest open (or cut short) instruction; null when none is due any more. */
+    fun nextPollInMs(): Long? =
+        _items.value.filter { it.isOpen || it.cutShort() }.maxOfOrNull { it.sentMs }
+            ?.let { memoDirectivePollDelayMs(it, clock()) }
 
     /**
      * Sends [text] (cut to [MEMO_DIRECTIVE_MAX_CHARS]). The same sentence as the last one that could not be sent goes
@@ -193,7 +227,14 @@ internal class MemoDirectives(
 
     private suspend fun deliver(d: MemoDirective): MemoDirective {
         log("지시 보냄")
-        val ended = when (val r = callOrNull(MemoOp.directive(d.id, d.text))) {
+        inFlight += d.id
+        val r = try {
+            callOrNull(MemoOp.directive(d.id, d.text))
+        } finally {
+            // Cancelled (the area closed): it stays "보내는중" and the next look-up asks the server by its id.
+            inFlight -= d.id
+        }
+        val ended = when (r) {
             is MemoResponse.Ok -> {
                 val status = r.content.optString("상태").takeIf(MemoDirectiveStatus::isServer) ?: MemoDirectiveStatus.RECEIVED
                 d.copy(status = status, message = r.content.optString("메시지").ifEmpty { r.content.optString("사유") })
@@ -212,7 +253,7 @@ internal class MemoDirectives(
      * syncs once to bring the changed notes down. Nothing is asked when nothing is open.
      */
     suspend fun poll(): Int {
-        val open = withContext(dispatcher) { read() }.filter { it.isOpen }.takeLast(MEMO_DIRECTIVE_KEEP)
+        val open = withContext(dispatcher) { read() }.filter { it.asked() }.takeLast(MEMO_DIRECTIVE_KEEP)
         if (open.isEmpty()) return 0
         log("지시조회 ${open.size}건")
         val r = callOrNull(MemoOp.directivePoll(open.map { it.id })) as? MemoResponse.Ok ?: return 0
@@ -221,7 +262,14 @@ internal class MemoDirectives(
         val changed = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull { o ->
             val mine = byId[o.optString("id")] ?: return@mapNotNull null
             val status = o.optString("상태").takeIf(MemoDirectiveStatus::isServer) ?: return@mapNotNull null
-            mine.copy(status = status, message = o.optString("메시지"))
+            val message = o.optString("메시지")
+            // 추가요청 3: a send cut short that never reached the server can be sent again (same id), not "실패".
+            val unsent = !mine.isOpen && status == MemoDirectiveStatus.FAILED && NOT_FOUND_WORDS in message
+            when {
+                unsent && mine.status == MemoDirectiveStatus.NOT_SENT -> null
+                unsent -> mine.copy(status = MemoDirectiveStatus.NOT_SENT, message = "")
+                else -> mine.copy(status = status, message = message)
+            }
         }
         update(changed, keepSentMs = true)
         val done = changed.count { it.status == MemoDirectiveStatus.DONE }

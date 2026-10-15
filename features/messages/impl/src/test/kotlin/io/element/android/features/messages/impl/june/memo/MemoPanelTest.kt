@@ -259,7 +259,7 @@ class MemoPanelTest : RobolectricTest() {
         assertEquals("책상, NAS 태그 불필요하니까 태그 삭제", op.args["문장"])
         assertEquals(sent.id, op.args["id"])
         assertTrue(d.hasOpen())
-        assertEquals(5_000L, d.nextPollInMs())
+        assertEquals(3_000L, d.nextPollInMs())
 
         room.pollRows = JSONArray().put(JSONObject().put("id", sent.id).put("상태", "처리중").put("메시지", ""))
         assertEquals(0, d.poll())
@@ -336,9 +336,10 @@ class MemoPanelTest : RobolectricTest() {
     }
 
     @Test
-    fun `look-ups run from 5 s to 3 min, and the id fits the server rule`() {
-        assertEquals(5_000L, memoDirectivePollDelayMs(t0, t0))
-        assertEquals(2_000L, memoDirectivePollDelayMs(t0, t0 + 3_000))
+    fun `look-ups run from 3 s to 3 min, and the id fits the server rule`() {
+        // 앱11 추가요청 3: every 3 s in the first 30 s, then 5 s up to a minute, then 15 s.
+        assertEquals(3_000L, memoDirectivePollDelayMs(t0, t0))
+        assertEquals(1_000L, memoDirectivePollDelayMs(t0, t0 + 2_000))
         assertEquals(5_000L, memoDirectivePollDelayMs(t0, t0 + 30_000))
         assertEquals(15_000L, memoDirectivePollDelayMs(t0, t0 + 90_000))
         assertNull(memoDirectivePollDelayMs(t0, t0 + 181_000))

@@ -229,9 +229,12 @@ internal fun mergeMemoNote(a: MemoNoteRecord, b: MemoNoteRecord): MemoNoteRecord
     // The server never knows the phone original: an attachment won by the server side keeps the phone path, type and
     // size of the same attachment (앱6 원인 B: the photo was drawn from the server copy only, or lost its original).
     val phone = loser.attachments.filter { it.localPath != null }.associateBy { it.key }
+    // 앱11 E: a server item without its key (plain mxc) keeps the key the other side has for the same photo.
+    val keys = loser.attachments.filter { it.fileJson != null }.associateBy { it.key }
     val won = memoAttachmentsWon(attach.attachments, loser.attachments, a.revs.attach.compareTo(b.revs.attach) == 0).map { w ->
         val p = phone[w.key]
-        if (w.localPath != null || p == null) w else w.copy(localPath = p.localPath, mime = w.mime ?: p.mime, bytes = w.bytes ?: p.bytes)
+        val withPath = if (w.localPath != null || p == null) w else w.copy(localPath = p.localPath, mime = w.mime ?: p.mime, bytes = w.bytes ?: p.bytes)
+        if (withPath.fileJson != null) withPath else withPath.copy(fileJson = keys[w.key]?.fileJson)
     }
     return body.copy(
         folder = classes.folder,
@@ -253,12 +256,17 @@ internal fun mergeMemoNote(a: MemoNoteRecord, b: MemoNoteRecord): MemoNoteRecord
  *   the photo later), so a server list that wins must not make the phone list shorter meanwhile;
  * - [sameStamp] (the same change for the protocol, but the lists differ): only the photos both sides hold. The only
  *   way to get there is a server that still adds lists up (before 서버 5차): what it added back is dropped again.
+ *   앱11 E: but an uploaded list that is empty on one side under the same stamp is a list lost here (the 앱10 phone
+ *   read the plain mxc items as nothing): the other side's list comes back. Removing every photo always takes a new
+ *   stamp, so this never brings back a photo the user removed.
  */
 private fun memoAttachmentsWon(
     winner: List<MemoLocalAttachment>,
     loser: List<MemoLocalAttachment>,
     sameStamp: Boolean,
 ): List<MemoLocalAttachment> {
+    if (sameStamp && winner.none { it.mxc != null }) return winner + loser.filter { w -> winner.none { it.key == w.key } }
+    if (sameStamp && loser.none { it.mxc != null }) return winner + loser.filter { w -> winner.none { it.key == w.key } }
     val loserKeys = loser.map { it.key }.toSet()
     val kept = if (sameStamp) winner.filter { it.key in loserKeys || it.mxc == null } else winner
     val keys = kept.map { it.key }.toSet() + winner.map { it.key }

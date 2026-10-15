@@ -196,6 +196,7 @@ internal class MemoSyncRunner(
     // ---------------------------------------------------------------- pull
 
     private suspend fun pullLocked(): Boolean {
+        if (MemoSync.repairPhotosOnce(db)) log("사진 목록 복구: 한 번 전체 받기")
         var withSegments = true
         repeat(MAX_PULL_ROUNDS) {
             log("받기 요청")
