@@ -231,11 +231,15 @@ internal class MemoSyncRunner(
         val now = clock()
         val local = db.suggestions().associateBy { it.id }
         val answering = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }.map { it.target }.toSet()
+        // 앱9 C: answered and confirmed by the server. An index written before the server had it still lists it as
+        // waiting; it must not come back as a card (and be answered a second time).
+        val done = memoAnsweredProposals(db)
         val seen = mutableSetOf<String>()
         db.transaction {
             items.forEach { o ->
                 val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@forEach
                 seen += id
+                if (id in done) return@forEach
                 val mine = local[id]
                 // An answer given here stays until the server has it (no flicker back to "waiting").
                 if (mine != null && (mine.status != MEMO_SUGGESTION_WAITING || id in answering)) return@forEach
@@ -306,17 +310,28 @@ internal class MemoSyncRunner(
         val answered = (0 until (results?.length() ?: 0))
             .mapNotNull { results?.optJSONObject(it) }
             .mapNotNull { r -> byId[r.optString("id")]?.let { row -> r to row } }
+        val confirmed = mutableListOf<String>()
         db.transaction {
             for ((r, row) in answered) {
-                if (r.optString("상태") == "오류") {
-                    // The server could not apply it (expired, gone): the local answer stands, nothing is retried.
-                    db.dropOutbox(row.seq)
-                } else {
-                    db.dropOutbox(row.seq)
-                    db.deleteSuggestion(row.target)
+                when (memoProposalResultOf(r)) {
+                    MemoProposalResult.Done -> {
+                        db.dropOutbox(row.seq)
+                        db.deleteSuggestion(row.target)
+                        confirmed += row.target
+                    }
+                    MemoProposalResult.Deferred -> {
+                        // Hidden until tomorrow by the server, which shows the same id again then: not remembered.
+                        db.dropOutbox(row.seq)
+                        db.deleteSuggestion(row.target)
+                    }
+                    // The server could not apply it (expired, gone) or answered a value this app does not know: the
+                    // local answer stands and nothing is sent again (앱9 C: unknown values are ignored safely).
+                    MemoProposalResult.NotApplied -> db.dropOutbox(row.seq)
                 }
             }
+            if (confirmed.isNotEmpty()) memoRememberAnswered(db, confirmed)
         }
+        if (answered.isNotEmpty()) log("제안결과 ${answered.size}건 정리")
     }
 
     /**
@@ -494,4 +509,30 @@ internal fun memoChangeOfNote(note: MemoNote): JSONObject {
         files.put(f)
     }
     return o.put("첨부", files)
+}
+
+/** What a `제안결과[]` item means for the phone (규약-지시.md "제안결과 추가 값"). */
+internal enum class MemoProposalResult { Done, Deferred, NotApplied }
+
+internal fun memoProposalResultOf(r: JSONObject): MemoProposalResult = when (r.optString("상태")) {
+    MEMO_SUGGESTION_ACCEPTED, MEMO_SUGGESTION_DISMISSED, "무시" -> MemoProposalResult.Done
+    MEMO_SUGGESTION_DEFERRED -> MemoProposalResult.Deferred
+    // 서버 4차: the same answer came again. `원상태` 보류 is shown again tomorrow, the others are over.
+    "이미처리" -> if (r.optString("원상태") == MEMO_SUGGESTION_DEFERRED) MemoProposalResult.Deferred else MemoProposalResult.Done
+    else -> MemoProposalResult.NotApplied
+}
+
+private const val STATE_ANSWERED = "answered_proposals"
+
+/** How many confirmed suggestion ids are remembered (an index rewritten later no longer lists them). */
+internal const val MEMO_ANSWERED_KEEP = 300
+
+/** The suggestion ids the server confirmed as answered (앱9 C), newest last. */
+internal fun memoAnsweredProposals(db: MemoDb): Set<String> =
+    db.state(STATE_ANSWERED)?.let { runCatching { JSONArray(it).strings() }.getOrNull() }.orEmpty().toSet()
+
+internal fun memoRememberAnswered(db: MemoDb, ids: List<String>) {
+    val old = db.state(STATE_ANSWERED)?.let { runCatching { JSONArray(it).strings() }.getOrNull() }.orEmpty()
+    val all = (old.filter { it !in ids } + ids.distinct()).takeLast(MEMO_ANSWERED_KEEP)
+    db.setState(STATE_ANSWERED, JSONArray(all).toString())
 }

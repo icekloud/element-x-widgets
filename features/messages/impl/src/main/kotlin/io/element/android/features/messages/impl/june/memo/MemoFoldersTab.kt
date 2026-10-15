@@ -70,7 +70,6 @@ internal fun MemoFoldersTab(controller: MemoController) {
 private fun MemoFolderRoot(controller: MemoController) {
     val index by controller.store.index.collectAsState()
     val cells = remember(index) { memoRootGrid(index) }
-    val band = remember(index) { memoRootBand(index) }
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize().testTag(MemoTags.FOLDER_ROOT),
@@ -78,9 +77,7 @@ private fun MemoFolderRoot(controller: MemoController) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (band.isNotEmpty()) {
-            items(band, key = { "p-" + it.id }, span = { GridItemSpan(2) }) { p -> MemoProposalCard(controller, p) }
-        }
+        // 앱9 A: no proposal cards here any more: they are in the proposal area (list icon of the top bar).
         items(cells, key = { c -> if (c is MemoGridCell.Folder) "f-" + c.folder.path else "new" }) { cell ->
             when (cell) {
                 is MemoGridCell.Folder -> MemoFolderCell(
@@ -133,49 +130,71 @@ private fun MemoFolderCell(
     }
 }
 
-/** A proposal card of the band: schedule (accept / ignore / other day) or folder creation (create / rename / existing / ignore). */
+/** One proposal card (앱9: the proposal area, the note view). */
 @Composable
-internal fun MemoProposalCard(controller: MemoController, p: MemoProposal) {
+internal fun MemoProposalCard(controller: MemoController, p: MemoProposal) = MemoProposalCard(controller, MemoProposalGroup.of(p))
+
+/**
+ * A card of the proposal area: schedule (accept / ignore / other day), folder creation (create / rename / existing /
+ * ignore) or the others (accept / ignore). 앱9 C: a press locks the card at once (no second answer, no empty taps) and
+ * answers every proposal id of the card once ([memoGroupOps]); it stays "처리 중" until the server confirmed it.
+ */
+@Composable
+internal fun MemoProposalCard(controller: MemoController, group: MemoProposalGroup) {
+    val p = group.first
+    val locked = group.isSending || group.ids.any { it in controller.answering }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .testTag(MemoTags.BAND)
             .clip(RoundedCornerShape(8.dp))
             .border(1.dp, ElementTheme.colors.textActionAccent, RoundedCornerShape(8.dp))
+            .alpha(if (locked) 0.6f else 1f)
             .padding(8.dp),
     ) {
-        val head = when {
-            p.isSchedule -> "📅 일정 제안"
-            p.isFolderCreate -> "📁 폴더 제안"
-            p.kind == "제목" -> "🏷 제목 제안"
-            else -> "제안"
+        Text(memoProposalLine(p), style = ElementTheme.typography.fontBodySmMedium, color = ElementTheme.colors.textActionAccent)
+        if (group.proposals.size > 1) {
+            Text("같은 내용 ${group.proposals.size}건", style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
         }
-        Text("$head · ${p.summary}", style = ElementTheme.typography.fontBodySmMedium, color = ElementTheme.colors.textActionAccent)
-        if (!p.isWaiting) {
-            Text("플랜봇 재검토 중", style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
-            return@Column
+        when {
+            locked -> {
+                Text(
+                    "처리 중 · 메모봇에 전하는 중",
+                    modifier = Modifier.testTag(MemoTags.PROPOSAL_SENDING),
+                    style = ElementTheme.typography.fontBodyXsRegular,
+                    color = ElementTheme.colors.textSecondary,
+                )
+                return@Column
+            }
+            !p.isWaiting -> {
+                Text("플랜봇 재검토 중", style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
+                return@Column
+            }
         }
         FlowRow(modifier = Modifier.padding(top = 4.dp)) {
             if (p.isSchedule) {
-                MemoChip("수락", accent = true, onClick = { controller.run(MemoOp.accept(p.id)) })
-                MemoChip("무시", onClick = { controller.run(MemoOp.dismiss(p.id)) })
+                MemoChip("수락", accent = true, onClick = { controller.answer(group, MemoAnswer.Accept) })
+                MemoChip("거절", onClick = { controller.answer(group, MemoAnswer.Dismiss) })
                 MemoChip("다른 날", onClick = {
                     // The answer is about the suggestion (규약 v2 제안응답 id), not about its note.
-                    controller.sheet = MemoSheet.PickDate { date -> controller.run(MemoOp.defer(p.id, date)) }
+                    controller.sheet = MemoSheet.PickDate { date -> controller.answer(group, MemoAnswer.Defer, date = date) }
                 })
             } else if (p.isFolderCreate) {
-                MemoChip("만들기", accent = true, onClick = { controller.run(MemoOp.accept(p.id)) })
+                MemoChip("만들기", accent = true, onClick = { controller.answer(group, MemoAnswer.Accept) })
                 MemoChip("이름 바꾸기", onClick = {
-                    controller.sheet = MemoSheet.AskText("폴더 이름", p.folder.orEmpty()) { name -> controller.run(MemoOp.accept(p.id, folder = name)) }
+                    controller.sheet = MemoSheet.AskText("폴더 이름", p.folder.orEmpty()) { name ->
+                        controller.answer(group, MemoAnswer.Accept, folder = name)
+                    }
                 })
                 MemoChip("기존 폴더로", onClick = {
-                    controller.sheet = MemoSheet.PickFolder("기존 폴더로") { folder -> controller.run(MemoOp.accept(p.id, folder = folder)) }
+                    controller.sheet = MemoSheet.PickFolder("기존 폴더로") { folder -> controller.answer(group, MemoAnswer.Accept, folder = folder) }
                 })
-                MemoChip("무시", onClick = { controller.run(MemoOp.dismiss(p.id)) })
+                MemoChip("거절", onClick = { controller.answer(group, MemoAnswer.Dismiss) })
             } else {
-                MemoChip("수락", accent = true, onClick = { controller.run(MemoOp.accept(p.id)) })
-                MemoChip("무시", onClick = { controller.run(MemoOp.dismiss(p.id)) })
+                MemoChip("수락", accent = true, onClick = { controller.answer(group, MemoAnswer.Accept) })
+                MemoChip("거절", onClick = { controller.answer(group, MemoAnswer.Dismiss) })
             }
+            MemoChip("나중에", onClick = { controller.answer(group, MemoAnswer.Defer) })
         }
     }
 }
@@ -214,7 +233,6 @@ private fun MemoFolderView(controller: MemoController, path: String) {
     val folderTags =
         remember(list.items) { list.items.flatMap { it.tags }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }.take(20) }
     val pinned = list.items.filter { it.pinned }
-    val band = memoFolderBand(index, path, list.items.map { it.id }.toSet())
     val newCount = store.newCount(key)
 
     Column(Modifier.fillMaxSize()) {
@@ -277,7 +295,6 @@ private fun MemoFolderView(controller: MemoController, path: String) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            band.forEach { p -> item(key = "band-" + p.id, span = { GridItemSpan(maxLineSpan) }) { MemoProposalCard(controller, p) } }
             if (subfolders.isNotEmpty()) {
                 item(key = "subs", span = { GridItemSpan(maxLineSpan) }) {
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -356,7 +373,7 @@ private fun MemoFolderView(controller: MemoController, path: String) {
 
 /** Number of grid items drawn before the tiles (so the "5 before the end" check counts tiles only). */
 private fun headerCount(s: MemoListCache, index: MemoIndex, path: String, tags: List<String>): Int {
-    var n = memoFolderBand(index, path, s.items.map { it.id }.toSet()).size
+    var n = 0
     if (memoSubfolders(index, path).isNotEmpty()) n++
     if (tags.isNotEmpty() || s.items.any { it.tags.isNotEmpty() }) n++
     if (s.items.any { it.pinned }) n++
@@ -462,70 +479,18 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
 
 /** The suggestions of one note as a bottom sheet: [적용] / [아니오] each, and [모두 적용] (A5, 설계 §d-③). */
 internal fun memoProposalSheet(controller: MemoController, noteId: String): MemoSheet {
-    val proposals = controller.store.index.value.proposals.filter { it.noteId == noteId && it.isWaiting }
-    val actions = proposals.flatMap { p ->
-        val label = p.summary.ifEmpty { p.kind }
+    // 앱9 C: the same cards as the proposal area (copies grouped, one answer per id, locked while sent).
+    val groups = memoPanelGroups(controller.store.index.value).filter { it.first.noteId == noteId && it.isWaiting }
+    val actions = groups.flatMap { g ->
+        val label = memoProposalLine(g.first)
         listOf<Pair<String, () -> Unit>>(
-            "적용 · $label" to { controller.run(MemoOp.accept(p.id)) },
-            "아니오 · $label" to { controller.run(MemoOp.dismiss(p.id)) },
+            "적용 · $label" to { controller.answer(g, MemoAnswer.Accept) },
+            "아니오 · $label" to { controller.answer(g, MemoAnswer.Dismiss) },
         )
-    } + if (proposals.size > 1) {
-        listOf<Pair<String, () -> Unit>>("모두 적용 (${proposals.size})" to { proposals.forEach { controller.run(MemoOp.accept(it.id)) } })
+    } + if (groups.size > 1) {
+        listOf<Pair<String, () -> Unit>>("모두 적용 (${groups.size})" to { groups.forEach { controller.answer(it, MemoAnswer.Accept) } })
     } else {
         emptyList()
     }
-    return MemoSheet.Actions("🤖 제안 ${proposals.size}", actions)
-}
-
-@Composable
-private fun MemoCorner(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        modifier = modifier
-            .padding(4.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(ElementTheme.colors.bgCanvasDefault)
-            .padding(horizontal = 4.dp),
-        style = ElementTheme.typography.fontBodyXsRegular,
-    )
-}
-
-@Composable
-internal fun MemoTagLine(tags: ImmutableList<String>, max: Int, modifier: Modifier = Modifier, onTag: ((String) -> Unit)? = null) {
-    val shown = memoVisibleTags(tags, max)
-    Row(modifier) {
-        shown.first.forEach { t -> MemoChip("#$t", onClick = onTag?.let { { it(t) } }) }
-        if (shown.second > 0) MemoChip("+${shown.second}")
-    }
-}
-
-/** The tags drawn on a tile and the "+N" rest. */
-internal fun memoVisibleTags(tags: List<String>, max: Int): Pair<List<String>, Int> =
-    tags.take(max) to (tags.size - max).coerceAtLeast(0)
-
-@Composable
-private fun MemoListRow(controller: MemoController, item: MemoItem) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag(MemoTags.TILE)
-            .combinedClickable(
-                onClick = { controller.go { it.openNote(item.id) } },
-                onLongClick = { controller.sheet = memoItemActions(controller, item) },
-            )
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(memoKindIcon(item.kind), modifier = Modifier.padding(end = 8.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                (if (item.pinned) "📌 " else "") + item.title,
-                style = ElementTheme.typography.fontBodyMdMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            MemoTagLine(item.tags.toImmutableList(), max = 4)
-        }
-        Text(item.shortDate, style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
-    }
+    return MemoSheet.Actions("🤖 ${groups.size}건", actions)
 }

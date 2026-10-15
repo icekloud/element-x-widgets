@@ -141,8 +141,11 @@ internal class MemoLocalBackend(
             )
         }
         // Proposals come from the bot review (A5): the waiting ones the last sync copied into the suggestion table.
-        val proposals = db.suggestions().filter { it.status == MEMO_SUGGESTION_WAITING }.mapNotNull { s ->
-            runCatchingJson(s.payload)?.let(::parseMemoProposal)?.copy(status = "대기")
+        // 앱9 C: one answered here whose answer has not reached the server yet stays as "처리중" (locked card).
+        val sending = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }.map { it.target }.toSet()
+        val proposals = db.suggestions().filter { it.status == MEMO_SUGGESTION_WAITING || it.id in sending }.mapNotNull { s ->
+            val status = if (s.status == MEMO_SUGGESTION_WAITING) "대기" else MEMO_PROPOSAL_SENDING
+            runCatchingJson(s.payload)?.let(::parseMemoProposal)?.copy(status = status)
         }
         return MemoIndex(folders, proposals)
     }
@@ -236,6 +239,9 @@ internal class MemoLocalBackend(
                 "accept", "dismiss", "defer" -> {
                     val id = a["id"] as? String ?: return@transactionWithResult err("제안을 찾지 못했습니다")
                     val s = db.suggestion(id) ?: return@transactionWithResult err("제안을 찾지 못했습니다")
+                    // 앱9 C: one answer per suggestion id. A second press (double tap, the other screen, the copy of a
+                    // card) changes nothing and queues nothing: the first answer is already applied and waiting.
+                    if (s.status != MEMO_SUGGESTION_WAITING) return@transactionWithResult ok(s.noteId)
                     val answer = when (op.op) {
                         "accept" -> MEMO_SUGGESTION_ACCEPTED
                         "dismiss" -> MEMO_SUGGESTION_DISMISSED

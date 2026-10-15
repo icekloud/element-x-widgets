@@ -11,9 +11,11 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,3 +92,32 @@ internal fun MemoSyncButton(roomId: String, modifier: Modifier = Modifier) {
  */
 internal fun memoSyncRoomIdOf(context: Context, roomId: String, inThread: Boolean): String? =
     roomId.takeIf { !inThread && JuneSettings.isMemoRoom(context, it) && !JuneSettings.memoFakeData(context) }
+
+/** Test tag of the list icon of the memo bot room (앱9 A: opens the proposal area). */
+internal const val MEMO_PANEL_BUTTON_TAG = "memo_panel_button"
+
+/**
+ * The room id the list icon opens the proposal area for (앱9 A): the memo bot room with its memo screen, not a
+ * thread. The fake data mode is included: its memo screen and cards are shown too (the instruction input is off).
+ */
+internal fun memoPanelRoomIdOf(context: Context, roomId: String, inThread: Boolean): String? =
+    roomId.takeIf { !inThread && JuneSettings.isMemoRoom(context, it) }
+
+/** The list icon of the memo bot room: opens the proposal area, a badge with the waiting cards (none at 0). */
+@Composable
+internal fun MemoPanelButton(roomId: String, modifier: Modifier = Modifier) {
+    val counts by MemoPanelHub.waiting.collectAsState()
+    val count = counts[roomId] ?: 0
+    Box(modifier.testTag(MEMO_PANEL_BUTTON_TAG).clickable { MemoPanelHub.open(roomId) }) {
+        Icon(
+            imageVector = CompoundIcons.ListBulleted(),
+            contentDescription = if (count > 0) "제안 $count건" else "제안",
+        )
+        if (count > 0) {
+            MemoBadge(
+                if (count > 99) "99+" else count.toString(),
+                Modifier.align(Alignment.TopEnd).offset(x = 8.dp, y = (-6).dp).testTag(MemoTags.PANEL_BADGE),
+            )
+        }
+    }
+}

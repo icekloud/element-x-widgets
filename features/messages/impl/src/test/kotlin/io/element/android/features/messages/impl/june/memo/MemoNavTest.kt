@@ -96,7 +96,8 @@ class MemoNavTest : RobolectricTest() {
     }
 
     @Test
-    fun `bands show only when there are proposals`() {
+    fun `the proposal area shows every proposal, nothing when there is none`() {
+        // 앱9 A: the folder tab has no proposal cards any more; the area of the list icon has them all.
         val index = MemoIndex(
             folders = emptyList(),
             proposals = listOf(
@@ -104,10 +105,9 @@ class MemoNavTest : RobolectricTest() {
                 MemoProposal("p2", "폴더생성", "s", "대기", folder = "여행/오사카"),
             ),
         )
-        assertEquals(2, memoRootBand(index).size)
-        assertEquals(listOf("p2"), memoFolderBand(index, "여행", emptySet()).map { it.id })
-        assertEquals(listOf("p1", "p2"), memoFolderBand(index, "여행", setOf("n1")).map { it.id })
-        assertTrue(memoFolderBand(index, "쇼핑", emptySet()).isEmpty())
-        assertTrue(memoRootBand(MemoIndex.EMPTY).isEmpty())
+        assertEquals(listOf("p1", "p2"), memoPanelGroups(index).map { it.first.id })
+        assertEquals(2, memoPanelWaitingCount(index))
+        assertTrue(memoPanelGroups(MemoIndex.EMPTY).isEmpty())
+        assertEquals(0, memoPanelWaitingCount(MemoIndex.EMPTY))
     }
 }
