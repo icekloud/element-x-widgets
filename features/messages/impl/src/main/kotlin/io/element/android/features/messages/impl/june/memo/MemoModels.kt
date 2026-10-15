@@ -175,6 +175,9 @@ internal data class MemoItem(
     val number: Int = 0,
     /** 앱11 D: the photos of a note with text, drawn under its text on the cards (null: none, or [preview] is them). */
     val photos: MemoPreview.Photo? = null,
+    /** 앱13 A: the creation and the user's last change (ISO, "" = none), for the two date lines of the record card. */
+    val created: String = "",
+    val userModified: String = "",
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date

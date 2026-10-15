@@ -60,8 +60,26 @@ internal data class MemoEditState(
     fun typed(next: MemoEditDraft) = copy(draft = next)
 }
 
-/** What one save attempt did: [saved] is the draft the local note now holds (null = nothing written). */
-internal data class MemoSaveResult(val saved: MemoEditDraft?, val failure: String? = null)
+/**
+ * What one save attempt did: [saved] is the draft the local note now holds (null = nothing written). [photosWritten]:
+ * the photo marks went with it (the save that ends the editing).
+ */
+internal data class MemoSaveResult(val saved: MemoEditDraft?, val failure: String? = null, val photosWritten: Boolean = false)
+
+/**
+ * The session after a save (앱13 D). A save that wrote the photo marks takes them out of the draft: the picks are in
+ * the note now. 앱12 left them in, so the session was never let go (it still looked changed) and every later end of
+ * the editing copied and added the same pick once more — the photo shown three times after three visits. Marks made
+ * while that save was running stay.
+ */
+internal fun memoEditAfterSave(before: MemoEditState, after: MemoEditState, result: MemoSaveResult): MemoEditState {
+    val saved = result.saved ?: return after.copy(failure = result.failure)
+    if (!result.photosWritten) return after.copy(saved = saved, failure = result.failure)
+    val sent = before.draft.photos
+    val now = after.draft.photos
+    val left = MemoPhotoEdit(saved.photos.existing, removed = now.removed - sent.removed, picked = now.picked - sent.picked.toSet())
+    return after.copy(saved = saved, draft = after.draft.copy(photos = left), failure = result.failure)
+}
 
 /** The editor writes the local note this long after the typing stopped (앱12 D). */
 internal const val MEMO_EDIT_SAVE_DELAY_MS = 1_500L
@@ -158,6 +176,11 @@ internal object MemoEditHub {
         _sessions.update { all -> all[noteId]?.let { all + (noteId to it.typed(draft)) } ?: all }
     }
 
+    /** One field changed (앱13): applied to the draft held right now, so two fields typed fast never undo each other. */
+    fun change(noteId: String, edit: (MemoEditDraft) -> MemoEditDraft) {
+        _sessions.update { all -> all[noteId]?.let { all + (noteId to it.typed(edit(it.draft))) } ?: all }
+    }
+
     fun drop(noteId: String) {
         _sessions.update { it - noteId }
     }
@@ -171,7 +194,7 @@ internal object MemoEditHub {
             val before = state(noteId) ?: return
             val result = persist(before)
             val after = state(noteId) ?: return
-            val next = after.copy(saved = result.saved ?: after.saved, failure = result.failure)
+            val next = memoEditAfterSave(before, after, result)
             if (dropWhenDone && result.failure == null && !next.dirty) drop(noteId) else _sessions.update { it + (noteId to next) }
         }
     }
@@ -189,3 +212,39 @@ internal object MemoEditHub {
  */
 internal fun memoPushAllowed(visible: Boolean, editing: Boolean, hasPending: Boolean): Boolean =
     visible && !editing && hasPending
+
+/*
+ * 앱13 B·C (관리자: "편집 중엔 제목·일자 줄은 필요없으니 없애서 공간확보", "본문 입력부분이 키보드가 떴을 때 위치에 맞게"): while a
+ * note is being edited the screen gives the editor everything: no head line, no tab bar, no composer of the room. The
+ * keyboard does not decide it, so they come back the moment the editing ends (back, 취소, the note closing).
+ */
+
+/** True while the editor of an open note is shown: the head, the tab bar and the room composer are hidden. */
+internal fun memoEditorFullScreen(location: MemoLocation): Boolean = location.note != null && location.editing
+
+/** The rooms whose memo screen shows the editor right now; the room composer (MessagesView) hides itself there. */
+internal object MemoEditingRooms {
+    private val _rooms = MutableStateFlow<Set<String>>(emptySet())
+    val rooms: StateFlow<Set<String>> = _rooms.asStateFlow()
+
+    fun set(roomId: String, editing: Boolean) {
+        _rooms.update { if (editing) it + roomId else it - roomId }
+    }
+}
+
+/**
+ * 앱13 A·B sizes, in sp / dp, kept here so the tests see them. The dates are about half of what 앱12 drew (14 sp) but
+ * not below [MEMO_DATE_TEXT_SP] (결정기록 A). The title and tag fields are one line of [MEMO_EDIT_FIELD_TEXT_SP] with
+ * [MEMO_EDIT_FIELD_PAD_DP] inside, about half of the design system field (label + 16 dp padding, [MEMO_OLD_FIELD_DP]).
+ */
+internal const val MEMO_DATE_TEXT_SP = 8
+internal const val MEMO_DATE_LINE_SP = 10
+internal const val MEMO_EDIT_FIELD_TEXT_SP = 13
+internal const val MEMO_EDIT_FIELD_LINE_SP = 17
+internal const val MEMO_EDIT_FIELD_PAD_DP = 10
+
+/** The 앱12 field: label line 20 + gap 8 + padding 16 × 2 + one 22 line (fontBodyLgRegular). */
+internal const val MEMO_OLD_FIELD_DP = 82
+
+/** The height of one compact field with the font scale at 1 (the border is drawn inside, it takes no room). */
+internal fun memoEditFieldHeight(lineSp: Int = MEMO_EDIT_FIELD_LINE_SP, padDp: Int = MEMO_EDIT_FIELD_PAD_DP): Int = lineSp + 2 * padDp

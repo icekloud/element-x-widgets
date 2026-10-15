@@ -208,7 +208,9 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         val proposals = suggestionCounts(ids)
         val metas = memoNoteMetas(this, ids)
         return rows.map {
-            it.toItem(tags[it.id].orEmpty(), attachments[it.id].orEmpty(), metas[it.id] ?: MemoNoteMeta()).copy(proposals = proposals[it.id] ?: 0)
+            // 앱13 D: the cards draw copies of one picture once, like the open note.
+            val photos = memoDistinctPhotos(attachments[it.id].orEmpty())
+            it.toItem(tags[it.id].orEmpty(), photos, metas[it.id] ?: MemoNoteMeta()).copy(proposals = proposals[it.id] ?: 0)
         }
     }
 
@@ -572,6 +574,8 @@ private class MemoRow(
         photos = memoCardPhotos(shown, attachments),
         // 앱10: the date shown is the last change of the user, else the creation; the number is the server's.
         date = memoIso(meta.userModifiedMs.takeIf { it > 0 } ?: createdMs),
+        created = memoIso(createdMs),
+        userModified = meta.userModifiedMs.takeIf { it > 0 }?.let(::memoIso).orEmpty(),
         number = meta.number,
         tags = tags,
         folder = folder,

@@ -37,6 +37,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +74,7 @@ import io.element.android.features.messages.impl.june.JuneComposerStack
 import io.element.android.features.messages.impl.june.JuneEditKind
 import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
+import io.element.android.features.messages.impl.june.memo.MemoEditingRooms
 import io.element.android.features.messages.impl.june.memo.MemoPanelButton
 import io.element.android.features.messages.impl.june.memo.MemoSelectButton
 import io.element.android.features.messages.impl.june.memo.MemoScreen
@@ -717,6 +719,10 @@ private fun MessagesViewComposerBottomSheetContents(
     onRoomSuccessorClick: (RoomId) -> Unit,
     onLinkClick: (String, Boolean) -> Unit,
 ) {
+    // Element June memo bot (앱13 C): while a note is edited on the memo screen the room composer gives its place to the
+    // editor (the keyboard then sits right under the note body). It comes back when the editing ends.
+    val memoEditingRooms by MemoEditingRooms.rooms.collectAsState()
+    if (state.roomId.value in memoEditingRooms) return
     val contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues()
     when {
         state.successorRoom != null -> {
