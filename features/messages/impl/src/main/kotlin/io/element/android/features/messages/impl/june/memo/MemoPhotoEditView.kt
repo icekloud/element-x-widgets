@@ -36,15 +36,6 @@ import coil3.compose.AsyncImage
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.designsystem.theme.components.Text
 
-/** Test tags of the photo part of the note editor (앱10 D). */
-internal object MemoPhotoEditTags {
-    const val ADD = "memo_edit_photo_add"
-    const val PHOTO = "memo_edit_photo"
-    const val REMOVE = "memo_edit_photo_remove"
-    const val UNDO = "memo_edit_photo_undo"
-    const val PICKED = "memo_edit_photo_picked"
-}
-
 /**
  * The photos of the note editor: the note's photos with ✕ (marked, dimmed, "되돌리기" until [저장]), the new picks with
  * ✕, and "＋ 사진" that opens the gallery like the composer. Nothing is written here: [onChange] gives the new state.
@@ -66,7 +57,7 @@ internal fun MemoEditorPhotos(edit: MemoPhotoEdit, onChange: (MemoPhotoEdit) -> 
                 MemoEditorPhotoCell(
                     marked = removed,
                     onToggle = { onChange(edit.toggle(a)) },
-                    modifier = Modifier.testTag(MemoPhotoEditTags.PHOTO),
+                    modifier = Modifier.testTag(MemoTags.EDIT_PHOTO),
                 ) {
                     MemoThumbnail(a.mxc, a.fileJson, Modifier.fillMaxSize().alpha(if (removed) 0.35f else 1f), a.localPath)
                 }
@@ -75,7 +66,7 @@ internal fun MemoEditorPhotos(edit: MemoPhotoEdit, onChange: (MemoPhotoEdit) -> 
                 MemoEditorPhotoCell(
                     marked = false,
                     onToggle = { onChange(edit.unpick(uri)) },
-                    modifier = Modifier.testTag(MemoPhotoEditTags.PICKED),
+                    modifier = Modifier.testTag(MemoTags.EDIT_PHOTO_PICKED),
                 ) {
                     AsyncImage(model = uri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 }
@@ -87,7 +78,7 @@ internal fun MemoEditorPhotos(edit: MemoPhotoEdit, onChange: (MemoPhotoEdit) -> 
                     .clip(RoundedCornerShape(6.dp))
                     .background(ElementTheme.colors.bgSubtleSecondary)
                     .clickable { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-                    .testTag(MemoPhotoEditTags.ADD),
+                    .testTag(MemoTags.EDIT_PHOTO_ADD),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("＋ 사진", color = ElementTheme.colors.textActionAccent, style = ElementTheme.typography.fontBodySmRegular)
@@ -110,7 +101,7 @@ private fun MemoEditorPhotoCell(marked: Boolean, onToggle: () -> Unit, modifier:
                     .background(Color.Black.copy(alpha = 0.6f))
                     .clickable(onClick = onToggle)
                     .padding(horizontal = 6.dp, vertical = 2.dp)
-                    .testTag(MemoPhotoEditTags.UNDO),
+                    .testTag(MemoTags.EDIT_PHOTO_UNDO),
                 color = Color.White,
                 style = ElementTheme.typography.fontBodyXsRegular,
             )
@@ -124,7 +115,7 @@ private fun MemoEditorPhotoCell(marked: Boolean, onToggle: () -> Unit, modifier:
                     .background(Color.Black.copy(alpha = 0.6f))
                     .clickable(onClick = onToggle)
                     .padding(horizontal = 6.dp)
-                    .testTag(MemoPhotoEditTags.REMOVE),
+                    .testTag(MemoTags.EDIT_PHOTO_REMOVE),
                 color = Color.White,
                 style = ElementTheme.typography.fontBodySmRegular,
             )

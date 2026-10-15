@@ -106,6 +106,14 @@ internal object MemoTags {
     const val NOTE_ATTACHMENT = "memo_note_attachment"
     const val NOTE_HEAD = "memo_note_head"
     const val NOTE_NUMBER = "memo_note_number"
+
+    /** 앱10 D: the photos of the note editor. */
+    const val EDIT_PHOTO_ADD = "memo_edit_photo_add"
+    const val EDIT_PHOTO = "memo_edit_photo"
+    const val EDIT_PHOTO_REMOVE = "memo_edit_photo_remove"
+    const val EDIT_PHOTO_UNDO = "memo_edit_photo_undo"
+    const val EDIT_PHOTO_PICKED = "memo_edit_photo_picked"
+
     const val RECORD_HEAD = "memo_record_head"
     const val RECORD_PHOTO = "memo_record_photo"
     const val RECORD_TEXT = "memo_record_text"

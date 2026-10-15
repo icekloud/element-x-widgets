@@ -77,7 +77,8 @@ internal fun memoHeaderWithoutMeta(header: JSONObject?): JSONObject? {
 
 /** The same for a header kept as text in the database (notes stored by 앱9 may still carry a number there). */
 internal fun memoHeaderJsonWithoutMeta(json: String?): String? {
-    if (json == null || (MEMO_FIELD_NUMBER !in json && MEMO_FIELD_USER_MODIFIED !in json)) return json
+    if (json == null) return null
+    if (MEMO_FIELD_NUMBER !in json && MEMO_FIELD_USER_MODIFIED !in json) return json
     return try {
         memoHeaderWithoutMeta(JSONObject(json))?.toString()
     } catch (e: JSONException) {
