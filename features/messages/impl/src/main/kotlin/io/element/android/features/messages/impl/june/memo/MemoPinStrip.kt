@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.theme.components.Text
+import kotlinx.collections.immutable.ImmutableList
 
 /*
  * 앱11 screens: the pinned strip (A·B), the photos under a card's text (D), the selection bar (C) and the tab swipe
@@ -60,7 +61,7 @@ import io.element.android.libraries.designsystem.theme.components.Text
  * A tap opens the note (in the selection mode: selects it). Nothing is drawn without pinned notes.
  */
 @Composable
-internal fun MemoPinStrip(controller: MemoController, pinned: List<MemoItem>, modifier: Modifier = Modifier) {
+internal fun MemoPinStrip(controller: MemoController, pinned: ImmutableList<MemoItem>, modifier: Modifier = Modifier) {
     if (pinned.isEmpty()) return
     var folded by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -181,7 +182,7 @@ internal fun memoCardBorder(controller: MemoController, id: String): Pair<Dp, Co
  * actions. [visible] = the ids of the notes the current screen shows ("전체 선택").
  */
 @Composable
-internal fun MemoSelectBar(controller: MemoController, visible: List<String>) {
+internal fun MemoSelectBar(controller: MemoController, visible: ImmutableList<String>) {
     val s = controller.select
     var askTrash by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().background(ElementTheme.colors.bgSubtleSecondary).testTag(MemoA11Tags.SELECT_BAR)) {
@@ -239,15 +240,18 @@ internal fun Modifier.memoTabSwipe(enabled: Boolean, onSwipe: (Int) -> Unit): Mo
             var byChild = false
             var claimed = false
             var direction = 0
-            while (true) {
-                val c = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.id == down.id } ?: break
-                if (c.isConsumed && !claimed) byChild = true
-                val dx = c.position.x - down.position.x
-                val dy = c.position.y - down.position.y
-                direction = memoSwipeDirection(down.position.x, dx, dy, size.width.toFloat(), edge, min, byChild)
-                if (direction != 0) claimed = true
-                if (claimed) c.consume()
-                if (!c.pressed) break
+            var pressed = true
+            while (pressed) {
+                val c = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.id == down.id }
+                pressed = c?.pressed == true
+                if (c != null) {
+                    if (c.isConsumed && !claimed) byChild = true
+                    val dx = c.position.x - down.position.x
+                    val dy = c.position.y - down.position.y
+                    direction = memoSwipeDirection(down.position.x, dx, dy, size.width.toFloat(), edge, min, byChild)
+                    if (direction != 0) claimed = true
+                    if (claimed) c.consume()
+                }
             }
             if (claimed && direction != 0) onSwipe(direction)
         }

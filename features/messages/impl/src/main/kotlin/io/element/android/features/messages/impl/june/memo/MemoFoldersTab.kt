@@ -273,7 +273,7 @@ private fun MemoFolderView(controller: MemoController, path: String) {
         }
         // 앱11 A·B: the pinned notes of this folder stay above the grid (only the grid scrolls): a small photo for a
         // photo-only note, never the note id; a tap opens the note.
-        MemoPinStrip(controller, pinned)
+        MemoPinStrip(controller, pinned.toImmutableList())
         if (newCount > 0) {
             Text(
                 "새 메모 $newCount ↑",
