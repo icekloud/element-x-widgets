@@ -11,6 +11,7 @@
 package io.element.android.features.messages.impl.june.memo
 
 import android.content.Intent
+import android.net.Uri
 import android.speech.RecognizerIntent
 import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -42,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -252,7 +254,12 @@ private fun MemoSearchEmpty(
 private fun MemoResultRow(item: MemoItem, onOpen: () -> Unit, onTag: (String) -> Unit) {
     val accent = ElementTheme.colors.textActionAccent
     Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 10.dp, vertical = 6.dp)) {
-        Text(memoKindIcon(item.kind) + " " + item.title, style = ElementTheme.typography.fontBodyMdMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            memoKindIcon(item.kind) + " " + memoNumbered(item.number, item.title),
+            style = ElementTheme.typography.fontBodyMdMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         item.snippet?.let { snippet ->
             val text = buildAnnotatedString {
                 append(memoMatchPrefix(item.matchField))
@@ -364,7 +371,8 @@ internal fun MemoNoteScreen(
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            val title = note?.header?.optString("제목")?.takeIf { it.isNotEmpty() } ?: "메모"
+            // 앱10 C: `‹ #번호  제목  날짜` (no author), the date of the user's last change, else the creation.
+            val title = note?.let { memoNoteScreenHead(it) } ?: "메모"
             val goBack = {
                 when (val b = nav.back()) {
                     is MemoBack.To -> controller.go { b.state }
@@ -376,7 +384,7 @@ internal fun MemoNoteScreen(
                 style = ElementTheme.typography.fontBodyLgMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).clickable(onClick = goBack),
+                modifier = Modifier.weight(1f).clickable(onClick = goBack).testTag(MemoTags.NOTE_HEAD),
             )
             if (note != null && !nav.editing) {
                 Text(
@@ -393,10 +401,14 @@ internal fun MemoNoteScreen(
                 Text("다시", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable(onClick = load).padding(horizontal = 8.dp))
             }
             n == null -> Text("불러오는 중…", modifier = Modifier.padding(12.dp), color = ElementTheme.colors.textSecondary)
-            nav.editing -> MemoNoteEditor(controller, n, onSave = { saved -> note = saved })
+            nav.editing -> MemoNoteEditor(controller, n, onSave = { saved ->
+                note = saved
+                // Read again: the photos copied just now, the date of this change and the number.
+                load()
+            })
             else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
                 Text(
-                    "📁 ${n.folder} · ${n.created.take(10)}" + if (n.pinned) " · 📌" else "",
+                    "📁 ${n.folder}" + if (n.pinned) " · 📌" else "",
                     style = ElementTheme.typography.fontBodySmRegular,
                     color = ElementTheme.colors.textSecondary
                 )
@@ -429,6 +441,12 @@ internal fun MemoNoteScreen(
     }
 }
 
+/** The head of an open note: `#12  제목  2026-10-15`; an untitled note without number shows "메모" as before. */
+internal fun memoNoteScreenHead(n: MemoNote): String {
+    val title = n.header.optString("제목").ifEmpty { if (n.number > 0) "" else "메모" }
+    return memoNoteHead(n.number, title, n.shownDate.take(10))
+}
+
 /** Markdown body, drawn with Markwon like the June file viewer (viewfolder). */
 @Composable
 private fun MemoMarkdown(body: String) {
@@ -450,30 +468,61 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote, onSave: (
     var title by remember(note.id) { mutableStateOf(title0) }
     var tags by remember(note.id) { mutableStateOf(tags0) }
     var body by remember(note.id) { mutableStateOf(note.body) }
-    val dirty = title != title0 || tags != tags0 || body != note.body
+    // 앱10 D: the photos are edited here too; nothing changes before [저장] (a removed one can be brought back).
+    var photos by remember(note.id) { mutableStateOf(MemoPhotoEdit(note.attachments)) }
+    var saving by remember(note.id) { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    val dirty = title != title0 || tags != tags0 || body != note.body || photos.changed
     LaunchedEffect(dirty) { controller.go { it.edited(dirty) } }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+        // 앱10 C: the number is the server's, shown and never edited here.
+        Text(
+            if (note.number > 0) "#${note.number}" else "번호 없음 · 동기화 때 서버가 매깁니다",
+            style = ElementTheme.typography.fontBodySmRegular,
+            color = ElementTheme.colors.textSecondary,
+            modifier = Modifier.padding(bottom = 4.dp).testTag(MemoTags.NOTE_NUMBER),
+        )
         TextField(value = title, onValueChange = { title = it }, label = "제목", singleLine = true, modifier = Modifier.fillMaxWidth())
         TextField(value = tags, onValueChange = { tags = it }, label = "태그", singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
         TextField(value = body, onValueChange = { body = it }, label = "본문", minLines = 8, modifier = Modifier.fillMaxWidth())
+        MemoEditorPhotos(photos, onChange = { photos = it })
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Text("취소", modifier = Modifier.clickable { controller.go { it.stopEditing() } }.padding(12.dp))
-            Text("저장", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable {
+            Text("저장", color = ElementTheme.colors.textActionAccent, modifier = Modifier.clickable(enabled = !saving) {
+                saving = true
                 val newTags = memoParseTagInput(tags)
-                controller.run(
-                    MemoOp.edit(
+                controller.scope.launch {
+                    // New picks are copied next to the database first, like the photos of a new note (앱8 order).
+                    val added = memoCopyPictures(context, photos.picked.map(Uri::parse)).map(::memoPhotoArg)
+                    val op = MemoOp.edit(
                         MemoTarget(noteId = note.id),
                         body = body.takeIf { it != note.body },
                         title = title.takeIf { it != title0 },
                         tags = newTags.takeIf { tags != tags0 },
-                    ),
-                ) {
-                    onSave(
-                        note.copy(body = body, header = org.json.JSONObject(note.header.toString()).put("제목", title).put("태그", org.json.JSONArray(newTags)))
+                        photosRemoved = photos.removedKeys,
+                        photosAdded = added,
                     )
-                    controller.go { it.stopEditing() }
+                    // One save at a time (a second press would copy the new photos twice); a failed one can be pressed again.
+                    val r = controller.store.request(op)
+                    saving = false
+                    when (r) {
+                        is MemoResult.Ok -> {
+                            controller.error = null
+                            onSave(memoEditedNote(note, title, newTags, body, photos))
+                            controller.go { it.stopEditing() }
+                            controller.store.refreshIndex()
+                        }
+                        is MemoResult.Failed -> controller.error = r.reason to null
+                    }
                 }
             }.padding(12.dp))
         }
     }
 }
+
+/** What the note screen shows right after [저장] until the note is read again (the new photos come with that read). */
+internal fun memoEditedNote(note: MemoNote, title: String, tags: List<String>, body: String, photos: MemoPhotoEdit): MemoNote = note.copy(
+    body = body,
+    header = org.json.JSONObject(note.header.toString()).put("제목", title).put("태그", org.json.JSONArray(tags)),
+    attachments = note.attachments.filterNot(photos::isRemoved),
+)

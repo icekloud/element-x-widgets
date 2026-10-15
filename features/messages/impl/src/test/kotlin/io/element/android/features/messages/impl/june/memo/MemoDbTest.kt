@@ -263,16 +263,35 @@ class MemoDbTest : RobolectricTest() {
     }
 
     @Test
-    fun `attachments are a union by mxc`() {
+    fun `the attachment list of the newer stamp replaces the other one, photos not uploaded yet stay`() {
+        // 앱10 (규약 추가 결정 3): was a union, so a photo removed on the phone came back.
         val base = note("n")
-        val a = base.copy(attachments = listOf(MemoLocalAttachment("1", mxc = "mxc://x/1"), MemoLocalAttachment("2", mxc = "mxc://x/2")))
+        val a = base.copy(
+            attachments = listOf(
+                MemoLocalAttachment("1", mxc = "mxc://x/1"),
+                MemoLocalAttachment("2", mxc = "mxc://x/2"),
+                MemoLocalAttachment("L", localPath = "/p/new.jpg"),
+            ),
+        )
         val b = base.copy(
             attachments = listOf(MemoLocalAttachment("9", mxc = "mxc://x/2"), MemoLocalAttachment("3", mxc = "mxc://x/3")),
             revs = base.revs.with(MemoBundle.Attach, MemoRev(t0 + 1000, "B", 5)),
         )
         val m = mergeMemoNote(a, b)
-        assertEquals(listOf("mxc://x/2", "mxc://x/3", "mxc://x/1"), m.attachments.map { it.mxc })
+        assertEquals(listOf("mxc://x/2", "mxc://x/3", null), m.attachments.map { it.mxc })
+        assertEquals("/p/new.jpg", m.attachments.last().localPath)
         assertEquals(m, mergeMemoNote(b, a))
+    }
+
+    @Test
+    fun `same attachment stamp but a longer list - what a union server added back is dropped`() {
+        // A server before 서버 5차 adds lists up under the stamp of the phone: the photo removed there stays gone.
+        val stamp = MemoRev(t0 + 2000, "A", 7)
+        val base = note("n")
+        val phone = base.copy(attachments = listOf(MemoLocalAttachment("1", mxc = "mxc://x/1")), revs = base.revs.with(MemoBundle.Attach, stamp))
+        val server = phone.copy(attachments = listOf(MemoLocalAttachment("1", mxc = "mxc://x/1"), MemoLocalAttachment("2", mxc = "mxc://x/2")))
+        assertEquals(listOf("mxc://x/1"), mergeMemoNote(phone, server).attachments.map { it.mxc })
+        assertEquals(mergeMemoNote(phone, server), mergeMemoNote(server, phone))
     }
 
     @Test

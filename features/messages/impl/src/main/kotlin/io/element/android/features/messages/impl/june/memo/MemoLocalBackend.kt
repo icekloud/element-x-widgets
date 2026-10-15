@@ -152,7 +152,11 @@ internal class MemoLocalBackend(
 
     private fun note(rid: String, id: String): MemoResponse {
         val n = db.note(id)?.takeIf { it.deleted != MEMO_DELETED_TOMBSTONE } ?: return MemoResponse.Error(rid, "get", "노트를 찾지 못했습니다")
-        val header = n.headerJson?.let { runCatchingJson(it) } ?: JSONObject()
+        val header = memoHeaderJsonWithoutMeta(n.headerJson)?.let { runCatchingJson(it) } ?: JSONObject()
+        // 앱10: the number and the user's last change, kept beside the note (MemoNoteMeta), for the note screen.
+        val meta = memoNoteMeta(db, n.id)
+        if (meta.number > 0) header.put(MEMO_FIELD_NUMBER, meta.number)
+        if (meta.userModifiedMs > 0) header.put(MEMO_FIELD_USER_MODIFIED, memoIso(meta.userModifiedMs))
         header.put("id", n.id)
             .put("생성", memoIso(n.createdMs))
             .put("수정", memoIso(n.modified.ms))
@@ -183,7 +187,10 @@ internal class MemoLocalBackend(
                     val to = a["folder"] as? String
                     if (op.op == "move" && (to == null || !folderExists(to))) return@transactionWithResult err("폴더가 없습니다: $to")
                     val rev = db.nextRev(device(), now)
-                    save(noteChange(op, n, rev), now)
+                    val changed = noteChange(op, n, rev)
+                    // 앱10: text, title or photos changed by the user: the date shown becomes this change.
+                    if (memoUserChanged(n, changed)) memoMarkUserModified(db, id, MemoSync.correctedNow(db, now))
+                    save(changed, now)
                     ok(id)
                 }
                 "mkdir" -> {
@@ -273,6 +280,18 @@ internal class MemoLocalBackend(
                     m = m.copy(body = body ?: m.body, title = title ?: m.title, revs = m.revs.with(MemoBundle.Body, rev))
                 }
                 if (a["태그"] != null) m = m.copy(tags = strings(a["태그"]).distinct(), revs = m.revs.with(MemoBundle.Class, rev))
+                // 앱10 D: photos removed and added in the editor, a normal change of the `첨부` bundle (new ones go up later).
+                val removed = strings(a[MEMO_ARG_PHOTOS_REMOVED]).toSet()
+                val added = memoPhotosOf(a[MEMO_ARG_PHOTOS_ADDED])
+                if (removed.isNotEmpty() || added.isNotEmpty()) {
+                    val kept = memoWithoutPhotos(m.attachments, removed)
+                    val ids = kept.map { it.id }.toSet()
+                    val photos = kept + added.filter { it.id !in ids }
+                    m = m.copy(attachments = photos, revs = m.revs.with(MemoBundle.Attach, rev))
+                    // The kind follows the body bundle: a text note that got photos shows them on its card.
+                    val kind = memoKindAfterPhotos(m.kind, m.body, photos)
+                    if (kind != m.kind) m = m.copy(kind = kind, revs = m.revs.with(MemoBundle.Body, rev))
+                }
                 m
             }
             "pin" -> n.mark(rev) { copy(pinned = true, pinSuggested = false) }
@@ -286,9 +305,9 @@ internal class MemoLocalBackend(
     private fun MemoNoteRecord.mark(rev: MemoRev, f: MemoNoteRecord.() -> MemoNoteRecord) = f().copy(revs = revs.with(MemoBundle.Mark, rev))
 
     /**
-     * [적용] of a `분류` (tags / folder) or `첨부분석` (text added to the body) suggestion: written here first, like a
-     * change typed on the phone, so it shows at once and goes up with its own stamp. Other kinds (schedule, folder
-     * creation) are carried out by the server when it gets the answer.
+     * [적용] of a `분류` (tags / folder) or `제목` suggestion: written here first, like a change typed on the phone, so it
+     * shows at once and goes up with its own stamp. Other kinds (schedule, folder creation) are carried out by the server
+     * when it gets the answer. 앱10 B: no suggestion changes the body text (관리자: "메모 내용은 건드리지 말 것").
      */
     private fun applySuggestion(s: MemoSuggestionRow, now: Long) {
         val n = s.noteId?.let { db.note(it) }?.takeIf { it.deleted == MEMO_DELETED_NONE } ?: return
@@ -307,14 +326,13 @@ internal class MemoLocalBackend(
                 val title = content.optString("제목").trim()
                 if (title.isEmpty() || n.title.isNotEmpty()) return
                 val rev = db.nextRev(device(), now)
+                // 규약 추가 결정 2: accepting a title is the user's change (the date shown moves on).
+                memoMarkUserModified(db, n.id, MemoSync.correctedNow(db, now))
                 save(n.copy(title = title, revs = n.revs.with(MemoBundle.Body, rev)), now)
             }
-            "첨부분석" -> {
-                val extra = content.optString("본문추가").trimEnd()
-                if (extra.isEmpty()) return
-                val rev = db.nextRev(device(), now)
-                save(n.copy(body = memoNormalizedBody(n.body) + "\n\n" + extra, revs = n.revs.with(MemoBundle.Body, rev)), now)
-            }
+            // 앱10 B: an old `첨부분석` card (the server makes no new ones since 서버 4차) changes nothing here. Its
+            // answer still goes to the server, which clears the card; the photo text stays on the server side.
+            else -> Unit
         }
     }
 
@@ -351,7 +369,7 @@ internal class MemoLocalBackend(
     private fun save(n: MemoNoteRecord, now: Long) {
         val dirty = n.copy(dirty = true)
         db.writeNote(dirty)
-        db.enqueue(MEMO_OUTBOX_NOTE, n.id, dirty.toChangeJson().toString(), now)
+        MemoSync.enqueueNote(db, dirty, now)
     }
 
     private fun saveFolder(f: MemoFolderRow, now: Long) {

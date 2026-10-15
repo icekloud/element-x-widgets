@@ -170,6 +170,8 @@ internal data class MemoItem(
     /** 앱8 항목 1 d: attachments of a local note still waiting for their upload, and those that failed. */
     val photosWaiting: Int = 0,
     val photosFailed: Int = 0,
+    /** 앱10: the note number the server gave (`#N`), 0 before the first sync. [date] is the date shown. */
+    val number: Int = 0,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date
@@ -194,6 +196,10 @@ internal data class MemoNote(
     val tags: List<String> get() = header.optJSONArray("태그").strings()
     val created: String get() = header.optString("생성")
     val pinned: Boolean get() = header.optBoolean("고정")
+
+    /** 앱10: the server number (0 = none yet) and the date shown (the user's last change, else the creation). */
+    val number: Int get() = header.optInt(MEMO_FIELD_NUMBER, 0)
+    val shownDate: String get() = memoShownDate(created, header.optString(MEMO_FIELD_USER_MODIFIED))
 }
 
 internal data class MemoTag(

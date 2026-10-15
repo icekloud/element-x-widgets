@@ -117,17 +117,21 @@ class MemoPanelTest : RobolectricTest() {
     }
 
     @Test
-    fun `a grouped accept adds the photo text once and sends one answer per id`() = runTest {
+    fun `a grouped accept leaves the body as it is and sends one answer per id`() = runTest {
         val db = db()
         val local = backend(db)
         val note = local.create("책상 사진")
         val room = Room(proposals = listOf(photoProposal("p1", note), photoProposal("p2", note), photoProposal("p3", note)))
         val r = runner(db, room)
         r.syncNow()
+        val before = db.note(note)!!
         val group = memoPanelGroups(local.fetchIndex()).single()
         assertEquals(listOf("p1", "p2", "p3"), group.ids)
         memoGroupOps(group, MemoAnswer.Accept).forEach { local.call(it, "rid") }
-        assertEquals(1, Regex("## 사진 설명").findAll(db.note(note)!!.body).count())
+        // 앱10 B (관리자: "메모 내용은 건드리지 말 것"): an old 첨부분석 card changes nothing in the note.
+        assertEquals(before.contentHash, db.note(note)!!.contentHash)
+        assertEquals(before.body, db.note(note)!!.body)
+        assertEquals(before.revs, db.note(note)!!.revs)
         now += 10_000
         r.push()
         val sent = room.answersSent()
@@ -145,9 +149,12 @@ class MemoPanelTest : RobolectricTest() {
         val room = Room(online = true, proposals = listOf(photoProposal("p1", note)))
         val r = runner(db, room)
         r.syncNow()
+        val body = db.note(note)!!.body
         repeat(3) { assertTrue(local.call(MemoOp.accept("p1"), "rid$it") is MemoResponse.Ok) }
         local.call(MemoOp.dismiss("p1"), "rid-d")
-        assertEquals(1, Regex("## 사진 설명").findAll(db.note(note)!!.body).count())
+        // 앱10 B: the body never gets the photo text (it went in once before).
+        assertEquals(body, db.note(note)!!.body)
+        assertEquals(0, Regex("## 사진 설명").findAll(db.note(note)!!.body).count())
         assertEquals(1, db.outbox().count { it.kind == MEMO_OUTBOX_PROPOSAL })
         assertEquals("수락", JSONObject(db.outbox().single { it.kind == MEMO_OUTBOX_PROPOSAL }.payload).getString("응답"))
         // Until the server has it the card stays, locked ("처리중"): not counted on the badge.

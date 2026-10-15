@@ -502,6 +502,9 @@ internal fun memoChangeOfNote(note: MemoNote): JSONObject {
         .put("머리말", h)
     h.optJSONObject("rev")?.let { o.put("rev", it) }
     h.optJSONObject("링크")?.let { o.put("링크", it) }
+    // 앱10: a `get` answer has no top level besides its header, so the number and the user time are read from there.
+    h.optInt(MEMO_FIELD_NUMBER, 0).takeIf { it > 0 }?.let { o.put(MEMO_FIELD_NUMBER, it) }
+    h.optString(MEMO_FIELD_USER_MODIFIED).takeIf { it.isNotEmpty() }?.let { o.put(MEMO_FIELD_USER_MODIFIED, it) }
     val files = JSONArray()
     note.attachments.forEach { a ->
         val f = JSONObject().put("mxc", a.mxc)
