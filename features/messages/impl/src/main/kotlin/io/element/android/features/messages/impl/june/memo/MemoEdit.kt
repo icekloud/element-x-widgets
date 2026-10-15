@@ -181,3 +181,11 @@ internal object MemoEditHub {
         scope.launch { save(noteId, dropWhenDone, persist) }
     }
 }
+
+/**
+ * 추가요청 2 (관리자 2026-10-15: "자동저장 기능 도입되면 화면을 떠나기 전까지는 검토하지 않도록"): what the auto save
+ * writes goes up only after the editing ended. While [editing] the changes wait in the outbox (one row per note), so
+ * the server is not asked to review a note that is still being typed.
+ */
+internal fun memoPushAllowed(visible: Boolean, editing: Boolean, hasPending: Boolean): Boolean =
+    visible && !editing && hasPending

@@ -312,6 +312,44 @@ class MemoEditTest : RobolectricTest() {
         assertNull(memoEditCancelOp(id, fresh.saved, fresh.entry))
     }
 
+    // ---------------------------------------------------------------- 추가요청 2: nothing goes up while editing
+
+    @Test
+    fun `the push waits for the editing to end`() {
+        // Typing: the change is written locally and waits.
+        assertFalse(memoPushAllowed(visible = true, editing = true, hasPending = true))
+        // The editing ended (back, another tab, the note closed): one push for everything that piled up.
+        assertTrue(memoPushAllowed(visible = true, editing = false, hasPending = true))
+        // Nothing waiting, or the screen gone: nothing to do (as before 앱12).
+        assertFalse(memoPushAllowed(visible = true, editing = false, hasPending = false))
+        assertFalse(memoPushAllowed(visible = false, editing = false, hasPending = true))
+    }
+
+    @Test
+    fun `what the auto save wrote while editing is still waiting when the editing ends`() = runTest {
+        val db = db()
+        val local = backend(db)
+        val id = local.create("처음 글")
+        db.outbox().forEach { db.dropOutbox(it.seq) }
+        MemoEditHub.drop(id)
+        val entry = memoEditDraftOf(open(local, id))
+        MemoEditHub.open(id, entry)
+        repeat(3) { round ->
+            now += 2_000
+            MemoEditHub.typed(id, MemoEditHub.state(id)!!.draft.copy(body = "자동 저장 $round"))
+            saveOnce(local, id, finish = false)
+            // Still editing: the rows wait, nothing was sent (the screen's push effect is held back).
+            assertFalse(memoPushAllowed(visible = true, editing = true, hasPending = true))
+        }
+        val waiting = db.outbox().filter { it.kind == MEMO_OUTBOX_NOTE }
+        assertEquals(1, waiting.size)
+        // The app could be killed here: the text is in the note and its row is in the outbox for the next start.
+        assertEquals("자동 저장 2", db.note(id)!!.body)
+        saveOnce(local, id, finish = true)
+        assertTrue(memoPushAllowed(visible = true, editing = false, hasPending = true))
+        assertEquals(1, db.outbox().count { it.kind == MEMO_OUTBOX_NOTE && it.target == id })
+    }
+
     @Test
     fun `a server change that arrives while editing does not touch what was typed`() = runTest {
         val db = db()

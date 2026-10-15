@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -60,6 +62,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.designsystem.theme.components.Text
@@ -501,6 +506,9 @@ private fun MemoNoteDates(note: MemoNote) {
 /** How far the date colour sits between the secondary and the primary text colour. */
 private const val MEMO_DATE_TONE = 0.5f
 
+/** 추가요청 1: the photo row of the editor keeps this much height at most, so a long body is not pushed away. */
+private val MEMO_EDIT_PHOTOS_HEIGHT = 190.dp
+
 /** 앱12 C: a long press on the reading area opens the editor (nothing on a short press, no ripple). */
 @Composable
 private fun Modifier.memoLongPressEdit(controller: MemoController): Modifier {
@@ -558,11 +566,26 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote) {
         MemoEditHub.save(note.id) { current -> persist(current, false) }
     }
     // Leaving the screen: the last save, photos included. The screen's scope is gone by then, so the hub runs it.
-    DisposableEffect(note.id) {
-        onDispose { MemoEditHub.saveLater(note.id) { current -> persist(current, true) } }
+    // The app going to the background keeps the composition, so the text is written on ON_STOP too (the photo marks
+    // wait for the end of the editing, 결정기록 4).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, note.id) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                MemoEditHub.saveLater(note.id, dropWhenDone = false) { current -> persist(current, false) }
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            MemoEditHub.saveLater(note.id) { current -> persist(current, true) }
+        }
     }
     val typed: (MemoEditDraft) -> Unit = { draft -> MemoEditHub.typed(note.id, draft) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+    // 추가요청 1 (관리자: "메모가 길어질경우 메모장안에서 스크롤이 안되어 불편"): the body takes the height that is
+    // left and scrolls inside itself; the keyboard shrinks the editor ([imePadding]) so the line with the cursor stays
+    // in sight. The photos keep their own small scroll instead of pushing the body away.
+    Column(Modifier.fillMaxSize().imePadding().padding(12.dp)) {
         // 앱10 C: the number is the server's, shown and never edited here.
         Text(
             if (note.number > 0) "#${note.number}" else "번호 없음 · 동기화 때 서버가 매깁니다",
@@ -584,14 +607,17 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         )
+        // 추가요청 1: the body gets the height that is left (never a fixed 8 lines inside an endless column), so a
+        // long note scrolls inside the field itself.
         TextField(
             value = state.draft.body,
             onValueChange = { v -> typed(state.draft.copy(body = v)) },
             label = "본문",
-            minLines = 8,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().weight(1f).testTag(MemoTags.EDIT_BODY),
         )
-        MemoEditorPhotos(state.draft.photos, onChange = { p -> typed(state.draft.copy(photos = p)) })
+        Column(Modifier.heightIn(max = MEMO_EDIT_PHOTOS_HEIGHT).verticalScroll(rememberScrollState())) {
+            MemoEditorPhotos(state.draft.photos, onChange = { p -> typed(state.draft.copy(photos = p)) })
+        }
         val status = memoEditStatus(state)
         if (status.isNotEmpty()) {
             Text(

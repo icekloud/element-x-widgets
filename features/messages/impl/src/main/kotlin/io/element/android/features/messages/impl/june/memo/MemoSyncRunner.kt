@@ -115,14 +115,18 @@ internal class MemoSyncRunner(
         return (times.min() - clock()).coerceAtLeast(0)
     }
 
-    /** Screen shown: pull what changed, then send what waits. Returns false when the server could not be reached. */
-    suspend fun syncNow(): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+    /**
+     * Screen shown: pull what changed, then send what waits. Returns false when the server could not be reached.
+     * 추가요청 2 (2026-10-15): [push] false while the note editor is open — what the auto save wrote stays local until
+     * the editing ends, so the server does not review the same half written note again and again.
+     */
+    suspend fun syncNow(push: Boolean = true): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
         mutex.withLock {
-            log("화면 동기화 시작")
+            log("화면 동기화 시작${if (push) "" else " (편집 중: 올리기 보류)"}")
             val pulled = pullLocked()
-            val pushed = if (pulled) uploadLocked(force = false).ok else false
+            val pushed = if (pulled && push) uploadLocked(force = false).ok else false
             log("화면 동기화 끝 받기=$pulled 올리기=$pushed")
-            pulled && pushed
+            pulled && (pushed || !push)
         }
     } ?: false.also { log("화면 동기화 시간 초과") }
 

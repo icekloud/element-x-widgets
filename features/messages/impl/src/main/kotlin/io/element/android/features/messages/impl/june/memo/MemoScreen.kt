@@ -108,8 +108,9 @@ internal object MemoTags {
     const val NOTE_HEAD = "memo_note_head"
     const val NOTE_NUMBER = "memo_note_number"
 
-    /** 앱12 A·B·C: the date lines of the head, the reading area (long press) and the editor's 취소 and save line. */
+    /** 앱12 A·B·C: the date lines of the head, the reading area (long press) and the editor's body, 취소 and status. */
     const val NOTE_DATE = "memo_note_date"
+    const val EDIT_BODY = "memo_edit_body"
     const val NOTE_READ = "memo_note_read"
     const val EDIT_CANCEL = "memo_edit_cancel"
     const val EDIT_STATUS = "memo_edit_status"
@@ -281,9 +282,10 @@ internal fun MemoScreen(
     LaunchedEffect(store, localVersion) {
         store.refreshIndex()
     }
-    if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion)
-
     val state = nav.value
+    // 추가요청 2: while a note is being edited nothing goes up to the server (the auto save stays local).
+    if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion, editing = state.editing)
+
     // 앱11 C: the top bar icon turns the selection mode on and off; ending it here (종료, back, a bulk action) turns
     // the icon off too.
     val selectRooms by MemoSelectHub.rooms.collectAsState()
