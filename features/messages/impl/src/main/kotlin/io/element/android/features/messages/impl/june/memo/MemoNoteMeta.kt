@@ -130,3 +130,9 @@ internal fun memoNoteDateLines(createdIso: String, userModifiedIso: String?): Li
 
 internal fun memoNoteDateLines(note: MemoNote): List<String> =
     memoNoteDateLines(note.created, note.header.optString(MEMO_FIELD_USER_MODIFIED))
+
+/**
+ * 앱13 A (관리자: "작성, 수정일자 표시방식이 이 화면에서는 반영안됨"): the record card shows the same two lines as the open
+ * note. An item that knows only the date shown (the fake backend, an old server list) shows that one as `작성`.
+ */
+internal fun memoItemDateLines(item: MemoItem): List<String> = memoNoteDateLines(item.created.ifEmpty { item.date }, item.userModified)

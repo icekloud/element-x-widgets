@@ -110,6 +110,11 @@ internal object MemoTags {
 
     /** 앱12 A·B·C: the date lines of the head, the reading area (long press) and the editor's body, 취소 and status. */
     const val NOTE_DATE = "memo_note_date"
+
+    /** 앱13 A·B: the date lines of a record card, the compact title and tag fields of the editor. */
+    const val RECORD_DATE = "memo_record_date"
+    const val EDIT_TITLE = "memo_edit_title"
+    const val EDIT_TAGS = "memo_edit_tags"
     const val EDIT_BODY = "memo_edit_body"
     const val NOTE_READ = "memo_note_read"
     const val EDIT_CANCEL = "memo_edit_cancel"
@@ -285,6 +290,10 @@ internal fun MemoScreen(
     val state = nav.value
     // 추가요청 2: while a note is being edited nothing goes up to the server (the auto save stays local).
     if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion, editing = state.editing)
+    // 앱13 B·C: the editor takes the whole screen; the tab bar and the room composer below come back when it ends.
+    val fullEditor = memoEditorFullScreen(state)
+    LaunchedEffect(roomId, fullEditor) { MemoEditingRooms.set(roomId, fullEditor) }
+    DisposableEffect(roomId) { onDispose { MemoEditingRooms.set(roomId, false) } }
 
     // 앱11 C: the top bar icon turns the selection mode on and off; ending it here (종료, back, a bulk action) turns
     // the icon off too.
@@ -325,10 +334,12 @@ internal fun MemoScreen(
             }
         }
         if (controller.select.active && state.note == null) MemoSelectBar(controller, controller.visibleIds.toImmutableList())
-        MemoTabBar(
-            selected = state.tab,
-            onSelect = { tab -> controller.go { it.closeNote().selectTab(tab) } },
-        )
+        if (!fullEditor) {
+            MemoTabBar(
+                selected = state.tab,
+                onSelect = { tab -> controller.go { it.closeNote().selectTab(tab) } },
+            )
+        }
     }
     // 앱9 A: the proposal area opens from the list icon of the top bar; the badge there counts the waiting cards.
     val waitingCards = remember(index) { memoPanelWaitingCount(index) }
@@ -590,15 +601,19 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
     ) {
         if (controller.select.active) MemoSelectMark(controller.select.isSelected(item.id))
         val text = memoCardText(item)
-        // 앱10 C (관리자): `#번호  제목  날짜`, no author ("나") any more; the date is the user's last change, else the creation.
-        Text(
-            memoRecordHead(item, text),
-            style = ElementTheme.typography.fontBodySmRegular,
-            color = ElementTheme.colors.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.testTag(MemoTags.RECORD_HEAD),
-        )
+        // 앱10 C: `#번호  제목`, no author ("나"). 앱13 A (관리자: "작성, 수정일자 표시방식이 이 화면에서는 반영안됨. 절반정도로
+        // 폰트크기 줄이고 두줄로 나누고 우측정렬"): the dates right aligned on two small lines, the same ones as the open note.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                memoRecordTitle(item, text),
+                style = ElementTheme.typography.fontBodySmRegular,
+                color = ElementTheme.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).testTag(MemoTags.RECORD_HEAD),
+            )
+            MemoDateLines(memoItemDateLines(item).toImmutableList(), Modifier.padding(start = 6.dp).testTag(MemoTags.RECORD_DATE))
+        }
         val uploadMark = memoPhotoUploadMark(item)
         if (uploadMark.isNotEmpty()) {
             Text(
@@ -641,6 +656,9 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
 
 /** The head line of a record card: `#12  제목  10-15 11:31` ([memoNoteHead]). */
 internal fun memoRecordHead(item: MemoItem, text: String?): String = memoNoteHead(item.number, memoCardHeadTitle(item, text), memoRecordTime(item.date))
+
+/** 앱13 A: the left part of the record card head, `#12  제목` (the dates are drawn beside it, [memoItemDateLines]). */
+internal fun memoRecordTitle(item: MemoItem, text: String?): String = memoNoteHead(item.number, memoCardHeadTitle(item, text), "")
 
 /** "10-12 11:31" from "2026-10-12T11:31:00+09:00". */
 internal fun memoRecordTime(date: String): String = if (date.length >= 16) date.substring(5, 16).replace('T', ' ') else date

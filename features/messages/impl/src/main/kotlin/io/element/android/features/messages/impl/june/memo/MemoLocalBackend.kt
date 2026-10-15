@@ -169,7 +169,8 @@ internal class MemoLocalBackend(
             .put("고정제안", n.pinSuggested)
             .put("삭제", n.deleted)
         n.scheduleState?.let { header.put("일정상태", it) }
-        val files = n.attachments.mapNotNull { it.toScreen() }
+        // 앱13 D: copies of one picture stored by the 앱12 editor are drawn once (the rows themselves stay).
+        val files = memoDistinctPhotos(n.attachments).mapNotNull { it.toScreen() }
         return MemoResponse.Note(rid, MemoNote(n.id, header, n.body, files, truncated = false))
     }
 
@@ -297,12 +298,13 @@ internal class MemoLocalBackend(
                 }
                 if (a["태그"] != null) m = m.copy(tags = strings(a["태그"]).distinct(), revs = m.revs.with(MemoBundle.Class, rev))
                 // 앱10 D: photos removed and added in the editor, a normal change of the `첨부` bundle (new ones go up later).
-                val removed = strings(a[MEMO_ARG_PHOTOS_REMOVED]).toSet()
+                // 앱13 D: taking out a photo takes out its stored copies too, and a copy of a photo the note has is not added.
+                val removed = memoRemovedWithCopies(m.attachments, strings(a[MEMO_ARG_PHOTOS_REMOVED]).toSet())
                 val added = memoPhotosOf(a[MEMO_ARG_PHOTOS_ADDED])
                 if (removed.isNotEmpty() || added.isNotEmpty()) {
                     val kept = memoWithoutPhotos(m.attachments, removed)
                     val ids = kept.map { it.id }.toSet()
-                    val photos = kept + added.filter { it.id !in ids }
+                    val photos = kept + memoNewPhotos(kept, added.filter { it.id !in ids })
                     m = m.copy(attachments = photos, revs = m.revs.with(MemoBundle.Attach, rev))
                     // The kind follows the body bundle: a text note that got photos shows them on its card.
                     val kind = memoKindAfterPhotos(m.kind, m.body, photos)

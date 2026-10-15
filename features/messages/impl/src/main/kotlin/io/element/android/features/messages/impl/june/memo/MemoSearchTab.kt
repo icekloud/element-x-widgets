@@ -18,18 +18,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,6 +37,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -46,11 +49,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -61,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -400,31 +407,8 @@ internal fun MemoNoteScreen(
     val index by store.index.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            // 앱10 C / 앱12 A: `‹ #번호  제목` on the left, the dates right aligned beside it.
-            val title = note?.let { memoNoteScreenHead(it) } ?: "메모"
-            val goBack = {
-                when (val b = nav.back()) {
-                    is MemoBack.To -> controller.go { b.state }
-                    else -> Unit
-                }
-            }
-            Text(
-                "‹ $title",
-                style = ElementTheme.typography.fontBodyLgMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).clickable(onClick = goBack).testTag(MemoTags.NOTE_HEAD),
-            )
-            note?.let { MemoNoteDates(it) }
-            if (note != null && !nav.editing) {
-                Text(
-                    "편집",
-                    color = ElementTheme.colors.textActionAccent,
-                    modifier = Modifier.clickable { controller.go { it.startEditing() } }.padding(8.dp)
-                )
-            }
-        }
+        // 앱13 B (관리자: "위에 제목, 일자 나타내는 줄은 메모 편집 중엔 필요없으니 없애서 공간확보"): no head while editing.
+        if (!nav.editing) MemoNoteHead(controller, note)
         val n = note
         when {
             failed != null -> Row(Modifier.padding(12.dp).testTag(MemoTags.ERROR)) {
@@ -479,7 +463,7 @@ internal fun MemoNoteScreen(
 
 /**
  * The head of an open note: `#12  제목`; an untitled note without number shows "메모" as before. 앱12 A: the date is
- * no longer part of it — it is drawn right aligned, on its own two lines ([MemoNoteDates]).
+ * no longer part of it — it is drawn right aligned, on its own two lines ([MemoDateLines]).
  */
 internal fun memoNoteScreenHead(n: MemoNote): String {
     val title = n.header.optString("제목").ifEmpty { if (n.number > 0) "" else "메모" }
@@ -487,27 +471,61 @@ internal fun memoNoteScreenHead(n: MemoNote): String {
 }
 
 /**
- * 앱12 A (관리자: "날짜표기를 우측 정렬하고 폰트크기를 한단계 낮추고 진한회색으로"): `작성 …` and, when the user changed
- * the note later, `수정 …` under it. One step below the head text, in the grey halfway between the body and the
- * secondary colour of the theme (dark theme follows).
+ * The head of the reading screen: `‹ #번호  제목` on the left (앱10 C), the dates right aligned beside it (앱12 A) and
+ * `편집`. 앱13 A (관리자: "일자 폰트가 너무 큼", "제목이 잘림"): the dates are half as big, so the title gets the room and
+ * wraps onto a second line instead of being cut.
  */
 @Composable
-private fun MemoNoteDates(note: MemoNote) {
-    val lines = memoNoteDateLines(note)
+private fun MemoNoteHead(controller: MemoController, note: MemoNote?) {
+    Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        val title = note?.let { memoNoteScreenHead(it) } ?: "메모"
+        val goBack = {
+            when (val b = controller.nav.value.back()) {
+                is MemoBack.To -> controller.go { b.state }
+                else -> Unit
+            }
+        }
+        Text(
+            "‹ $title",
+            style = ElementTheme.typography.fontBodyLgMedium,
+            maxLines = MEMO_HEAD_TITLE_LINES,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).clickable(onClick = goBack).testTag(MemoTags.NOTE_HEAD),
+        )
+        if (note != null) {
+            MemoDateLines(memoNoteDateLines(note).toImmutableList(), Modifier.padding(start = 6.dp).testTag(MemoTags.NOTE_DATE))
+            Text(
+                "편집",
+                color = ElementTheme.colors.textActionAccent,
+                modifier = Modifier.clickable { controller.go { it.startEditing() } }.padding(8.dp)
+            )
+        }
+    }
+}
+
+/** 앱13 A: a long title wraps onto this many lines (the two date lines beside it are about as high). */
+internal const val MEMO_HEAD_TITLE_LINES = 2
+
+/**
+ * 앱12 A / 앱13 A: `작성 …` and, when the user changed the note later, `수정 …` under it, right aligned, in the grey
+ * halfway between the body and the secondary colour of the theme (dark theme follows). The open note and the record
+ * card both draw them here, from the same lines ([memoNoteDateLines]). Half of the 앱12 size, never below
+ * [MEMO_DATE_TEXT_SP] (결정기록 A).
+ */
+@Composable
+internal fun MemoDateLines(lines: ImmutableList<String>, modifier: Modifier = Modifier) {
     if (lines.isEmpty()) return
     val color = lerp(ElementTheme.colors.textSecondary, ElementTheme.colors.textPrimary, MEMO_DATE_TONE)
-    Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 6.dp).testTag(MemoTags.NOTE_DATE)) {
+    val style = ElementTheme.typography.fontBodyXsRegular.copy(fontSize = MEMO_DATE_TEXT_SP.sp, lineHeight = MEMO_DATE_LINE_SP.sp)
+    Column(horizontalAlignment = Alignment.End, modifier = modifier) {
         lines.forEach { line ->
-            Text(line, style = ElementTheme.typography.fontBodyMdRegular, color = color, maxLines = 1)
+            Text(line, style = style, color = color, maxLines = 1)
         }
     }
 }
 
 /** How far the date colour sits between the secondary and the primary text colour. */
 private const val MEMO_DATE_TONE = 0.5f
-
-/** 추가요청 1: the photo row of the editor keeps this much height at most, so a long body is not pushed away. */
-private val MEMO_EDIT_PHOTOS_HEIGHT = 190.dp
 
 /** 앱12 C: a long press on the reading area opens the editor (nothing on a short press, no ripple). */
 @Composable
@@ -553,10 +571,10 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote) {
         val added = memoCopyPictures(context, picked).map(::memoPhotoArg)
         val op = memoEditOp(note.id, current.saved, current.draft, added, includePhotos = finish)
         val saved = memoEditSaved(current.saved, current.draft, includePhotos = finish)
+        // 앱13 D: a save that wrote the photo marks says so, and the hub takes them out of the draft.
         when (val r = op?.let { controller.store.request(it) }) {
-            null -> MemoSaveResult(saved)
-            is MemoResult.Ok -> MemoSaveResult(saved)
             is MemoResult.Failed -> MemoSaveResult(null, r.reason)
+            else -> MemoSaveResult(saved, photosWritten = finish)
         }
     }
     // The typing stopped for a moment: write the text. A new keystroke starts the wait again.
@@ -581,61 +599,98 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote) {
             MemoEditHub.saveLater(note.id) { current -> persist(current, true) }
         }
     }
-    val typed: (MemoEditDraft) -> Unit = { draft -> MemoEditHub.typed(note.id, draft) }
-    // 추가요청 1 (관리자: "메모가 길어질경우 메모장안에서 스크롤이 안되어 불편"): the body takes the height that is
-    // left and scrolls inside itself; the keyboard shrinks the editor ([imePadding]) so the line with the cursor stays
-    // in sight. The photos keep their own small scroll instead of pushing the body away.
-    Column(Modifier.fillMaxSize().imePadding().padding(12.dp)) {
-        // 앱10 C: the number is the server's, shown and never edited here.
-        Text(
-            if (note.number > 0) "#${note.number}" else "번호 없음 · 동기화 때 서버가 매깁니다",
-            style = ElementTheme.typography.fontBodySmRegular,
-            color = ElementTheme.colors.textSecondary,
-            modifier = Modifier.padding(bottom = 4.dp).testTag(MemoTags.NOTE_NUMBER),
+    val title = rememberMemoField(note.id, state.draft.title) { d, v -> d.copy(title = v) }
+    val tags = rememberMemoField(note.id, state.draft.tags) { d, v -> d.copy(tags = v) }
+    val body = rememberMemoField(note.id, state.draft.body) { d, v -> d.copy(body = v) }
+    // 앱13 B·C (관리자: "수정영역이 너무 작음", 삼성 노트처럼): no head, no number line, no tab bar and no room composer while
+    // editing (MemoScreen, MessagesView); title and tags are one small line each, the body takes every pixel that is left
+    // and scrolls inside itself. The screen shrinks with the keyboard (imePadding up the tree), and the body field
+    // brings the line with the cursor back into sight when its own height changes (TextFieldState, 결정기록 C).
+    Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 10.dp, vertical = 6.dp)) {
+        MemoEditField(title, "제목", Modifier.fillMaxWidth().testTag(MemoTags.EDIT_TITLE))
+        MemoEditField(tags, "태그 (#교토 #빵집)", Modifier.fillMaxWidth().padding(top = 4.dp).testTag(MemoTags.EDIT_TAGS))
+        MemoEditField(
+            body,
+            "본문",
+            Modifier.fillMaxWidth().weight(1f).padding(top = 4.dp).testTag(MemoTags.EDIT_BODY),
+            singleLine = false,
         )
-        TextField(
-            value = state.draft.title,
-            onValueChange = { v -> typed(state.draft.copy(title = v)) },
-            label = "제목",
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+        // The photos: one row under the body that scrolls sideways, so many photos never push the body away.
+        MemoEditorPhotos(
+            state.draft.photos,
+            onChange = { p -> MemoEditHub.change(note.id) { it.copy(photos = p) } },
+            modifier = Modifier.padding(top = 4.dp),
         )
-        TextField(
-            value = state.draft.tags,
-            onValueChange = { v -> typed(state.draft.copy(tags = v)) },
-            label = "태그",
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        )
-        // 추가요청 1: the body gets the height that is left (never a fixed 8 lines inside an endless column), so a
-        // long note scrolls inside the field itself.
-        TextField(
-            value = state.draft.body,
-            onValueChange = { v -> typed(state.draft.copy(body = v)) },
-            label = "본문",
-            modifier = Modifier.fillMaxWidth().weight(1f).testTag(MemoTags.EDIT_BODY),
-        )
-        Column(Modifier.heightIn(max = MEMO_EDIT_PHOTOS_HEIGHT).verticalScroll(rememberScrollState())) {
-            MemoEditorPhotos(state.draft.photos, onChange = { p -> typed(state.draft.copy(photos = p)) })
-        }
-        val status = memoEditStatus(state)
-        if (status.isNotEmpty()) {
+        // 앱12 B: 취소 at the bottom right; the auto save status and the photo count share its line.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                status,
+                memoEditStatus(state),
                 style = ElementTheme.typography.fontBodyXsRegular,
                 color = if (state.failure != null) ElementTheme.colors.textCriticalPrimary else ElementTheme.colors.textSecondary,
-                modifier = Modifier.padding(top = 4.dp).testTag(MemoTags.EDIT_STATUS),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).testTag(MemoTags.EDIT_STATUS),
             )
-        }
-        // 앱12 B (관리자: "취소 저장 버튼을 우측 하단에"): only 취소 is left, at the bottom right.
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+            Text(
+                "사진 ${state.draft.photos.count}장",
+                style = ElementTheme.typography.fontBodyXsRegular,
+                color = ElementTheme.colors.textSecondary,
+            )
             Text(
                 "취소",
                 color = ElementTheme.colors.textActionAccent,
-                modifier = Modifier.clickable { askMemoEditCancel(controller, state) }.padding(12.dp).testTag(MemoTags.EDIT_CANCEL),
+                modifier = Modifier
+                    .clickable { askMemoEditCancel(controller, state) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .testTag(MemoTags.EDIT_CANCEL),
             )
         }
     }
+}
+
+/**
+ * One field of the editor as a [TextFieldState] (앱13 C): the field keeps its own text, cursor and scroll, and every
+ * change goes to [MemoEditHub] at once ([MemoEditHub.change]), so the auto save and the leave save see it.
+ */
+@Composable
+private fun rememberMemoField(noteId: String, initial: String, update: (MemoEditDraft, String) -> MemoEditDraft): TextFieldState {
+    val field = remember(noteId) { TextFieldState(initial) }
+    val currentUpdate by rememberUpdatedState(update)
+    LaunchedEffect(field) {
+        snapshotFlow { field.text.toString() }.collect { v -> MemoEditHub.change(noteId) { currentUpdate(it, v) } }
+    }
+    return field
+}
+
+/**
+ * 앱13 B (관리자: "제목,태그 입력란의 높이를 절반정도로 줄이고 폰트도 그에 맞도록"): a field without the label line of the
+ * design system field and with less padding. The hint sits inside it; [singleLine] false is the body (scrolls inside).
+ */
+@Composable
+private fun MemoEditField(field: TextFieldState, hint: String, modifier: Modifier = Modifier, singleLine: Boolean = true) {
+    val style = if (singleLine) {
+        ElementTheme.typography.fontBodyMdRegular.copy(fontSize = MEMO_EDIT_FIELD_TEXT_SP.sp, lineHeight = MEMO_EDIT_FIELD_LINE_SP.sp)
+    } else {
+        ElementTheme.typography.fontBodyLgRegular
+    }
+    BasicTextField(
+        state = field,
+        modifier = modifier,
+        textStyle = style.copy(color = ElementTheme.colors.textPrimary),
+        lineLimits = if (singleLine) TextFieldLineLimits.SingleLine else TextFieldLineLimits.MultiLine(),
+        cursorBrush = SolidColor(ElementTheme.colors.textPrimary),
+        decorator = { inner ->
+            Box(
+                Modifier
+                    .then(if (singleLine) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
+                    .border(1.dp, ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 8.dp, vertical = MEMO_EDIT_FIELD_PAD_DP.dp),
+            ) {
+                if (field.text.isEmpty()) Text(hint, style = style, color = ElementTheme.colors.textSecondary, maxLines = 1)
+                inner()
+            }
+        },
+    )
 }
 
 /**
