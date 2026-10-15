@@ -133,7 +133,7 @@ interface MemoBindings {
 /** Sheets and dialogs of the memo screen. They close the standard way and never add a back step (요구 F). */
 internal sealed interface MemoSheet {
     data class PickFolder(val title: String, val onPick: (String) -> Unit) : MemoSheet
-    data class EditTags(val tags: List<String>, val onSave: (List<String>) -> Unit) : MemoSheet
+    data class EditTags(val tags: List<String>, val title: String = "태그 편집", val onSave: (List<String>) -> Unit) : MemoSheet
     data class Actions(val title: String, val actions: List<Pair<String, () -> Unit>>) : MemoSheet
     data class AskText(val title: String, val value: String, val onSubmit: (String) -> Unit) : MemoSheet
     data class Confirm(val text: String, val submit: String, val onSubmit: () -> Unit) : MemoSheet
@@ -208,6 +208,39 @@ internal class MemoController(
     fun editTagsOf(target: MemoTarget, current: List<String>) {
         sheet = MemoSheet.EditTags(current) { tags -> run(MemoOp.editTags(target, tags)) }
     }
+
+    /** 앱11 C: the selection mode (the top bar icon). Ending it drops the selection. */
+    var select by mutableStateOf(MemoSelect())
+
+    /** The notes the current tab shows, for "전체 선택" (each tab sets it while shown). */
+    var visibleIds by mutableStateOf<List<String>>(emptyList())
+
+    /** A tap on a card or a pinned note: opens it, or in the selection mode selects / unselects it (never opens). */
+    fun openOrSelect(id: String) {
+        if (select.active) select = select.toggle(id) else go { it.openNote(id) }
+    }
+
+    fun endSelect() {
+        select = select.end()
+    }
+
+    fun bulkTrash() = runBulk(memoBulkTrash(select.ids))
+
+    fun bulkMove() {
+        sheet = MemoSheet.PickFolder("${select.count}개를 폴더로 옮기기") { folder -> runBulk(memoBulkMove(select.ids, folder)) }
+    }
+
+    /** Tags typed or picked are added to every selected note (the tags they have stay). */
+    fun bulkTags() {
+        sheet = MemoSheet.EditTags(emptyList(), title = "${select.count}개에 태그 더하기") { tags ->
+            if (tags.isNotEmpty()) runBulk(memoBulkTag(select.ids, tags))
+        }
+    }
+
+    private fun runBulk(op: MemoOp) {
+        if (select.ids.isEmpty()) return
+        run(op) { endSelect() }
+    }
 }
 
 /**
@@ -245,6 +278,14 @@ internal fun MemoScreen(
 
     val state = nav.value
     var discardAsked by remember { mutableStateOf(false) }
+    // 앱11 C: the top bar icon turns the selection mode on and off; ending it here (종료, back, a bulk action) turns
+    // the icon off too.
+    val selectRooms by MemoSelectHub.rooms.collectAsState()
+    val selectOn = roomId in selectRooms
+    LaunchedEffect(selectOn) { controller.select = if (selectOn) controller.select.start() else controller.select.end() }
+    LaunchedEffect(controller.select.active) { if (!controller.select.active) MemoSelectHub.set(roomId, false) }
+    DisposableEffect(roomId) { onDispose { MemoSelectHub.set(roomId, false) } }
+    // Back ends the selection mode first (registered after the screen's own handler: it is asked first).
     BackHandler(enabled = state.handlesBack) {
         when (val b = state.back()) {
             is MemoBack.To -> nav.value = b.state
@@ -252,6 +293,7 @@ internal fun MemoScreen(
             MemoBack.Exit -> Unit
         }
     }
+    BackHandler(enabled = controller.select.active) { controller.endSelect() }
     if (discardAsked) {
         ConfirmationDialog(
             content = "편집한 내용을 버리고 나갈까요?",
@@ -269,7 +311,14 @@ internal fun MemoScreen(
     Column(modifier = modifier.fillMaxSize()) {
         controller.error?.let { (reason, retry) -> MemoErrorBanner(reason, retry, onClose = { controller.error = null }) }
         if (!useFakeData) MemoAttachmentBanners(local, localVersion)
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        // 추가요청 2: swipe sideways anywhere on a tab to go to the next / previous one (not over a note, a photo, or in
+        // the selection mode). The tab keeps its state as with the tab buttons.
+        val swipe = memoSwipeAllowed(state, controller.select.active, controller.viewer != null)
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth().memoTabSwipe(swipe) { direction ->
+                memoSwipeTab(nav.value.tab, direction)?.let { tab -> controller.go { it.selectTab(tab) } }
+            },
+        ) {
             val note = state.note
             when {
                 // 앱7 항목 2: a photo of the note opens the memo viewer from the phone file or the server copy, so the
@@ -280,6 +329,7 @@ internal fun MemoScreen(
                 else -> MemoSearchTab(controller)
             }
         }
+        if (controller.select.active && state.note == null) MemoSelectBar(controller, controller.visibleIds)
         MemoTabBar(
             selected = state.tab,
             onSelect = { tab -> controller.go { it.closeNote().selectTab(tab) } },
@@ -506,15 +556,21 @@ internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
             .distinctUntilChanged()
             .collect { last -> if (memoShouldLoadMore(store.list(key), last)) store.loadMore(key) }
     }
-    if (list.items.isEmpty()) {
-        Box(Modifier.fillMaxSize().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
-            Text("아래 입력창에 붙여넣기 / 📷 / 🎤 로 메모를 남기세요", color = ElementTheme.colors.textSecondary)
+    // 앱11 A: the pinned notes of every folder stay on top; only the list below scrolls.
+    val pinned = memoPinnedOfAll(controller, localVersion)
+    LaunchedEffect(list.items) { controller.visibleIds = list.items.map { it.id } }
+    Column(Modifier.fillMaxSize()) {
+        MemoPinStrip(controller, pinned)
+        if (list.items.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
+                Text("아래 입력창에 붙여넣기 / 📷 / 🎤 로 메모를 남기세요", color = ElementTheme.colors.textSecondary)
+            }
+        } else {
+            // Newest note at the bottom, right above the composer (reverse layout: index 0 = newest).
+            LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.RECORD)) {
+                items(list.items, key = { it.id }) { item -> MemoRecordRow(controller, item) }
+            }
         }
-        return
-    }
-    // Newest note at the bottom, right above the composer (reverse layout: index 0 = newest).
-    LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize().testTag(MemoTags.RECORD)) {
-        items(list.items, key = { it.id }) { item -> MemoRecordRow(controller, item) }
     }
 }
 
@@ -522,19 +578,22 @@ internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
 @Composable
 internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
     val target = MemoTarget(item.id)
+    val (borderWidth, borderColor) = memoCardBorder(controller, item.id)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(10.dp))
+            .border(borderWidth, borderColor, RoundedCornerShape(10.dp))
             .combinedClickable(
-                onClick = { controller.go { it.openNote(item.id) } },
-                onLongClick = { controller.sheet = memoItemActions(controller, item) },
+                // 앱11 C: in the selection mode a tap selects, it does not open.
+                onClick = { controller.openOrSelect(item.id) },
+                onLongClick = { if (controller.select.active) controller.openOrSelect(item.id) else controller.sheet = memoItemActions(controller, item) },
             )
             .padding(8.dp)
             .testTag(MemoTags.RECORD_ROW),
     ) {
+        if (controller.select.active) MemoSelectMark(controller.select.isSelected(item.id))
         val text = memoCardText(item)
         // 앱10 C (관리자): `#번호  제목  날짜`, no author ("나") any more; the date is the user's last change, else the creation.
         Text(
@@ -571,6 +630,8 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // 앱11 D: a text note's photos, small, under its text.
+        item.photos?.let { MemoCardPhotos(controller, it, Modifier.padding(top = 4.dp), size = 56) }
         FlowRow(modifier = Modifier.padding(top = 4.dp)) {
             MemoChip(
                 (if (item.folder == MEMO_INBOX) "📥 " else "📁 ") + item.folder,
@@ -616,9 +677,18 @@ private fun MemoSheetHost(controller: MemoController) {
             var text by remember(sheet) { mutableStateOf(sheet.tags.joinToString(" ") { "#$it" }) }
             ModalBottomSheet(onDismissRequest = close, scrollable = false) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("태그 편집", style = ElementTheme.typography.fontHeadingSmMedium)
+                    Text(sheet.title, style = ElementTheme.typography.fontHeadingSmMedium)
                     Text("띄어쓰기로 구분합니다. #은 없어도 됩니다.", style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary)
                     TextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    // 앱11 C: the tags there are, to pick (more than one); a tap adds it to the text.
+                    val known by controller.store.tags.collectAsState()
+                    LaunchedEffect(Unit) { controller.store.loadTags() }
+                    val typed = memoParseTagInput(text)
+                    FlowRow {
+                        known.filter { it.name !in typed }.take(MEMO_PICK_TAGS).forEach { t ->
+                            MemoChip("#${t.name}", onClick = { text = (text.trimEnd() + " #" + t.name).trimStart() })
+                        }
+                    }
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                         Text("취소", modifier = Modifier.clickable(onClick = close).padding(12.dp))
                         Text(
@@ -675,6 +745,9 @@ private fun MemoSheetHost(controller: MemoController) {
         }, onDismiss = close)
     }
 }
+
+/** Known tags the tag sheet offers to pick (앱11 C). */
+private const val MEMO_PICK_TAGS = 30
 
 /** "#교토 이동, 빵집" → [교토, 이동, 빵집]. */
 internal fun memoParseTagInput(text: String): List<String> =

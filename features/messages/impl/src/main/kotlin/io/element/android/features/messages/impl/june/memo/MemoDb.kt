@@ -114,11 +114,13 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
             when (folder) {
                 MEMO_TRASH -> "deleted = 1"
                 MEMO_ALL_FOLDERS -> "deleted = 0"
+                // 앱11 A: the pinned strip of the record tab, the pinned notes of every folder.
+                MEMO_PINNED_LIST -> "deleted = 0 AND pinned = 1"
                 else -> "deleted = 0 AND folder = ?"
             }
         )
         val args = mutableListOf<Any?>()
-        if (folder != MEMO_TRASH && folder != MEMO_ALL_FOLDERS) args += folder
+        if (folder != MEMO_TRASH && folder != MEMO_ALL_FOLDERS && folder != MEMO_PINNED_LIST) args += folder
         tagFilter(tags, where, args)
         val column = if (sort == "수정") "modified_ms" else "created_ms"
         val order: String
@@ -554,13 +556,20 @@ private class MemoRow(
     /** The start of the plain body ([MEMO_CARD_TEXT_CHARS]), what the record card shows on up to 7 lines (앱6). */
     val text: String,
 ) {
-    fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>, meta: MemoNoteMeta = MemoNoteMeta()) = MemoItem(
+    fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>, meta: MemoNoteMeta = MemoNoteMeta()): MemoItem {
+        val shown = memoLocalPreview(kind, preview, linkJson, attachments)
+        return item(shown, tags, attachments, meta)
+    }
+
+    private fun item(shown: MemoPreview?, tags: List<String>, attachments: List<MemoLocalAttachment>, meta: MemoNoteMeta) = MemoItem(
         id = id,
         kind = kind,
         // 앱7 항목 1: an untitled note shows the start of its body here, for the screen only (never stored).
         title = memoDisplayTitle(title, preview, id),
         untitled = title.isEmpty(),
-        preview = memoLocalPreview(kind, preview, linkJson, attachments),
+        preview = shown,
+        // 앱11 D: a text note with photos shows them under its text (the kind the server gave is not looked at).
+        photos = memoCardPhotos(shown, attachments),
         // 앱10: the date shown is the last change of the user, else the creation; the number is the server's.
         date = memoIso(meta.userModifiedMs.takeIf { it > 0 } ?: createdMs),
         number = meta.number,

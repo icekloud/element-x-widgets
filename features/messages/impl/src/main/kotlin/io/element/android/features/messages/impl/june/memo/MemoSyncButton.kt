@@ -103,6 +103,21 @@ internal const val MEMO_PANEL_BUTTON_TAG = "memo_panel_button"
 internal fun memoPanelRoomIdOf(context: Context, roomId: String, inThread: Boolean): String? =
     roomId.takeIf { !inThread && JuneSettings.isMemoRoom(context, it) }
 
+/** Test tag of the selection mode icon of the memo bot room (앱11 C), left of the list icon. */
+internal const val MEMO_SELECT_BUTTON_TAG = "memo_select_button"
+
+/** 앱11 C: the selection mode icon of the memo bot room (on: filled check). A second press ends the mode. */
+@Composable
+internal fun MemoSelectButton(roomId: String, modifier: Modifier = Modifier) {
+    val rooms by MemoSelectHub.rooms.collectAsState()
+    val on = roomId in rooms
+    Icon(
+        modifier = modifier.testTag(MEMO_SELECT_BUTTON_TAG).clickable { MemoSelectHub.toggle(roomId) },
+        imageVector = if (on) CompoundIcons.CheckCircleSolid() else CompoundIcons.CheckCircle(),
+        contentDescription = if (on) "선택 모드 끝내기" else "여러 개 선택",
+    )
+}
+
 /** The list icon of the memo bot room: opens the proposal area, a badge with the waiting cards (none at 0). */
 @Composable
 internal fun MemoPanelButton(roomId: String, modifier: Modifier = Modifier) {

@@ -68,6 +68,8 @@ internal fun MemoFoldersTab(controller: MemoController) {
 
 @Composable
 private fun MemoFolderRoot(controller: MemoController) {
+    // 앱11 C: the folder grid has no notes to select.
+    LaunchedEffect(Unit) { controller.visibleIds = emptyList() }
     val index by controller.store.index.collectAsState()
     val cells = remember(index) { memoRootGrid(index) }
     LazyVerticalGrid(
@@ -210,7 +212,6 @@ private fun MemoFolderView(controller: MemoController, path: String) {
     val key = MemoListKey.of(path, tags)
     val list = lists[key] ?: MemoListCache()
     var asList by remember(path) { mutableStateOf(false) }
-    var pinsFolded by remember(path) { mutableStateOf(false) }
 
     LaunchedEffect(key) { store.loadFirst(key) }
 
@@ -234,6 +235,7 @@ private fun MemoFolderView(controller: MemoController, path: String) {
         remember(list.items) { list.items.flatMap { it.tags }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }.take(20) }
     val pinned = list.items.filter { it.pinned }
     val newCount = store.newCount(key)
+    LaunchedEffect(list.items) { controller.visibleIds = list.items.map { it.id } }
 
     Column(Modifier.fillMaxSize()) {
         // ‹ name · ⊞/≡ · ⋮
@@ -269,6 +271,9 @@ private fun MemoFolderView(controller: MemoController, path: String) {
                 }.padding(8.dp),
             )
         }
+        // 앱11 A·B: the pinned notes of this folder stay above the grid (only the grid scrolls): a small photo for a
+        // photo-only note, never the note id; a tap opens the note.
+        MemoPinStrip(controller, pinned)
         if (newCount > 0) {
             Text(
                 "새 메모 $newCount ↑",
@@ -313,33 +318,6 @@ private fun MemoFolderView(controller: MemoController, path: String) {
                     }
                 }
             }
-            if (pinned.isNotEmpty()) {
-                item(key = "pins", span = { GridItemSpan(maxLineSpan) }) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(ElementTheme.colors.bgSubtleSecondary)
-                            .clickable { pinsFolded = !pinsFolded }
-                            .padding(8.dp),
-                    ) {
-                        Text("📌 고정 ${pinned.size}" + if (pinsFolded) " ▸" else " ▾", style = ElementTheme.typography.fontBodySmMedium)
-                        if (!pinsFolded) {
-                            pinned.take(
-                                3
-                            ).forEach { item ->
-                                Text(
-                                "· " + item.title,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.clickable { controller.go { it.openNote(item.id) } }
-                            )
-                            }
-                            if (pinned.size > 3) Text("+${pinned.size - 3}", color = ElementTheme.colors.textSecondary)
-                        }
-                    }
-                }
-            }
             items(list.items, key = { "n-" + it.id }) { item ->
                 if (asList) MemoListRow(controller, item) else MemoTile(controller, item)
             }
@@ -376,7 +354,6 @@ private fun headerCount(s: MemoListCache, index: MemoIndex, path: String, tags: 
     var n = 0
     if (memoSubfolders(index, path).isNotEmpty()) n++
     if (tags.isNotEmpty() || s.items.any { it.tags.isNotEmpty() }) n++
-    if (s.items.any { it.pinned }) n++
     return n
 }
 
@@ -390,7 +367,7 @@ internal fun memoKindIcon(kind: String): String = when (kind) {
 internal fun memoItemActions(controller: MemoController, item: MemoItem): MemoSheet.Actions {
     val t = MemoTarget(noteId = item.id)
     return MemoSheet.Actions(
-        item.title,
+        memoItemLine(item),
         listOf(
             (if (item.pinned) "고정 해제" else "📌 고정") to { controller.run(if (item.pinned) MemoOp.unpin(t) else MemoOp.pin(t)) },
             "📁 폴더 이동" to { controller.pickFolderThenMove(t) },
@@ -403,16 +380,18 @@ internal fun memoItemActions(controller: MemoController, item: MemoItem): MemoSh
 /** A tile in three rows (요구 B2): preview / title · date · kind / tags (max 4, +N). */
 @Composable
 internal fun MemoTile(controller: MemoController, item: MemoItem) {
+    val (borderWidth, borderColor) = memoCardBorder(controller, item.id)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 150.dp)
             .testTag(MemoTags.TILE)
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(8.dp))
+            .border(borderWidth, borderColor, RoundedCornerShape(8.dp))
             .combinedClickable(
-                onClick = { controller.go { it.openNote(item.id) } },
-                onLongClick = { controller.sheet = memoItemActions(controller, item) },
+                // 앱11 C: in the selection mode a tap selects, it does not open.
+                onClick = { controller.openOrSelect(item.id) },
+                onLongClick = { if (controller.select.active) controller.openOrSelect(item.id) else controller.sheet = memoItemActions(controller, item) },
             ),
     ) {
         Box(Modifier.fillMaxWidth().height(72.dp).testTag(MemoTags.TILE_PREVIEW)) {
@@ -449,6 +428,9 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
                 null
             })
             if (corner.isNotEmpty()) MemoCorner(corner.joinToString(" "), Modifier.align(Alignment.TopStart))
+            if (controller.select.active) MemoSelectMark(controller.select.isSelected(item.id), Modifier.align(Alignment.TopEnd))
+            // 앱11 D: a text note's photos, small, at the bottom of its preview box.
+            item.photos?.let { MemoCardPhotos(controller, it, Modifier.align(Alignment.BottomStart).padding(4.dp), size = 28) }
             if (item.proposals > 0) {
                 // A5 (설계 §d-③): the bot review only proposes; the chip opens them, nothing changes until [적용].
                 MemoCorner(
@@ -460,7 +442,7 @@ internal fun MemoTile(controller: MemoController, item: MemoItem) {
         // 앱7 항목 1: an untitled text note is its body in the preview box above, so no second title line.
         if (!(item.untitled && item.preview is MemoPreview.Text)) {
             Text(
-                memoNumbered(item.number, item.title),
+                memoItemLine(item),
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp).testTag(MemoTags.TILE_TITLE),
                 style = ElementTheme.typography.fontBodySmMedium,
                 maxLines = 2,
@@ -528,20 +510,22 @@ private fun MemoListRow(controller: MemoController, item: MemoItem) {
             .fillMaxWidth()
             .testTag(MemoTags.TILE)
             .combinedClickable(
-                onClick = { controller.go { it.openNote(item.id) } },
-                onLongClick = { controller.sheet = memoItemActions(controller, item) },
+                onClick = { controller.openOrSelect(item.id) },
+                onLongClick = { if (controller.select.active) controller.openOrSelect(item.id) else controller.sheet = memoItemActions(controller, item) },
             )
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (controller.select.active) MemoSelectMark(controller.select.isSelected(item.id), Modifier.padding(end = 6.dp))
         Text(memoKindIcon(item.kind), modifier = Modifier.padding(end = 8.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                (if (item.pinned) "📌 " else "") + memoNumbered(item.number, item.title),
+                (if (item.pinned) "📌 " else "") + memoItemLine(item),
                 style = ElementTheme.typography.fontBodyMdMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            item.photos?.let { MemoCardPhotos(controller, it, Modifier.padding(vertical = 2.dp), size = 32) }
             MemoTagLine(item.tags.toImmutableList(), max = 4)
         }
         Text(item.shortDate, style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)

@@ -74,6 +74,7 @@ import io.element.android.features.messages.impl.june.JuneEditKind
 import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
 import io.element.android.features.messages.impl.june.memo.MemoPanelButton
+import io.element.android.features.messages.impl.june.memo.MemoSelectButton
 import io.element.android.features.messages.impl.june.memo.MemoScreen
 import io.element.android.features.messages.impl.june.memo.MemoSyncButton
 import io.element.android.features.messages.impl.june.memo.memoPanelRoomIdOf
@@ -534,7 +535,10 @@ internal fun RowScope.MessagesMenuActions(
     }
     Spacer(Modifier.width(12.dp))
     // 앱9 A: in the memo bot room (its memo screen) the list icon opens the proposal area, with the waiting count.
+    // 앱11 C: the selection mode icon sits left of it.
     if (memoPanelRoomId != null) {
+        MemoSelectButton(memoPanelRoomId)
+        Spacer(Modifier.width(12.dp))
         MemoPanelButton(memoPanelRoomId)
     } else {
         Icon(

@@ -16,6 +16,7 @@ import android.speech.RecognizerIntent
 import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -211,11 +213,14 @@ internal fun MemoSearchTab(controller: MemoController) {
                     )
                 }
             }
+            // 앱11 C: "전체 선택" takes the results shown.
+            LaunchedEffect(ui.results) { controller.visibleIds = ui.results.map { it.id } }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(ui.results, key = { it.id }) { item ->
                     MemoResultRow(
+                        controller,
                         item,
-                        onOpen = { controller.go { it.openNote(item.id) } },
+                        onOpen = { controller.openOrSelect(item.id) },
                         onTag = { t ->
                             run(ui.query.withTag(t), submitted = true)
                         },
@@ -251,11 +256,19 @@ private fun MemoSearchEmpty(
 }
 
 @Composable
-private fun MemoResultRow(item: MemoItem, onOpen: () -> Unit, onTag: (String) -> Unit) {
+private fun MemoResultRow(controller: MemoController, item: MemoItem, onOpen: () -> Unit, onTag: (String) -> Unit) {
     val accent = ElementTheme.colors.textActionAccent
-    Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 10.dp, vertical = 6.dp)) {
+    val selected = controller.select.isSelected(item.id)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(if (selected) ElementTheme.colors.bgSubtleSecondary else Color.Transparent)
+            .clickable(onClick = onOpen)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        if (controller.select.active) MemoSelectMark(selected)
         Text(
-            memoKindIcon(item.kind) + " " + memoNumbered(item.number, item.title),
+            memoKindIcon(item.kind) + " " + memoItemLine(item),
             style = ElementTheme.typography.fontBodyMdMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -275,6 +288,8 @@ private fun MemoResultRow(item: MemoItem, onOpen: () -> Unit, onTag: (String) ->
                 overflow = TextOverflow.Ellipsis
             )
         }
+        // 앱11 D: the note's photos, small (search results come from the same local list).
+        (item.photos ?: item.preview as? MemoPreview.Photo)?.let { MemoCardPhotos(controller, it, Modifier.padding(vertical = 2.dp), size = 36) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("📁 ${item.folder} · ${item.shortDate}  ", style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
             MemoTagLine(item.tags.toImmutableList(), max = 4, onTag = onTag)

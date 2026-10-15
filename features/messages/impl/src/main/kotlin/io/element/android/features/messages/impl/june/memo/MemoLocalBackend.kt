@@ -131,7 +131,8 @@ internal class MemoLocalBackend(
             val total = counts.values.filter { it.path == f.path || it.path.startsWith(f.path + "/") }.sumOf { it.count }
             MemoFolder(
                 path = f.path,
-                icon = f.icon,
+                // 추가요청 1: the server sends an empty icon for every folder; the screens show the default one then.
+                icon = f.icon.ifBlank { defaultMemoFolderIcon(f.path) },
                 count = own?.count ?: 0,
                 unfiledCount = if (f.path == MEMO_INBOX) own?.count ?: 0 else 0,
                 pinnedCount = own?.pinned ?: 0,
@@ -192,6 +193,21 @@ internal class MemoLocalBackend(
                     if (memoUserChanged(n, changed)) memoMarkUserModified(db, id, MemoSync.correctedNow(db, now))
                     save(changed, now)
                     ok(id)
+                }
+                // 앱11 C: the selection mode. Every selected note changes in this one transaction (all or nothing),
+                // each with its own stamp and outbox row, like the one-note ops; notes that do not change are left out.
+                MEMO_OP_BULK_TRASH, MEMO_OP_BULK_TAG, MEMO_OP_BULK_MOVE -> {
+                    val to = a["folder"] as? String
+                    val badTarget = to == null || to == MEMO_TRASH || !folderExists(to)
+                    if (op.op == MEMO_OP_BULK_MOVE && badTarget) return@transactionWithResult err("폴더가 없습니다: $to")
+                    var changed = 0
+                    memoArgStrings(a["ids"]).distinct().forEach { id ->
+                        val n = db.note(id) ?: return@forEach
+                        val m = memoBulkChange(op, n, db.nextRev(device(), now)) ?: return@forEach
+                        save(m, now)
+                        changed++
+                    }
+                    ok(null, changed.toString())
                 }
                 "mkdir" -> {
                     val path = (a["path"] as String).trim('/')
