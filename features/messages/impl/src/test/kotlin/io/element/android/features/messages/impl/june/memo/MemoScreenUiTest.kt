@@ -101,7 +101,7 @@ class MemoScreenUiTest : RobolectricTest() {
             ElementTheme {
                 val scope = rememberCoroutineScope()
                 val controller = remember { MemoController(store, scope, mutableStateOf(MemoLocation())) }
-                MemoPanelContent(controller, directives = null, onSynced = {}, onClose = {})
+                MemoPanelContent(controller, directives = null, onSync = {}, onClose = {})
             }
         }
         onNodeWithTag(MemoTags.PANEL_EMPTY).assertIsDisplayed()

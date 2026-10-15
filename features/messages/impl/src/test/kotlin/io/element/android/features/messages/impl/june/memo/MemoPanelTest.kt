@@ -340,8 +340,14 @@ class MemoPanelTest : RobolectricTest() {
         assertTrue(id.startsWith("ABC234-"))
         // The messages of the phone never say "제안".
         listOf(
-            MemoDirectiveStatus.SENDING, MemoDirectiveStatus.NOT_SENT, MemoDirectiveStatus.RECEIVED, MemoDirectiveStatus.WORKING,
-            MemoDirectiveStatus.DONE, MemoDirectiveStatus.QUESTION, MemoDirectiveStatus.FAILED, MemoDirectiveStatus.REFUSED,
+            MemoDirectiveStatus.SENDING,
+            MemoDirectiveStatus.NOT_SENT,
+            MemoDirectiveStatus.RECEIVED,
+            MemoDirectiveStatus.WORKING,
+            MemoDirectiveStatus.DONE,
+            MemoDirectiveStatus.QUESTION,
+            MemoDirectiveStatus.FAILED,
+            MemoDirectiveStatus.REFUSED,
         ).forEach { s -> assertFalse(memoDirectiveAnswerText(MemoDirective("i", "t", s)).contains("제안")) }
     }
 }

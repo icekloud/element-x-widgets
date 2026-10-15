@@ -298,7 +298,7 @@ internal fun MemoScreen(
             controller = controller,
             directives = directives,
             // A finished instruction changed notes or tags on the server: one sync brings them down.
-            onSynced = {
+            onSync = {
                 runner?.syncNow()
                 store.refreshIndex()
             },

@@ -56,11 +56,11 @@ import kotlinx.coroutines.launch
 internal fun MemoPanel(
     controller: MemoController,
     directives: MemoDirectives?,
-    onSynced: suspend () -> Unit,
+    onSync: suspend () -> Unit,
     onClose: () -> Unit,
 ) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        MemoPanelContent(controller, directives, onSynced, onClose)
+        MemoPanelContent(controller, directives, onSync, onClose)
     }
 }
 
@@ -68,7 +68,7 @@ internal fun MemoPanel(
 internal fun MemoPanelContent(
     controller: MemoController,
     directives: MemoDirectives?,
-    onSynced: suspend () -> Unit,
+    onSync: suspend () -> Unit,
     onClose: () -> Unit,
 ) {
     val index by controller.store.index.collectAsState()
@@ -78,7 +78,7 @@ internal fun MemoPanelContent(
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
-    val synced by rememberUpdatedState(onSynced)
+    val synced by rememberUpdatedState(onSync)
 
     suspend fun pollOnce() {
         if (directives == null) return

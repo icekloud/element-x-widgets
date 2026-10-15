@@ -529,10 +529,19 @@ internal const val MEMO_ANSWERED_KEEP = 300
 
 /** The suggestion ids the server confirmed as answered (앱9 C), newest last. */
 internal fun memoAnsweredProposals(db: MemoDb): Set<String> =
-    db.state(STATE_ANSWERED)?.let { runCatching { JSONArray(it).strings() }.getOrNull() }.orEmpty().toSet()
+    memoAnsweredList(db).toSet()
+
+private fun memoAnsweredList(db: MemoDb): List<String> {
+    val raw = db.state(STATE_ANSWERED) ?: return emptyList()
+    return try {
+        JSONArray(raw).strings()
+    } catch (e: org.json.JSONException) {
+        emptyList()
+    }
+}
 
 internal fun memoRememberAnswered(db: MemoDb, ids: List<String>) {
-    val old = db.state(STATE_ANSWERED)?.let { runCatching { JSONArray(it).strings() }.getOrNull() }.orEmpty()
+    val old = memoAnsweredList(db)
     val all = (old.filter { it !in ids } + ids.distinct()).takeLast(MEMO_ANSWERED_KEEP)
     db.setState(STATE_ANSWERED, JSONArray(all).toString())
 }
