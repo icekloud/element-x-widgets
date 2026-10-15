@@ -128,11 +128,12 @@ class MemoEditPhotoTest : RobolectricTest() {
         local.call(op, "e")
         assertEquals(1, db.note(id)!!.attachments.size)
         // A copy of a picture the note already has is not added either.
-        val again = listOf(memoPhotoArg(photoFile("content://fake/1".toByteArray())))
-        local.call(MemoOp.edit(MemoTarget(noteId = id), null, null, null, photosAdded = again), "e2")
+        val copy = listOf(memoPhotoArg(photoFile("content://fake/1".toByteArray())))
+        local.call(MemoOp.edit(MemoTarget(noteId = id), null, null, null, photosAdded = copy), "e2")
         assertEquals(1, db.note(id)!!.attachments.size)
         // Another picture is another photo.
-        local.call(MemoOp.edit(MemoTarget(noteId = id), null, null, null, photosAdded = listOf(memoPhotoArg(photoFile(byteArrayOf(9, 9))))), "e3")
+        val other = listOf(memoPhotoArg(photoFile(byteArrayOf(9, 9))))
+        local.call(MemoOp.edit(MemoTarget(noteId = id), null, null, null, photosAdded = other), "e3")
         assertEquals(2, db.note(id)!!.attachments.size)
         MemoEditHub.drop(id)
     }
