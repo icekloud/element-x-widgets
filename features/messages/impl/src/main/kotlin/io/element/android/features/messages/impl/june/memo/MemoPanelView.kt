@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -77,10 +78,11 @@ internal fun MemoPanelContent(
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    val synced by rememberUpdatedState(onSynced)
 
     suspend fun pollOnce() {
         if (directives == null) return
-        if (directives.poll() > 0) onSynced()
+        if (directives.poll() > 0) synced()
     }
 
     // Opened: what the phone keeps, then the open instructions are asked about (규약-지시 흐름 3).
@@ -131,7 +133,7 @@ internal fun MemoPanelContent(
                 "새로고침",
                 modifier = Modifier.clickable {
                     scope.launch {
-                        onSynced()
+                        synced()
                         pollOnce()
                     }
                 }.padding(8.dp),

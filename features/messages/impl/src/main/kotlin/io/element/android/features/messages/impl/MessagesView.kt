@@ -73,9 +73,9 @@ import io.element.android.features.messages.impl.june.JuneComposerStack
 import io.element.android.features.messages.impl.june.JuneEditKind
 import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
+import io.element.android.features.messages.impl.june.memo.MemoPanelButton
 import io.element.android.features.messages.impl.june.memo.MemoScreen
 import io.element.android.features.messages.impl.june.memo.MemoSyncButton
-import io.element.android.features.messages.impl.june.memo.MemoPanelButton
 import io.element.android.features.messages.impl.june.memo.memoPanelRoomIdOf
 import io.element.android.features.messages.impl.june.memo.memoSyncRoomIdOf
 import io.element.android.features.messages.impl.link.LinkEvent

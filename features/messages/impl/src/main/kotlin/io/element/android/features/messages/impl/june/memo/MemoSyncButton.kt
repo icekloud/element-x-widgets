@@ -111,7 +111,7 @@ internal fun MemoPanelButton(roomId: String, modifier: Modifier = Modifier) {
     Box(modifier.testTag(MEMO_PANEL_BUTTON_TAG).clickable { MemoPanelHub.open(roomId) }) {
         Icon(
             imageVector = CompoundIcons.ListBulleted(),
-            contentDescription = if (count > 0) "제안 $count건" else "제안",
+            contentDescription = if (count > 0) "제안 ${count}건" else "제안",
         )
         if (count > 0) {
             MemoBadge(
