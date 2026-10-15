@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -43,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,6 +63,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesTo
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.features.messages.impl.R
+import io.element.android.libraries.architecture.bindings
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
@@ -84,6 +85,14 @@ internal object MemoTags {
     const val TAB_FOLDERS = "memo_tab_folders"
     const val TAB_SEARCH = "memo_tab_search"
     const val FOLDER_BADGE = "memo_folder_badge"
+    const val PANEL = "memo_panel"
+    const val PANEL_EMPTY = "memo_panel_empty"
+    const val PANEL_INPUT = "memo_panel_input"
+    const val PANEL_SEND = "memo_panel_send"
+    const val PANEL_DIRECTIVE = "memo_panel_directive"
+    const val PANEL_RESEND = "memo_panel_resend"
+    const val PANEL_BADGE = "memo_panel_badge"
+    const val PROPOSAL_SENDING = "memo_proposal_sending"
     const val BAND = "memo_band"
     const val TILE = "memo_tile"
     const val TILE_PREVIEW = "memo_tile_preview"
@@ -131,6 +140,34 @@ internal class MemoController(
     /** 앱7 항목 2: the photos open full screen (not a sheet: back closes it first). */
     var viewer by mutableStateOf<MemoViewerRequest?>(null)
     var error by mutableStateOf<Pair<String, (() -> Unit)?>?>(null)
+
+    /** 앱9 C: proposal ids whose answer is being written right now (the card is locked from the press on). */
+    val answering = mutableStateSetOf<String>()
+
+    /**
+     * Answers a proposal card once: locks it at once, then one op per proposal id ([memoGroupOps]). A second press
+     * on a locked card does nothing; the local backend also answers an id only once, whatever screen asks.
+     */
+    fun answer(group: MemoProposalGroup, answer: MemoAnswer, date: String? = null, folder: String? = null) {
+        if (group.isSending || group.ids.any { it in answering }) return
+        val ops = memoGroupOps(group, answer, date, folder)
+        if (ops.isEmpty()) return
+        answering += group.ids
+        scope.launch {
+            try {
+                for (op in ops) {
+                    val r = store.request(op)
+                    if (r is MemoResult.Failed) {
+                        error = r.reason to null
+                        break
+                    }
+                }
+                store.refreshIndex()
+            } finally {
+                answering -= group.ids.toSet()
+            }
+        }
+    }
 
     /** Tag filters per folder: kept when going back (요구 F "태그 필터는 뒤로가기로 해제 안 함"). */
     val folderTags = mutableStateMapOf<String, List<String>>()
@@ -234,8 +271,38 @@ internal fun MemoScreen(
         }
         MemoTabBar(
             selected = state.tab,
-            pendingProposals = index.pendingProposals,
             onSelect = { tab -> controller.go { it.closeNote().selectTab(tab) } },
+        )
+    }
+    // 앱9 A: the proposal area opens from the list icon of the top bar; the badge there counts the waiting cards.
+    val waitingCards = remember(index) { memoPanelWaitingCount(index) }
+    LaunchedEffect(roomId, waitingCards) { MemoPanelHub.setCount(roomId, waitingCards) }
+    DisposableEffect(roomId) { onDispose { MemoPanelHub.leave(roomId) } }
+    val panelRoom by MemoPanelHub.openRoom.collectAsState()
+    if (panelRoom == roomId) {
+        val directives = if (useFakeData) {
+            null
+        } else {
+            remember(roomId) {
+                MemoSyncHub.directives(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+            }
+        }
+        val runner = if (useFakeData) {
+            null
+        } else {
+            remember(roomId) {
+                MemoSyncHub.runner(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+            }
+        }
+        MemoPanel(
+            controller = controller,
+            directives = directives,
+            // A finished instruction changed notes or tags on the server: one sync brings them down.
+            onSynced = {
+                runner?.syncNow()
+                store.refreshIndex()
+            },
+            onClose = { MemoPanelHub.close() },
         )
     }
     MemoSheetHost(controller)
@@ -243,7 +310,7 @@ internal fun MemoScreen(
 }
 
 @Composable
-internal fun MemoTabBar(selected: MemoTab, pendingProposals: Int, onSelect: (MemoTab) -> Unit) {
+internal fun MemoTabBar(selected: MemoTab, onSelect: (MemoTab) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -270,10 +337,7 @@ internal fun MemoTabBar(selected: MemoTab, pendingProposals: Int, onSelect: (Mem
                     style = if (on) ElementTheme.typography.fontBodyMdMedium else ElementTheme.typography.fontBodyMdRegular,
                     color = if (on) ElementTheme.colors.textActionAccent else ElementTheme.colors.textSecondary,
                 )
-                if (tab == MemoTab.Folders && pendingProposals > 0) {
-                    Spacer(Modifier.width(4.dp))
-                    MemoBadge(pendingProposals.toString(), Modifier.testTag(MemoTags.FOLDER_BADGE))
-                }
+                // 앱9 A: no badge on the folder tab: the proposals moved to the list icon of the top bar.
             }
         }
     }

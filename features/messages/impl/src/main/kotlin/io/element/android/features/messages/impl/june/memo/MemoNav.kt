@@ -104,14 +104,3 @@ internal fun memoSubfolders(index: MemoIndex, path: String): List<MemoFolder> =
 /** Folders a note can be moved to (folder sheet): all but the trash, inbox first. */
 internal fun memoMoveTargets(index: MemoIndex): List<MemoFolder> =
     index.folders.filter { it.path != MEMO_TRASH }.sortedBy { if (it.path == MEMO_INBOX) 0 else 1 }
-
-/** Proposals of the root band: everything still pending or re-reviewed. */
-internal fun memoRootBand(index: MemoIndex): List<MemoProposal> = index.proposals
-
-/** Proposals shown in a folder: folder creations under [path] and schedule proposals about the [loadedIds] notes. */
-internal fun memoFolderBand(index: MemoIndex, path: String, loadedIds: Set<String>): List<MemoProposal> =
-    index.proposals.filter { p ->
-        val folderCreateHere = p.isFolderCreate && p.folder != null && (p.folder == path || p.folder.startsWith("$path/"))
-        val aboutLoadedNote = p.noteId != null && p.noteId in loadedIds
-        folderCreateHere || aboutLoadedNote
-    }

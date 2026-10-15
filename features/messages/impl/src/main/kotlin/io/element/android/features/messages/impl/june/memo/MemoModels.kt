@@ -85,7 +85,7 @@ internal data class MemoIndex(
 ) {
     fun folder(path: String): MemoFolder? = folders.firstOrNull { it.path == path }
 
-    /** Number of proposals still waiting for an answer (folder tab badge). */
+    /** Number of proposals still waiting for an answer. */
     val pendingProposals: Int get() = proposals.count { it.isWaiting }
 
     companion object {
@@ -214,7 +214,14 @@ internal sealed interface MemoResponse {
     data class Search(override val requestId: String, val page: MemoPage) : MemoResponse
     data class Note(override val requestId: String, val note: MemoNote) : MemoResponse
     data class Tags(override val requestId: String, val tags: kotlin.collections.List<MemoTag>) : MemoResponse
-    data class Ok(override val requestId: String, val op: String, val id: String?, val path: String?) : MemoResponse
+    /** [content] = the whole answer (앱9: `지시` / `지시조회` read `상태`, `메시지`, `결과[]` from it). */
+    data class Ok(
+        override val requestId: String,
+        val op: String,
+        val id: String?,
+        val path: String?,
+        val content: JSONObject = JSONObject(),
+    ) : MemoResponse
     data class Error(override val requestId: String, val op: String, val reason: String) : MemoResponse
 
     /** [v2] `app.june.memo.sync` / `app.june.memo.sync_ack`: the raw content, applied by [MemoSync]. */
@@ -383,7 +390,7 @@ internal fun parseMemoResponse(type: String, content: JSONObject): MemoResponse?
             }
             MemoResponse.Tags(rid, tags)
         }
-        MEMO_OK_TYPE -> MemoResponse.Ok(rid, content.optString("op"), content.optStringOrNull("id"), content.optStringOrNull("경로"))
+        MEMO_OK_TYPE -> MemoResponse.Ok(rid, content.optString("op"), content.optStringOrNull("id"), content.optStringOrNull("경로"), content)
         MEMO_ERROR_TYPE -> MemoResponse.Error(rid, content.optString("op"), content.optString("사유").ifEmpty { "알 수 없는 오류" })
         MEMO_SYNC_TYPE -> MemoResponse.Sync(rid, content)
         MEMO_SYNC_ACK_TYPE -> MemoResponse.SyncAck(rid, content)

@@ -75,6 +75,8 @@ import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
 import io.element.android.features.messages.impl.june.memo.MemoScreen
 import io.element.android.features.messages.impl.june.memo.MemoSyncButton
+import io.element.android.features.messages.impl.june.memo.MemoPanelButton
+import io.element.android.features.messages.impl.june.memo.memoPanelRoomIdOf
 import io.element.android.features.messages.impl.june.memo.memoSyncRoomIdOf
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
@@ -286,6 +288,11 @@ fun MessagesView(
                                     onSendQuickText = { state.eventSink(MessagesEvent.SendQuickText(it)) },
                                     onBotFilesClick = { hidingKeyboard { onBotFilesClick() } },
                                     memoSyncRoomId = memoSyncRoomIdOf(
+                                        LocalContext.current,
+                                        state.roomId.value,
+                                        inThread = state.timelineState.timelineMode is Timeline.Mode.Thread,
+                                    ),
+                                    memoPanelRoomId = memoPanelRoomIdOf(
                                         LocalContext.current,
                                         state.roomId.value,
                                         inThread = state.timelineState.timelineMode is Timeline.Mode.Thread,
@@ -511,6 +518,7 @@ internal fun RowScope.MessagesMenuActions(
     onSendQuickText: (String) -> Unit = {},
     onBotFilesClick: () -> Unit = {},
     memoSyncRoomId: String? = null,
+    memoPanelRoomId: String? = null,
 ) {
     // Element June: stop the bot's current task, and the list of files the bot sent in this room.
     // The memo bot room has the sync button there instead (앱6 항목 2); every other room keeps "중단".
@@ -525,11 +533,16 @@ internal fun RowScope.MessagesMenuActions(
         )
     }
     Spacer(Modifier.width(12.dp))
-    Icon(
-        modifier = Modifier.clickable(onClick = onBotFilesClick),
-        imageVector = CompoundIcons.ListBulleted(),
-        contentDescription = "봇이 보낸 파일",
-    )
+    // 앱9 A: in the memo bot room (its memo screen) the list icon opens the proposal area, with the waiting count.
+    if (memoPanelRoomId != null) {
+        MemoPanelButton(memoPanelRoomId)
+    } else {
+        Icon(
+            modifier = Modifier.clickable(onClick = onBotFilesClick),
+            imageVector = CompoundIcons.ListBulleted(),
+            contentDescription = "봇이 보낸 파일",
+        )
+    }
     Spacer(Modifier.width(12.dp))
     if (showStopConfirm) {
         ConfirmationDialog(

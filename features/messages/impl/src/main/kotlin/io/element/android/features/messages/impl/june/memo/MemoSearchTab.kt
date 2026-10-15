@@ -401,8 +401,8 @@ internal fun MemoNoteScreen(
                     color = ElementTheme.colors.textSecondary
                 )
                 MemoTagLine(n.tags.toImmutableList(), max = 20, modifier = Modifier.padding(vertical = 4.dp))
-                // 📅 proposal linked to this note
-                index.proposals.filter { it.noteId == id }.forEach { p -> MemoProposalCard(controller, p) }
+                // 📅 proposal linked to this note (앱9: grouped and locked like the proposal area)
+                memoPanelGroups(index).filter { it.first.noteId == id }.forEach { g -> MemoProposalCard(controller, g) }
                 MemoMarkdown(n.body)
                 if (n.truncated) Text("(본문이 길어 일부만 받았습니다)", color = ElementTheme.colors.textSecondary)
                 if (n.attachments.isNotEmpty()) {
