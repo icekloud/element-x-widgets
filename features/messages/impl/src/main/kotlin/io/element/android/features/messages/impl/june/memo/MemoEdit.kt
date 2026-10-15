@@ -90,7 +90,7 @@ internal fun memoEditOp(
     val tags = memoParseTagInput(draft.tags).takeIf { draft.tags != saved.tags }
     val removed = draft.photos.removedKeys.takeIf { includePhotos && it.isNotEmpty() }
     val picked = added.takeIf { includePhotos && it.isNotEmpty() }
-    if (body == null && title == null && tags == null && removed == null && picked == null) return null
+    if (listOf(body, title, tags, removed, picked).all { it == null }) return null
     return MemoOp.edit(
         MemoTarget(noteId = noteId),
         body = body,
