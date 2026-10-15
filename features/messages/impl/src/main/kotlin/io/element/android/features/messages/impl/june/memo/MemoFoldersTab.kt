@@ -494,3 +494,56 @@ internal fun memoProposalSheet(controller: MemoController, noteId: String): Memo
     }
     return MemoSheet.Actions("🤖 ${groups.size}건", actions)
 }
+
+@Composable
+private fun MemoCorner(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        modifier = modifier
+            .padding(4.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(ElementTheme.colors.bgCanvasDefault)
+            .padding(horizontal = 4.dp),
+        style = ElementTheme.typography.fontBodyXsRegular,
+    )
+}
+
+@Composable
+internal fun MemoTagLine(tags: ImmutableList<String>, max: Int, modifier: Modifier = Modifier, onTag: ((String) -> Unit)? = null) {
+    val shown = memoVisibleTags(tags, max)
+    Row(modifier) {
+        shown.first.forEach { t -> MemoChip("#$t", onClick = onTag?.let { { it(t) } }) }
+        if (shown.second > 0) MemoChip("+${shown.second}")
+    }
+}
+
+/** The tags drawn on a tile and the "+N" rest. */
+internal fun memoVisibleTags(tags: List<String>, max: Int): Pair<List<String>, Int> =
+    tags.take(max) to (tags.size - max).coerceAtLeast(0)
+
+@Composable
+private fun MemoListRow(controller: MemoController, item: MemoItem) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(MemoTags.TILE)
+            .combinedClickable(
+                onClick = { controller.go { it.openNote(item.id) } },
+                onLongClick = { controller.sheet = memoItemActions(controller, item) },
+            )
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(memoKindIcon(item.kind), modifier = Modifier.padding(end = 8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                (if (item.pinned) "📌 " else "") + item.title,
+                style = ElementTheme.typography.fontBodyMdMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            MemoTagLine(item.tags.toImmutableList(), max = 4)
+        }
+        Text(item.shortDate, style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
+    }
+}

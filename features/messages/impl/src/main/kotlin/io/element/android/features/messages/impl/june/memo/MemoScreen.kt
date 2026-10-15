@@ -42,8 +42,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -63,8 +63,8 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesTo
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.features.messages.impl.R
-import io.element.android.libraries.architecture.bindings
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
+import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.theme.components.ModalBottomSheet
