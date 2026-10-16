@@ -13,11 +13,14 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.AndroidComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -28,6 +31,7 @@ import io.element.android.compound.theme.ElementTheme
 import io.element.android.tests.testutils.robolectric.RobolectricTest
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -79,8 +83,8 @@ class MemoNoteHeadUiTest : RobolectricTest() {
         MemoEditHub.drop(id)
     }
 
-    @Test
     // The name has no emoji: Robolectric could not decode it ("Error decoding percent encoded characters").
+    @Test
     fun `a pinned note loses its pin from the tray pin mark and gets it back with undo`() = runAndroidComposeUiTest<ComponentActivity> {
         val backend = backend()
         val id = runBlocking {
@@ -90,7 +94,8 @@ class MemoNoteHeadUiTest : RobolectricTest() {
         setContent {
             ElementTheme {
                 val scope = rememberCoroutineScope()
-                val c = MemoController(MemoStore(backend), scope, mutableStateOf(MemoLocation()))
+                // 앱16 C: remembered, as MemoScreen does; made again on every recomposition it lost its undo (CI 38856026885).
+                val c = remember { MemoController(MemoStore(backend), scope, mutableStateOf(MemoLocation())) }
                 controller = c
                 val version by MemoLocalChanges.version.collectAsState()
                 MemoRecordTab(c, version)
@@ -111,5 +116,97 @@ class MemoNoteHeadUiTest : RobolectricTest() {
         undo!!.onUndo()
         waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoA11Tags.PIN_CELL).fetchSemanticsNodes().size == 1 }
         assertTrue(runBlocking { (backend.call(MemoOp.get(id), "g") as MemoResponse.Note).note.pinned })
+    }
+
+    /** 앱16 B: the open note of [id] with a remembered controller, as MemoScreen has it. */
+    private fun AndroidComposeUiTest<ComponentActivity>.open(
+        backend: MemoLocalBackend,
+        id: String,
+        location: MemoLocation = MemoLocation().openNote(id),
+    ): MemoController {
+        val store = MemoStore(backend)
+        runBlocking { store.loadNote(id) }
+        var controller: MemoController? = null
+        val nav = mutableStateOf(location)
+        setContent {
+            ElementTheme {
+                val scope = rememberCoroutineScope()
+                val c = remember { MemoController(store, scope, nav) }
+                controller = c
+                MemoNoteScreen(c, id)
+            }
+        }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.NOTE_READ).fetchSemanticsNodes().isNotEmpty() || nav.value.editing }
+        return controller!!
+    }
+
+    private fun pinnedNow(backend: MemoLocalBackend, id: String): Boolean =
+        runBlocking { (backend.call(MemoOp.get(id), "g") as MemoResponse.Note).note.pinned }
+
+    @Test
+    fun `a note that is not pinned shows the pin button, a press pins it and undo takes it back`() = runAndroidComposeUiTest<ComponentActivity> {
+        val backend = backend()
+        val id = runBlocking { backend.create("점심으로 돈까스 먹는 중") }
+        val controller = open(backend, id)
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().size == 1 }
+        val button = onNodeWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNode()
+        assertEquals(listOf("메모 고정"), button.config.getOrNull(SemanticsProperties.ContentDescription))
+        // At least 48dp to press.
+        assertTrue("size ${button.size}", button.size.width >= 48 * density.density - 1f && button.size.height >= 48 * density.density - 1f)
+        // The old 앱15 mark of a pinned note is not there on a note that is not pinned.
+        assertTrue(onAllNodesWithTag(MemoA11Tags.PIN_OFF).fetchSemanticsNodes().isEmpty())
+        onNodeWithTag(MemoA11Tags.PIN_TOGGLE).performClick()
+        waitUntil(timeoutMillis = 5_000) { pinnedNow(backend, id) }
+        waitUntil(timeoutMillis = 5_000) { controller.undo != null }
+        assertEquals("고정했습니다", controller.undo?.text)
+        waitUntil(timeoutMillis = 5_000) {
+            onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().firstOrNull()
+                ?.config?.getOrNull(SemanticsProperties.ContentDescription) == listOf("고정 해제")
+        }
+        controller.undo!!.onUndo()
+        waitUntil(timeoutMillis = 5_000) { !pinnedNow(backend, id) }
+    }
+
+    @Test
+    fun `on a pinned note the pin button takes the pin off with undo`() = runAndroidComposeUiTest<ComponentActivity> {
+        val backend = backend()
+        val id = runBlocking { backend.create("고정된 메모").also { backend.call(MemoOp.pin(MemoTarget(it)), "p") } }
+        val controller = open(backend, id)
+        waitUntil(timeoutMillis = 5_000) {
+            onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().firstOrNull()
+                ?.config?.getOrNull(SemanticsProperties.ContentDescription) == listOf("고정 해제")
+        }
+        onNodeWithTag(MemoA11Tags.PIN_TOGGLE).performClick()
+        waitUntil(timeoutMillis = 5_000) { !pinnedNow(backend, id) }
+        waitUntil(timeoutMillis = 5_000) { controller.undo != null }
+        assertEquals("고정을 해제했습니다", controller.undo?.text)
+        controller.undo!!.onUndo()
+        waitUntil(timeoutMillis = 5_000) { pinnedNow(backend, id) }
+    }
+
+    @Test
+    fun `no pin button while editing, and a dimmed one that does nothing in the selection mode`() = runAndroidComposeUiTest<ComponentActivity> {
+        val backend = backend()
+        val id = runBlocking { backend.create("편집할 메모") }
+        val controller = open(backend, id, MemoLocation().openNote(id).startEditing())
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.EDIT_BODY).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().isEmpty())
+        controller.go { it.stopEditing() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().size == 1 }
+        controller.select = controller.select.start()
+        waitForIdle()
+        onNodeWithTag(MemoA11Tags.PIN_TOGGLE).assertIsNotEnabled()
+        assertFalse(pinnedNow(backend, id))
+        MemoEditHub.drop(id)
+    }
+
+    @Test
+    fun `a note in the trash shows no pin button`() = runAndroidComposeUiTest<ComponentActivity> {
+        val backend = backend()
+        val id = runBlocking { backend.create("버린 메모").also { backend.call(MemoOp.trash(MemoTarget(it)), "t") } }
+        open(backend, id)
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.NOTE_READ).fetchSemanticsNodes().isNotEmpty() }
+        waitForIdle()
+        assertTrue(onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().isEmpty())
     }
 }

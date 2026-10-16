@@ -70,10 +70,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.element.android.features.widgets.impl.BotPickerPlan
 import io.element.android.features.widgets.impl.WidgetBindings
 import io.element.android.features.widgets.impl.WidgetIntents
 import io.element.android.features.widgets.impl.WidgetRoom
+import io.element.android.features.widgets.impl.botPickerArc
+import io.element.android.features.widgets.impl.botPickerArcCenters
 import io.element.android.features.widgets.impl.botPickerRefresh
+import io.element.android.features.widgets.impl.botPickerScreenOrder
 import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.june.JuneSettings
 import kotlinx.coroutines.Dispatchers
@@ -82,8 +86,6 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -104,7 +106,8 @@ class BotPickerActivity : ComponentActivity() {
             val accent = JuneSettings.color(JuneSettings.ColorSlot.Accent)
             val badgeColor = JuneSettings.color(JuneSettings.ColorSlot.WidgetBadge)
             var sessionId by remember { mutableStateOf<String?>(null) }
-            var rooms by remember { mutableStateOf<List<WidgetRoom>>(emptyList()) }
+            // 앱16 A: the screen puts the rooms in their places ([BotPickerPlan.place]), it knows where each node is drawn.
+            var plan by remember { mutableStateOf<BotPickerPlan?>(null) }
             var loaded by remember { mutableStateOf(false) }
             // 앱15 B: once the user touched the screen the places stay (the room under the finger never changes).
             var touched by remember { mutableStateOf(false) }
@@ -116,12 +119,13 @@ class BotPickerActivity : ComponentActivity() {
                     return@LaunchedEffect
                 }
                 sessionId = sid
-                rooms = withContext(Dispatchers.IO) { repository.botPickerRooms(sid, cacheOnly = true) }
-                rooms.forEach { room -> withContext(Dispatchers.IO) { repository.cachedAvatar(room.avatarUrl) }?.let { avatars[room.roomId] = it } }
-                val fresh = withContext(Dispatchers.IO) { runCatching { repository.botPickerRooms(sid, cacheOnly = false) }.getOrNull() }
-                if (fresh != null) rooms = botPickerRefresh(rooms, fresh, touched)
+                val first = withContext(Dispatchers.IO) { repository.botPickerPlan(sid, cacheOnly = true) }
+                plan = first
+                first.rooms.forEach { room -> withContext(Dispatchers.IO) { repository.cachedAvatar(room.avatarUrl) }?.let { avatars[room.roomId] = it } }
+                val fresh = withContext(Dispatchers.IO) { runCatching { repository.botPickerPlan(sid, cacheOnly = false) }.getOrNull() }
+                if (fresh != null) plan = fresh
                 loaded = true
-                rooms.filter { it.roomId !in avatars }.forEach { room ->
+                plan?.rooms.orEmpty().filter { it.roomId !in avatars }.forEach { room ->
                     withContext(Dispatchers.IO) { runCatching { repository.loadAvatar(sid, room.avatarUrl) }.getOrNull() }
                         ?.let { avatars[room.roomId] = it }
                 }
@@ -130,8 +134,13 @@ class BotPickerActivity : ComponentActivity() {
                 anchorOnScreen = anchorOnScreen,
                 savedCenter = savedCenter,
                 radiusDp = radiusDp,
-                onCenterMoved = { repository.store.saveBotPickerCenter(it) },
-                rooms = rooms,
+                onCenterMoved = {
+                    repository.store.saveBotPickerCenter(it)
+                    // 앱16 A: a moved centre turns the arc and nothing is under the finger: the rooms are placed again.
+                    touched = false
+                },
+                plan = plan,
+                touched = touched,
                 loaded = loaded,
                 avatars = avatars,
                 accent = accent,
@@ -158,71 +167,16 @@ private class PickerLayout(
     val full: Boolean,
 )
 
-/**
- * Put [n] nodes on one arc around [anchor], only where the nodes fit on screen, so they never overlap
- * or get pushed against the screen edge.
- */
+/** [botPickerArc] in the picker window (앱16 A: the arc itself moved to BotPickerArc.kt, unchanged). */
 private fun computeLayout(w: Float, h: Float, anchor: Offset, n: Int, radiusDp: Float, px: (Float) -> Float): PickerLayout {
-    val margin = px(46f)
-    val spacing = px(84f)
-    val maxSweep = (150.0 * PI / 180.0).toFloat()
-    val steps = 180
-    val step = (2 * PI / steps).toFloat()
-    fun fits(a: Float, r: Float): Boolean {
-        val x = anchor.x + cos(a) * r
-        val y = anchor.y + sin(a) * r
-        return x in margin..(w - margin) && y in margin..(h - margin - px(14f))
-    }
-    val base = atan2(h / 2 - anchor.y, w / 2 - anchor.x)
-    var r = px(radiusDp)
-    var start = base
-    var sweep = 0f
-    var full = false
-    repeat(5) {
-        val flags = BooleanArray(steps) { fits(it * step, r) }
-        if (flags.all { it }) {
-            full = true
-            start = base
-            sweep = (2 * PI).toFloat()
-        } else {
-            full = false
-            val s0 = flags.indexOfFirst { !it }
-            var best = 0
-            var bestStart = 0
-            var cur = 0
-            var curStart = 0
-            for (k in 1..steps) {
-                val i = (s0 + k) % steps
-                if (flags[i]) {
-                    if (cur == 0) curStart = i
-                    cur++
-                    if (cur > best) {
-                        best = cur
-                        bestStart = curStart
-                    }
-                } else {
-                    cur = 0
-                }
-            }
-            val runLen = max(0, best - 1) * step
-            sweep = min(runLen, maxSweep)
-            start = bestStart * step + (runLen - sweep) / 2
-        }
-        val gaps = if (full) n else max(1, n - 1)
-        val needed = if (sweep > 0.01f) gaps * spacing / sweep else r * 2
-        if (needed <= r || n <= 1) return@repeat
-        r = min(needed, min(w, h) * 0.95f)
-    }
-    val angles = List(n) { i ->
-        when {
-            full -> start + (2 * PI).toFloat() * i / n
-            n <= 1 -> start + sweep / 2
-            else -> start + sweep * i / (n - 1)
-        }
-    }
-    val centers = angles.map { a -> Offset(anchor.x + cos(a) * r, anchor.y + sin(a) * r) }
-    return PickerLayout(anchor, r, angles, centers, start, sweep, full)
+    val arc = botPickerArc(w, h, anchor.x, anchor.y, n, radiusDp, px)
+    val centers = botPickerArcCenters(arc, anchor.x, anchor.y).map { (x, y) -> Offset(x, y) }
+    return PickerLayout(anchor, arc.radius, arc.angles, centers, arc.start, arc.sweep, arc.full)
 }
+
+/** 앱16 A: the node indexes of a fan of [n] nodes from the top of the screen to the bottom ([botPickerScreenOrder]). */
+private fun screenOrder(w: Float, h: Float, anchor: Offset, n: Int, radiusDp: Float, px: (Float) -> Float): List<Int> =
+    botPickerScreenOrder(botPickerArcCenters(botPickerArc(w, h, anchor.x, anchor.y, n, radiusDp, px), anchor.x, anchor.y))
 
 private fun angleDiff(a: Float, b: Float): Float = abs(atan2(sin(a - b), cos(a - b)))
 
@@ -250,7 +204,8 @@ private fun BotPickerScreen(
     savedCenter: Pair<Float, Float>?,
     radiusDp: Float,
     onCenterMoved: (Pair<Float, Float>) -> Unit,
-    rooms: List<WidgetRoom>,
+    plan: BotPickerPlan?,
+    touched: Boolean,
     loaded: Boolean,
     avatars: Map<String, Bitmap>,
     accent: Color,
@@ -297,6 +252,13 @@ private fun BotPickerScreen(
         val iconAnchor = anchorOnScreen?.let { it - origin }?.let { Offset(it.x.coerceIn(0f, w), it.y.coerceIn(0f, h)) }
             ?: Offset(w - px(64f), h - px(96f))
         val anchor = movedAnchor ?: savedCenter?.let { Offset(it.first * w, it.second * h) } ?: iconAnchor
+        // 앱16 A: the fixed rooms go on the places at the chosen side of the screen, told by where each node is drawn.
+        val placed = remember(plan, w, h, anchor, radiusDp) {
+            plan?.place { k -> screenOrder(w, h, anchor, k, radiusDp, ::px) }.orEmpty()
+        }
+        // 앱15 B: after the first touch the places stay, only the badges of the same rooms are brought up to date.
+        val shown = remember { arrayOf(emptyList<WidgetRoom>()) }
+        val rooms = remember(placed, touched) { botPickerRefresh(shown[0], placed, touched).also { shown[0] = it } }
         val layout = remember(w, h, anchor, rooms.size, radiusDp) { computeLayout(w, h, anchor, rooms.size, radiusDp, ::px) }
         val currentLayout = rememberUpdatedState(layout)
         val currentRooms = rememberUpdatedState(rooms)

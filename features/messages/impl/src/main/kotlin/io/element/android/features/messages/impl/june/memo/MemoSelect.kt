@@ -63,10 +63,39 @@ internal object MemoA11Tags {
     const val SELECT_BAR = "memo_select_bar"
     const val SELECT_MARK = "memo_select_mark"
 
-    /** 앱15 H: the 📌 that takes the pin off (open note, card, tray row) and the undo banner. */
+    /** 앱15 H: the 📌 that takes the pin off (card, tray row) and the undo banner. */
     const val PIN_OFF = "memo_pin_off"
     const val UNDO = "memo_undo"
+
+    /** 앱16 B: the 📌 button of the open note, there for every note (pins and unpins). */
+    const val PIN_TOGGLE = "memo_pin_toggle"
 }
+
+/** 앱16 B: the 📌 button of an open note: filled when pinned, and whether a press does anything now. */
+internal data class MemoPinButton(val pinned: Boolean, val enabled: Boolean) {
+    /** What the press does, said by the screen reader. */
+    val description: String get() = if (pinned) "고정 해제" else "메모 고정"
+}
+
+/**
+ * 앱16 B (관리자: "메모고정 버튼이 따로 안보임"): the open note shows its 📌 button whether it is pinned or not, so it can be
+ * pinned from there too. Not while editing (앱13 B·15 G: the reading head is gone then); not on a note in the trash
+ * unless it is still pinned (only taking the pin off makes sense there, as in 앱15 H); in the selection mode it is shown
+ * but does nothing (앱15 H).
+ */
+internal fun memoPinButton(
+    pinned: Boolean,
+    trashed: Boolean,
+    editing: Boolean,
+    selecting: Boolean,
+): MemoPinButton? = when {
+    editing -> null
+    trashed && !pinned -> null
+    else -> MemoPinButton(pinned = pinned, enabled = !selecting)
+}
+
+/** 앱16 B: the banner after a press on the 📌 button (the same banner as 앱15 H, with 되돌리기). */
+internal fun memoPinUndoText(pinnedNow: Boolean): String = if (pinnedNow) "고정했습니다" else "고정을 해제했습니다"
 
 /** One cell of the pinned strip: a small photo (photo-only notes) or a short text. */
 internal sealed interface MemoPinCell {

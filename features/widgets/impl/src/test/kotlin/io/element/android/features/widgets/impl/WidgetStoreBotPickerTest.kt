@@ -34,6 +34,17 @@ class WidgetStoreBotPickerTest : RobolectricTest() {
     }
 
     @Test
+    fun `the fixed places are on top for a phone without the setting, and the choice is kept`() {
+        val store = store()
+        store.saveBotPickerSlotCounts(BotPickerSlotCounts(fixed = 3, flexible = 2))
+        assertEquals(BotPickerFixedSide.Top, store.getBotPickerFixedSide())
+        store.saveBotPickerFixedSide(BotPickerFixedSide.Bottom)
+        assertEquals(BotPickerFixedSide.Bottom, store.getBotPickerFixedSide())
+        store.saveBotPickerFixedSide(BotPickerFixedSide.Top)
+        assertEquals(BotPickerFixedSide.Top, store.getBotPickerFixedSide())
+    }
+
+    @Test
     fun `the badge marks are kept per session`() {
         val store = store()
         val marks = mapOf("!a:test" to BotBadgeMark(2, 1_760_000_000_000L))

@@ -207,6 +207,9 @@ internal data class MemoNote(
     val created: String get() = header.optString("생성")
     val pinned: Boolean get() = header.optBoolean("고정")
 
+    /** 앱16 B: the note is in the trash (the phone database marks it, a server copy is filed in the trash folder). */
+    val trashed: Boolean get() = header.optInt("삭제") == MEMO_DELETED_TRASH || folder == MEMO_TRASH
+
     /** 앱10: the server number (0 = none yet) and the date shown (the user's last change, else the creation). */
     val number: Int get() = header.optInt(MEMO_FIELD_NUMBER, 0)
     val shownDate: String get() = memoShownDate(created, header.optString(MEMO_FIELD_USER_MODIFIED))
