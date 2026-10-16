@@ -103,7 +103,7 @@ fun botPickerArc(
 
 /** The node centres of [arc] around the anchor, as (x, y) pixels. */
 fun botPickerArcCenters(arc: BotPickerArc, anchorX: Float, anchorY: Float): List<Pair<Float, Float>> =
-    arc.angles.map { a -> (anchorX + cos(a) * arc.radius) to (anchorY + sin(a) * arc.radius) }
+    arc.angles.map { a -> Pair(anchorX + cos(a) * arc.radius, anchorY + sin(a) * arc.radius) }
 
 /**
  * 앱16 A (관리자: "위에서부터는 지금 화면 기준 위에서부터"): the node indexes from the top of the screen to the bottom,
