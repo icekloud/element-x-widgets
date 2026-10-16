@@ -284,7 +284,7 @@ internal class MemoController(
 }
 
 /** 앱15 H: the text of the undo banner and what 되돌리기 does. */
-internal class MemoUndo(val text: String, val onUndo: () -> Unit)
+internal data class MemoUndo(val text: String, val onUndo: () -> Unit)
 
 /**
  * Element June memo bot screen (요구 B): the record, folders and search tabs, drawn instead of the timeline of the
