@@ -274,11 +274,17 @@ internal class MemoController(
      * 앱15 H (관리자: "편집 화면 아니더라도 고정 해제 가능하게끔"): a press on 📌 takes the pin off at once (the same
      * `unpin` op as the menus, 앱3) and offers 되돌리기 (`pin`) for a moment. Nothing in the selection mode.
      */
-    fun unpinWithUndo(id: String) {
+    fun unpinWithUndo(id: String) = setPinWithUndo(id, pin = false)
+
+    /**
+     * 앱16 B: the 📌 button of the open note pins a note that is not pinned (`pin`, the same op as the menus) and offers
+     * 되돌리기 (`unpin`) in the same banner; on a pinned note it is [unpinWithUndo].
+     */
+    fun setPinWithUndo(id: String, pin: Boolean) {
         if (select.active) return
         val target = MemoTarget(id)
-        run(MemoOp.unpin(target)) {
-            undo = MemoUndo("고정을 해제했습니다") { run(MemoOp.pin(target)) }
+        run(if (pin) MemoOp.pin(target) else MemoOp.unpin(target)) {
+            undo = MemoUndo(memoPinUndoText(pinnedNow = pin)) { run(if (pin) MemoOp.unpin(target) else MemoOp.pin(target)) }
         }
     }
 }

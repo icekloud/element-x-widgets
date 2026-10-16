@@ -62,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
@@ -71,6 +72,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -474,23 +478,17 @@ private fun MemoNoteReading(
             .padding(horizontal = 12.dp)
             .testTag(MemoTags.NOTE_READ)
     ) {
-        // 앱15 H: the 📌 of a pinned note takes the pin off when pressed (with 되돌리기); no 📌 on the others.
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // 앱16 B (관리자: "메모고정 버튼이 따로 안보임"): the 📌 button at the right end of the folder line, for every note
+        // (앱15 H showed it on pinned notes only): a light outline pin pins the note, the filled 📌 takes the pin off.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(
                 memoFolderLabel(index, n.folder),
                 style = ElementTheme.typography.fontBodySmRegular,
-                color = ElementTheme.colors.textSecondary
+                color = ElementTheme.colors.textSecondary,
+                modifier = Modifier.weight(1f),
             )
-            if (n.pinned) {
-                Text(
-                    " · 📌",
-                    style = ElementTheme.typography.fontBodySmRegular,
-                    color = ElementTheme.colors.textSecondary,
-                    modifier = Modifier
-                        .clickable { controller.unpinWithUndo(id) }
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                        .testTag(MemoA11Tags.PIN_OFF),
-                )
+            memoPinButton(n.pinned, n.trashed, controller.nav.value.editing, controller.select.active)?.let { button ->
+                MemoPinToggle(button, onClick = { controller.setPinWithUndo(id, pin = !button.pinned) })
             }
         }
         MemoTagLine(n.tags.toImmutableList(), max = 20, modifier = Modifier.padding(vertical = 4.dp))
@@ -521,6 +519,39 @@ private fun MemoNoteReading(
         Spacer(Modifier.height(MEMO_EDIT_BOX_ROOM_DP.dp).testTag(MemoTags.NOTE_EDIT_ROOM))
     }
 }
+
+/**
+ * 앱16 B: the 📌 button of the open note, [MEMO_PIN_TOGGLE_DP] square to be easy to press. Pinned: the 📌 as before;
+ * not pinned: the outline pin in a light colour. Disabled (selection mode): drawn dimmed, a press does nothing.
+ */
+@Composable
+private fun MemoPinToggle(button: MemoPinButton, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(MEMO_PIN_TOGGLE_DP.dp)
+            .clickable(enabled = button.enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = button.description }
+            .testTag(MemoA11Tags.PIN_TOGGLE),
+    ) {
+        val dim = if (button.enabled) 1f else MEMO_PIN_TOGGLE_DISABLED_ALPHA
+        if (button.pinned) {
+            Text("📌", style = ElementTheme.typography.fontBodyMdRegular, modifier = Modifier.alpha(dim))
+        } else {
+            Icon(
+                imageVector = CompoundIcons.Pin(),
+                contentDescription = null,
+                tint = ElementTheme.colors.iconTertiary,
+                modifier = Modifier.size(MEMO_PIN_ICON_DP.dp).alpha(dim),
+            )
+        }
+    }
+}
+
+/** 앱16 B: the touch area of the 📌 button (at least 48dp) and the size of its outline pin. */
+internal const val MEMO_PIN_TOGGLE_DP = 48
+internal const val MEMO_PIN_ICON_DP = 18
+private const val MEMO_PIN_TOGGLE_DISABLED_ALPHA = 0.4f
 
 /**
  * The head of an open note: `#12  제목`; an untitled note without number shows "메모" as before. 앱12 A: the date is
