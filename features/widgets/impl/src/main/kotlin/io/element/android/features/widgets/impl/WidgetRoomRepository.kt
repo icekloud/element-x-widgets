@@ -87,6 +87,17 @@ class WidgetRoomRepository(
      */
     suspend fun botPickerRooms(sessionId: String, cacheOnly: Boolean): List<WidgetRoom> {
         val all = (if (cacheOnly) null else fetchRooms(sessionId)) ?: store.getCachedRooms(sessionId).values.toList()
+        // 앱15 B: the first rooms of the order stay, the places below follow the badges ([botPickerSlots]).
+        return botPickerSlots(
+            ordered = botPickerOrder(sessionId, all),
+            candidates = botRooms(all),
+            counts = store.getBotPickerSlotCounts(),
+            marks = store.getBotBadgeMarks(sessionId),
+        )
+    }
+
+    /** The "펼쳐질 순서" list: the rooms the user chose, in order, or the default list when none were chosen. */
+    fun botPickerOrder(sessionId: String, all: Collection<WidgetRoom>): List<WidgetRoom> {
         val chosen = store.getBotPickerRoomIds(sessionId) ?: return defaultBotRooms(all)
         val byId = all.associateBy { it.roomId }
         return chosen.mapNotNull { byId[it] }
@@ -94,10 +105,14 @@ class WidgetRoomRepository(
 
     /** Default bot picker rooms: one-to-one rooms except home-ops, most recent first, at most 6. */
     fun defaultBotRooms(all: Collection<WidgetRoom>): List<WidgetRoom> {
-        return all.filter { it.direct && !it.name.contains("home-ops", ignoreCase = true) }
+        return botRooms(all)
             .sortedByDescending { it.timestamp ?: 0L }
             .take(6)
     }
+
+    /** The bot rooms: one-to-one rooms except home-ops. */
+    private fun botRooms(all: Collection<WidgetRoom>): List<WidgetRoom> =
+        all.filter { it.direct && !it.name.contains("home-ops", ignoreCase = true) }
 
     private suspend fun fetchRooms(sessionId: String): List<WidgetRoom>? {
         val client = restoredClient(sessionId) ?: return null
@@ -106,6 +121,8 @@ class WidgetRoomRepository(
         } ?: return null
         val rooms = summaries.map { it.toWidgetRoom() }
         store.saveCachedRooms(sessionId, rooms)
+        // 앱15 B: every fresh list (widget refresh, picker, settings) notes when a badge went up.
+        store.saveBotBadgeMarks(sessionId, botBadgeMarks(store.getBotBadgeMarks(sessionId), rooms, System.currentTimeMillis()))
         return rooms
     }
 

@@ -41,6 +41,9 @@ internal const val MEMO_OUTBOX_FOLDER = "folder"
 /** A suggestion answer waiting for the next `sync_push` (`제안응답[]`, 이벤트규약 v2 §2). Target = suggestion id. */
 internal const val MEMO_OUTBOX_PROPOSAL = "proposal"
 
+/** 앱15 A: a folder icon picked here, waiting for the next `sync_push` (`폴더아이콘[]`). Target = folder path. */
+internal const val MEMO_OUTBOX_FOLDER_ICON = "folder_icon"
+
 /** One developer log line of the sync (설계 §k-6). Counts and timings only, never note content. */
 internal data class MemoSyncLogRow(val atMs: Long, val kind: String, val notes: Int, val tookMs: Long?, val result: String?)
 
@@ -322,6 +325,12 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         "SELECT path, icon FROM folder WHERE dirty = 1 AND deleted = 0 AND icon NOT IN ('', ?)",
         listOf(MEMO_FOLDER_ICON_DEFAULT),
     ) { c -> c.getString(0)!! to c.getString(1)!! }.toMap()
+
+    /** 앱15 A: the server took the icon of [path]: the row is clean again when it still holds that [icon]. */
+    fun cleanFolderIcon(path: String, icon: String) = exec(
+        "UPDATE folder SET dirty = 0 WHERE path = ? AND icon = ? AND deleted = 0",
+        listOf(path, icon),
+    )
 
     /** 앱14 C: the place of a folder from the server, leaving its icon, stamp and `dirty` as they are. */
     fun moveFolderRow(f: MemoFolderRow) = exec(

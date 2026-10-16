@@ -219,12 +219,15 @@ internal class MemoLocalBackend(
                     saveFolder(MemoFolderRow(path, (a["icon"] as? String).orEmpty(), "사용자", nextOrder()), now)
                     ok(null, path)
                 }
-                // 앱14 C: the icon picked for a folder (empty = back to the default). Only the phone database changes.
+                // 앱14 C: the icon picked for a folder (empty = back to the default). 앱15 A: it also waits for the next
+                // `sync_push` (`폴더아이콘[]`); a newer choice for the same folder replaces the waiting one.
                 MEMO_OP_FOLDER_ICON -> {
                     val path = (a["path"] as? String).orEmpty().trim('/')
                     val icon = memoChosenFolderIcon(a["icon"]) ?: return@transactionWithResult err("고를 수 없는 아이콘입니다")
                     val row = folderRowFor(path) ?: return@transactionWithResult err("폴더가 없습니다")
                     saveFolder(row.copy(icon = icon), now)
+                    val upload = JSONObject().put("경로", path).put("아이콘", icon)
+                    db.enqueue(MEMO_OUTBOX_FOLDER_ICON, path, upload.toString(), now)
                     ok(null, path)
                 }
                 "rename_dir" -> renameFolder(a["path"] as String, a["new"] as String, now)?.let { ok(null, it) } ?: err("폴더가 없습니다")

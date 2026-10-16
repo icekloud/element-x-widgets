@@ -194,9 +194,11 @@ internal object MemoSync {
      * 앱14 A·C: the server's folder list. Its empty icons never wipe what the phone holds (the built-in icons put in
      * with the database, an icon picked here); an icon picked here and not taken by the server yet stays with its stamp
      * ([memoMergedFolderIcon]).
+     * 앱15 A: an icon waiting in the outbox wins as well, an empty one (back to the default) included: the screen pulls
+     * before it pushes, and the server's old icon must not come back over it in between.
      */
     private fun applyFolders(db: MemoDb, folders: JSONArray) {
-        val picked = db.pickedFolderIcons()
+        val picked = db.pickedFolderIcons() + waitingFolderIcons(db)
         val stored = db.folders().associate { it.path to it.icon }
         for (i in 0 until folders.length()) {
             val f = folders.optJSONObject(i) ?: continue
@@ -271,15 +273,65 @@ internal object MemoSync {
     fun dueUploads(db: MemoDb, nowMs: Long): List<MemoOutboxRow> =
         db.outboxDue(nowMs).filter { it.kind == MEMO_OUTBOX_NOTE }.take(PUSH_BATCH)
 
-    /** The `sync_push` arguments of [rows]. Returns null when there is nothing to send (no empty request is made). */
-    fun pushArgs(rows: List<MemoOutboxRow>, device: String, proposals: JSONArray? = null): JSONObject? {
-        if (rows.isEmpty() && (proposals == null || proposals.length() == 0)) return null
+    /**
+     * The `sync_push` arguments of [rows]. Returns null when there is nothing to send (no empty request is made).
+     * 앱15 A: [icons] are the folder icons picked here (`폴더아이콘[]`, `{경로, 아이콘}`; an empty icon = back to the
+     * default). A server that does not know the key ignores it (규약 §0).
+     */
+    fun pushArgs(rows: List<MemoOutboxRow>, device: String, proposals: JSONArray? = null, icons: JSONArray? = null): JSONObject? {
+        val noProposals = proposals == null || proposals.length() == 0
+        val noIcons = icons == null || icons.length() == 0
+        if (rows.isEmpty() && noProposals && noIcons) return null
         val changes = JSONArray()
         rows.forEach { row -> tryOrNull { JSONObject(row.payload) }?.let { changes.put(it) } }
         val args = JSONObject().put("변경", changes).put("기기", device)
-        if (proposals != null && proposals.length() > 0) args.put("제안응답", proposals)
+        if (!noProposals) args.put("제안응답", proposals)
+        if (!noIcons) args.put("폴더아이콘", icons)
         return args
     }
+
+    /**
+     * 앱15 A: the folder icons of [due] that may go now. A row whose folder was renamed or removed since is dropped
+     * without being sent (the server keeps icons of the folders it has only).
+     */
+    fun dueFolderIcons(db: MemoDb, due: List<MemoOutboxRow>): List<MemoOutboxRow> {
+        val rows = due.filter { it.kind == MEMO_OUTBOX_FOLDER_ICON }
+        if (rows.isEmpty()) return rows
+        val live = db.folders().filter { !it.deleted }.mapTo(mutableSetOf()) { it.path }
+        val (keep, gone) = rows.partition { it.target in live }
+        gone.forEach { db.dropOutbox(it.seq) }
+        return keep
+    }
+
+    /** 앱15 A: the `폴더아이콘[]` items of [rows] (their payload is `{경로, 아이콘}` already). */
+    fun folderIconsJson(rows: List<MemoOutboxRow>): JSONArray {
+        val out = JSONArray()
+        rows.forEach { row -> tryOrNull { JSONObject(row.payload) }?.let { out.put(it) } }
+        return out
+    }
+
+    /**
+     * 앱15 A: a `sync_ack` came for a push that carried [sent]: those icons are the server's now (the answer has no line
+     * for them, its shape did not change). An icon picked again while the push was on its way stays for the next one.
+     */
+    fun applyFolderIconAck(db: MemoDb, sent: List<MemoOutboxRow>) {
+        if (sent.isEmpty()) return
+        db.transaction {
+            val waiting = db.outbox().filter { it.kind == MEMO_OUTBOX_FOLDER_ICON }.associateBy { it.target }
+            sent.forEach { row ->
+                val current = waiting[row.target]
+                if (current == null || current.payload != row.payload) return@forEach
+                db.dropOutbox(current.seq)
+                db.cleanFolderIcon(row.target, tryOrNull { JSONObject(row.payload).optString("아이콘") }.orEmpty())
+            }
+        }
+    }
+
+    /** 앱15 A: the icons picked here and not taken by the server yet, by path (`""` = back to the default). */
+    fun waitingFolderIcons(db: MemoDb): Map<String, String> = db.outbox()
+        .filter { it.kind == MEMO_OUTBOX_FOLDER_ICON }
+        .mapNotNull { row -> tryOrNull { JSONObject(row.payload) }?.let { row.target to it.optString("아이콘").trim() } }
+        .toMap()
 
     /**
      * Queues [note] for the next upload (one row per note: a newer change replaces the waiting one, 설계 §k-4 ②). 앱10:

@@ -101,15 +101,14 @@ internal class MemoSyncRunner(
     private fun device(): String = memoDeviceOf(db)
 
     /** True when something waits for the server: notes, suggestion answers or attachments (the screen retry test). */
-    fun hasPendingUploads(): Boolean =
-        db.outbox().any { it.kind == MEMO_OUTBOX_NOTE || it.kind == MEMO_OUTBOX_PROPOSAL } || hasPendingAttachments()
+    fun hasPendingUploads(): Boolean = db.outbox().any { it.kind in PUSHED_KINDS } || hasPendingAttachments()
 
     /** True when attachments still wait for their upload (the one-time job test, 관리자 결정 1-1 (가)). */
     fun hasPendingAttachments(): Boolean = db.pendingAttachments().isNotEmpty()
 
     /** Millis until the earliest waiting upload (note, answer or attachment) may be tried again, null when nothing waits. */
     fun nextRetryInMs(): Long? {
-        val rows = db.outbox().filter { it.kind == MEMO_OUTBOX_NOTE || it.kind == MEMO_OUTBOX_PROPOSAL }
+        val rows = db.outbox().filter { it.kind in PUSHED_KINDS }
         val times = rows.map { it.nextTryMs } + db.pendingAttachments().map { it.second.retryAtMs }
         if (times.isEmpty()) return null
         return (times.min() - clock()).coerceAtLeast(0)
@@ -288,17 +287,24 @@ internal class MemoSyncRunner(
         val due = if (force) db.outbox() else db.outboxDue(now)
         val notes = due.filter { it.kind == MEMO_OUTBOX_NOTE }.take(MemoSync.PUSH_BATCH)
         val answers = due.filter { it.kind == MEMO_OUTBOX_PROPOSAL }
-        val args = MemoSync.pushArgs(notes, device(), JSONArray(answers.mapNotNull { tryOrNull { JSONObject(it.payload) } }))
-            ?: return Pushed(true, 0)
-        log("올리기 요청 노트 ${notes.size}건 · 제안응답 ${answers.size}건")
+        // 앱15 A: the folder icons picked here go along (a renamed or removed folder's row is dropped, not sent).
+        val icons = MemoSync.dueFolderIcons(db, due)
+        val args = MemoSync.pushArgs(
+            notes,
+            device(),
+            JSONArray(answers.mapNotNull { tryOrNull { JSONObject(it.payload) } }),
+            MemoSync.folderIconsJson(icons),
+        ) ?: return Pushed(true, 0)
+        log("올리기 요청 노트 ${notes.size}건 · 제안응답 ${answers.size}건 · 폴더아이콘 ${icons.size}건")
         val ack = callOrNull(MemoOp("sync_push", args.toArgs())) as? MemoResponse.SyncAck
         if (ack == null) {
             log("올리기 실패(답 없음)")
-            MemoSync.failUploads(db, notes + answers, now, "서버에 닿지 못함")
+            MemoSync.failUploads(db, notes + answers + icons, now, "서버에 닿지 못함")
             return Pushed(false, 0)
         }
         val result = MemoSync.applyAck(db, ack.content, notes, clock())
         applyProposalResults(ack.content.optJSONArray("제안결과"), answers)
+        MemoSync.applyFolderIconAck(db, icons)
         log("올리기 응답 받음 ${result.accepted} · 합침 ${result.merged} · 거절 ${result.rejected}")
         // 진단앱수신: a merged note whose server body is newer came back without it; fetched like a truncated note.
         result.wantedIds.take(MAX_GETS).forEach { id ->
@@ -482,6 +488,9 @@ internal class MemoSyncRunner(
 }
 
 private fun JSONObject.toArgs(): Map<String, Any?> = keys().asSequence().associateWith { opt(it) }
+
+/** The outbox kinds that go up with `sync_push` (앱15 A: the folder icons picked here too). */
+private val PUSHED_KINDS = setOf(MEMO_OUTBOX_NOTE, MEMO_OUTBOX_PROPOSAL, MEMO_OUTBOX_FOLDER_ICON)
 
 /**
  * A `get` answer (`머리말` + `본문` + `첨부`) as a `노트변경` (이벤트규약 v2 §5), so the same merge stores it. The header
