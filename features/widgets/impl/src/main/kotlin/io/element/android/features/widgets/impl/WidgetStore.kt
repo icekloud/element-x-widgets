@@ -150,6 +150,18 @@ class WidgetStore(context: Context) {
             .apply()
     }
 
+    /**
+     * Element June 앱16 A: whether the fixed places are the highest ones on screen (the default, also for a phone with
+     * only the older settings) or the lowest ones.
+     */
+    fun getBotPickerFixedSide(): BotPickerFixedSide =
+        if (prefs.getString("botpicker_fixed_side", null) == BOT_PICKER_SIDE_BOTTOM) BotPickerFixedSide.Bottom else BotPickerFixedSide.Top
+
+    fun saveBotPickerFixedSide(side: BotPickerFixedSide) {
+        val value = if (side == BotPickerFixedSide.Bottom) BOT_PICKER_SIDE_BOTTOM else BOT_PICKER_SIDE_TOP
+        prefs.edit().putString("botpicker_fixed_side", value).apply()
+    }
+
     /** Element June 앱15 B: when the badge of each room went up ([botBadgeMarks]), kept on the device only. */
     fun getBotBadgeMarks(sessionId: String): Map<String, BotBadgeMark> =
         botBadgeMarksFromJson(prefs.getString(badgeKey(sessionId), null))
@@ -232,6 +244,10 @@ data class PendingVoiceRecording(
 )
 
 const val DEFAULT_BOT_PICKER_RADIUS = 170f
+
+/** Element June 앱16 A: the stored values of the side of the fixed places. */
+private const val BOT_PICKER_SIDE_TOP = "top"
+private const val BOT_PICKER_SIDE_BOTTOM = "bottom"
 
 /** Element June: the commander room, where the voice shortcut sends its recordings by default. */
 const val DEFAULT_VOICE_SHORTCUT_ROOM_ID = "!prKGIRoFJdYIfmejlv:kloud123.i234.me:6881"

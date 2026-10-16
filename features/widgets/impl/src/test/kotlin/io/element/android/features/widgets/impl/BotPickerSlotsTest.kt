@@ -32,6 +32,17 @@ class BotPickerSlotsTest : RobolectricTest() {
 
     private fun names(rooms: List<WidgetRoom>) = rooms.map { it.name }
 
+    /**
+     * 앱16 A: these 앱15 tests took the first of the list as the top of the screen without saying so. They now say it
+     * (the screen order is the list order, fixed at the top); the picker itself passes the drawn order (BotPickerArcTest).
+     */
+    private fun slotsInListOrder(
+        ordered: List<WidgetRoom>,
+        candidates: Collection<WidgetRoom>,
+        counts: BotPickerSlotCounts,
+        marks: Map<String, BotBadgeMark>,
+    ) = botPickerSlots(ordered, candidates, counts, marks, BotPickerFixedSide.Top) { k -> List(k) { it } }
+
     private fun mark(r: WidgetRoom, since: Long) = r.roomId to BotBadgeMark(r.unread, since)
 
     private val commander = room("커맨더", timestamp = now - 1_000)
@@ -47,9 +58,9 @@ class BotPickerSlotsTest : RobolectricTest() {
     @Test
     fun `with no flexible places the picker is the order as it was`() {
         val loud = shopping.copy(unread = 3)
-        val result = botPickerSlots(ordered, all - shopping + loud, BotPickerSlotCounts(fixed = 3, flexible = 0), emptyMap())
+        val result = slotsInListOrder(ordered, all - shopping + loud, BotPickerSlotCounts(fixed = 3, flexible = 0), emptyMap())
         assertEquals(ordered, result)
-        assertEquals(ordered, botPickerSlots(ordered, all, BotPickerSlotCounts(fixed = 0, flexible = 0), emptyMap()))
+        assertEquals(ordered, slotsInListOrder(ordered, all, BotPickerSlotCounts(fixed = 0, flexible = 0), emptyMap()))
     }
 
     @Test
@@ -61,7 +72,7 @@ class BotPickerSlotsTest : RobolectricTest() {
         val order = listOf(loudCommander, plan, memo, research, briefing)
         val candidates = listOf(loudCommander, plan, memo, research, briefing, loudShopping, loudCoder)
         val marks = mapOf(mark(loudCoder, now - 100), mark(loudShopping, now - 500), mark(loudCommander, now - 10))
-        val result = botPickerSlots(order, candidates, BotPickerSlotCounts(fixed = 3, flexible = 2), marks)
+        val result = slotsInListOrder(order, candidates, BotPickerSlotCounts(fixed = 3, flexible = 2), marks)
         assertEquals(listOf("커맨더", "플랜", "메모", "코딩", "쇼핑"), names(result))
     }
 
@@ -69,14 +80,14 @@ class BotPickerSlotsTest : RobolectricTest() {
     fun `when fewer rooms have a badge the rest go by their latest message`() {
         val loudCoder = coder.copy(unread = 1)
         val marks = mapOf(mark(loudCoder, now - 100))
-        val result = botPickerSlots(ordered, all - coder + loudCoder, BotPickerSlotCounts(fixed = 3, flexible = 2), marks)
+        val result = slotsInListOrder(ordered, all - coder + loudCoder, BotPickerSlotCounts(fixed = 3, flexible = 2), marks)
         // 코딩 (badge), then the newest message out of 리서치·브리핑·쇼핑
         assertEquals(listOf("커맨더", "플랜", "메모", "코딩", "리서치"), names(result))
     }
 
     @Test
     fun `a room read to 0 goes back to the message order`() {
-        val result = botPickerSlots(ordered, all, BotPickerSlotCounts(fixed = 3, flexible = 2), mapOf(mark(coder, now - 100)))
+        val result = slotsInListOrder(ordered, all, BotPickerSlotCounts(fixed = 3, flexible = 2), mapOf(mark(coder, now - 100)))
         assertEquals(listOf("커맨더", "플랜", "메모", "리서치", "브리핑"), names(result))
     }
 
@@ -86,28 +97,28 @@ class BotPickerSlotsTest : RobolectricTest() {
         val b = room("나", timestamp = null)
         val c = room("다", timestamp = now)
         val d = room("라", timestamp = now)
-        val result = botPickerSlots(emptyList(), listOf(b, d, a, c), BotPickerSlotCounts(fixed = 0, flexible = 4), emptyMap())
+        val result = slotsInListOrder(emptyList(), listOf(b, d, a, c), BotPickerSlotCounts(fixed = 0, flexible = 4), emptyMap())
         assertEquals(listOf("다", "라", "가", "나"), names(result))
         val loudA = a.copy(unread = 1)
         val loudB = b.copy(unread = 1)
-        val badged = botPickerSlots(emptyList(), listOf(loudB, loudA, c), BotPickerSlotCounts(fixed = 0, flexible = 2), emptyMap())
+        val badged = slotsInListOrder(emptyList(), listOf(loudB, loudA, c), BotPickerSlotCounts(fixed = 0, flexible = 2), emptyMap())
         assertEquals(listOf("가", "나"), names(badged))
     }
 
     @Test
     fun `more fixed places than the order has, and no fixed places at all`() {
         val loud = shopping.copy(unread = 1)
-        val big = botPickerSlots(ordered, all - shopping + loud, BotPickerSlotCounts(fixed = 8, flexible = 2), emptyMap())
+        val big = slotsInListOrder(ordered, all - shopping + loud, BotPickerSlotCounts(fixed = 8, flexible = 2), emptyMap())
         assertEquals(names(ordered) + "쇼핑" + "코딩", names(big))
-        val none = botPickerSlots(ordered, all - shopping + loud, BotPickerSlotCounts(fixed = 0, flexible = 2), emptyMap())
+        val none = slotsInListOrder(ordered, all - shopping + loud, BotPickerSlotCounts(fixed = 0, flexible = 2), emptyMap())
         assertEquals(listOf("쇼핑", "커맨더"), names(none))
     }
 
     @Test
     fun `not enough rooms leaves no empty place, the order behind the fixed ones may come back below`() {
-        val result = botPickerSlots(ordered, emptyList(), BotPickerSlotCounts(fixed = 3, flexible = 5), emptyMap())
+        val result = slotsInListOrder(ordered, emptyList(), BotPickerSlotCounts(fixed = 3, flexible = 5), emptyMap())
         assertEquals(listOf("커맨더", "플랜", "메모", "리서치", "브리핑"), names(result))
-        assertEquals(emptyList<WidgetRoom>(), botPickerSlots(emptyList(), emptyList(), BotPickerSlotCounts(3, 2), emptyMap()))
+        assertEquals(emptyList<WidgetRoom>(), slotsInListOrder(emptyList(), emptyList(), BotPickerSlotCounts(3, 2), emptyMap()))
     }
 
     @Test
@@ -139,9 +150,9 @@ class BotPickerSlotsTest : RobolectricTest() {
         val newBadge = coder.copy(unread = 1, timestamp = now - 20)
         val marks = mapOf(mark(oldBadge, now - 900), mark(newBadge, now - 30))
         val order = listOf(commander)
-        val result = botPickerSlots(order, listOf(commander, oldBadge, newBadge), BotPickerSlotCounts(1, 2), marks)
+        val result = slotsInListOrder(order, listOf(commander, oldBadge, newBadge), BotPickerSlotCounts(1, 2), marks)
         assertEquals(listOf("커맨더", "코딩", "쇼핑"), names(result))
-        val unmarked = botPickerSlots(order, listOf(commander, oldBadge, newBadge), BotPickerSlotCounts(1, 2), emptyMap())
+        val unmarked = slotsInListOrder(order, listOf(commander, oldBadge, newBadge), BotPickerSlotCounts(1, 2), emptyMap())
         assertEquals(listOf("커맨더", "쇼핑", "코딩"), names(unmarked))
     }
 

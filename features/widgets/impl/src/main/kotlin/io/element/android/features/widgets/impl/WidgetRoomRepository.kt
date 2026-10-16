@@ -85,13 +85,15 @@ class WidgetRoomRepository(
     /**
      * Element June: rooms of the bot picker. [cacheOnly] reads the local cache only (fast, for the first frame).
      */
-    suspend fun botPickerRooms(sessionId: String, cacheOnly: Boolean): List<WidgetRoom> {
+    suspend fun botPickerPlan(sessionId: String, cacheOnly: Boolean): BotPickerPlan {
         val all = (if (cacheOnly) null else fetchRooms(sessionId)) ?: store.getCachedRooms(sessionId).values.toList()
-        // 앱15 B: the first rooms of the order stay, the places below follow the badges ([botPickerSlots]).
-        return botPickerSlots(
+        // 앱15 B: some rooms of the order stay, the other places follow the badges ([botPickerSlots]).
+        // 앱16 A: which places stay is told by the screen (the picker knows where each node is drawn).
+        return BotPickerPlan(
             ordered = botPickerOrder(sessionId, all),
             candidates = botRooms(all),
             counts = store.getBotPickerSlotCounts(),
+            side = store.getBotPickerFixedSide(),
             marks = store.getBotBadgeMarks(sessionId),
         )
     }
