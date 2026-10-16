@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.sp
 import io.element.android.features.widgets.impl.WidgetBindings
 import io.element.android.features.widgets.impl.WidgetIntents
 import io.element.android.features.widgets.impl.WidgetRoom
+import io.element.android.features.widgets.impl.botPickerRefresh
 import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.june.JuneSettings
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +106,8 @@ class BotPickerActivity : ComponentActivity() {
             var sessionId by remember { mutableStateOf<String?>(null) }
             var rooms by remember { mutableStateOf<List<WidgetRoom>>(emptyList()) }
             var loaded by remember { mutableStateOf(false) }
+            // 앱15 B: once the user touched the screen the places stay (the room under the finger never changes).
+            var touched by remember { mutableStateOf(false) }
             val avatars = remember { mutableStateMapOf<String, Bitmap>() }
             LaunchedEffect(Unit) {
                 val sid = repository.defaultSessionId()
@@ -116,7 +119,7 @@ class BotPickerActivity : ComponentActivity() {
                 rooms = withContext(Dispatchers.IO) { repository.botPickerRooms(sid, cacheOnly = true) }
                 rooms.forEach { room -> withContext(Dispatchers.IO) { repository.cachedAvatar(room.avatarUrl) }?.let { avatars[room.roomId] = it } }
                 val fresh = withContext(Dispatchers.IO) { runCatching { repository.botPickerRooms(sid, cacheOnly = false) }.getOrNull() }
-                if (fresh != null) rooms = fresh
+                if (fresh != null) rooms = botPickerRefresh(rooms, fresh, touched)
                 loaded = true
                 rooms.filter { it.roomId !in avatars }.forEach { room ->
                     withContext(Dispatchers.IO) { runCatching { repository.loadAvatar(sid, room.avatarUrl) }.getOrNull() }
@@ -138,6 +141,7 @@ class BotPickerActivity : ComponentActivity() {
                     finish()
                 },
                 onDismiss = ::finish,
+                onTouch = { touched = true },
             )
         }
     }
@@ -253,6 +257,7 @@ private fun BotPickerScreen(
     badgeColor: Color,
     onPick: (WidgetRoom) -> Unit,
     onDismiss: () -> Unit,
+    onTouch: () -> Unit,
 ) {
     val progress = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
@@ -268,6 +273,7 @@ private fun BotPickerScreen(
     var moving by remember { mutableStateOf(false) }
     val pick by rememberUpdatedState(onPick)
     val dismiss by rememberUpdatedState(onDismiss)
+    val touch by rememberUpdatedState(onTouch)
     LaunchedEffect(highlighted) {
         if (highlighted != null) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     }
@@ -304,6 +310,7 @@ private fun BotPickerScreen(
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown()
+                        touch()
                         val startLayout = currentLayout.value
                         var dragging = false
                         dragFrom = down.position

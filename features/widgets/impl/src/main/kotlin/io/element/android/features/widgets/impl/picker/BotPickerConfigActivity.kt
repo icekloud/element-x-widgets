@@ -31,6 +31,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -39,11 +41,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import io.element.android.features.widgets.impl.BotPickerSlotCounts
+import io.element.android.features.widgets.impl.DEFAULT_BOT_PICKER_FIXED
+import io.element.android.features.widgets.impl.DEFAULT_BOT_PICKER_FLEXIBLE
+import io.element.android.features.widgets.impl.MAX_BOT_PICKER_FIXED
+import io.element.android.features.widgets.impl.MAX_BOT_PICKER_FLEXIBLE
 import io.element.android.features.widgets.impl.WidgetBindings
 import io.element.android.features.widgets.impl.WidgetRoom
 import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.june.JuneSettings
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Element June: choose and order the rooms shown by the "봇 선택" icon. Stored on the device only.
@@ -54,6 +62,8 @@ class BotPickerConfigActivity : ComponentActivity() {
     private val loading = mutableStateOf(true)
     private val radius = mutableStateOf(io.element.android.features.widgets.impl.DEFAULT_BOT_PICKER_RADIUS)
     private val customCenter = mutableStateOf(false)
+    private val fixedCount = mutableIntStateOf(DEFAULT_BOT_PICKER_FIXED)
+    private val flexibleCount = mutableIntStateOf(DEFAULT_BOT_PICKER_FLEXIBLE)
     private var sessionId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,12 +72,16 @@ class BotPickerConfigActivity : ComponentActivity() {
         val repository = bindings<WidgetBindings>().widgetRoomRepository()
         radius.value = repository.store.getBotPickerRadius()
         customCenter.value = repository.store.getBotPickerCenter() != null
+        val counts = repository.store.getBotPickerSlotCounts()
+        fixedCount.intValue = counts.fixed
+        flexibleCount.intValue = counts.flexible
         lifecycleScope.launch {
             val sid = repository.defaultSessionId() ?: return@launch finish()
             sessionId = sid
             val rooms = runCatching { repository.loadAllRooms(sid) }.getOrDefault(emptyList())
             allRooms.addAll(rooms)
-            selected.addAll(runCatching { repository.botPickerRooms(sid, cacheOnly = true) }.getOrDefault(emptyList()))
+            // 앱15 B: the order list itself (the picker now rearranges the places below the fixed ones).
+            selected.addAll(repository.botPickerOrder(sid, rooms))
             loading.value = false
         }
         setContent {
@@ -112,6 +126,8 @@ class BotPickerConfigActivity : ComponentActivity() {
                             }
                         }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        SlotCountSettings(fixedLimit = minOf(selected.size, MAX_BOT_PICKER_FIXED))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text("펼쳐지는 거리: ${radius.value.toInt()}dp", fontWeight = FontWeight.Bold)
                         Slider(
                             value = radius.value,
@@ -134,6 +150,12 @@ class BotPickerConfigActivity : ComponentActivity() {
                             TextButton(onClick = { finish() }) { Text("취소") }
                             Button(onClick = {
                                 repository.store.saveBotPickerRadius(radius.value)
+                                repository.store.saveBotPickerSlotCounts(
+                                    BotPickerSlotCounts(
+                                        fixed = fixedCount.intValue.coerceAtMost(selected.size),
+                                        flexible = flexibleCount.intValue,
+                                    )
+                                )
                                 sessionId?.let { repository.store.saveBotPickerRoomIds(it, selected.map { room -> room.roomId }) }
                                 finish()
                             }) { Text("저장") }
@@ -141,6 +163,45 @@ class BotPickerConfigActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 앱15 B: how many rooms of the order stay at the top (at most [fixedLimit], the length of the order) and how many
+     * places below follow the badges. 0 below = the order as it is, like before.
+     */
+    @Composable
+    private fun SlotCountSettings(fixedLimit: Int) {
+        val fixedShown = fixedCount.intValue.coerceAtMost(fixedLimit)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text("위쪽 고정: ${fixedShown}개", fontWeight = FontWeight.Bold)
+            Text(
+                "펼쳐질 순서의 앞에서부터 이 개수만큼 늘 같은 자리에 둡니다.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (fixedLimit > 0) {
+                Slider(
+                    value = fixedShown.toFloat(),
+                    onValueChange = { fixedCount.intValue = it.roundToInt() },
+                    valueRange = 0f..fixedLimit.toFloat(),
+                    steps = (fixedLimit - 1).coerceAtLeast(0),
+                )
+            }
+            Text("아래쪽 유동: ${flexibleCount.intValue}개", fontWeight = FontWeight.Bold)
+            Text(
+                if (flexibleCount.intValue == 0) {
+                    "0개면 펼쳐질 순서를 그대로 펼칩니다."
+                } else {
+                    "고정한 봇을 뺀 1:1 봇 중 알림 배지가 가장 최근에 생긴 봇부터 채웁니다. 배지가 모자라면 최근 메시지 순입니다."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = flexibleCount.intValue.toFloat(),
+                onValueChange = { flexibleCount.intValue = it.roundToInt() },
+                valueRange = 0f..MAX_BOT_PICKER_FLEXIBLE.toFloat(),
+                steps = MAX_BOT_PICKER_FLEXIBLE - 1,
+            )
         }
     }
 
