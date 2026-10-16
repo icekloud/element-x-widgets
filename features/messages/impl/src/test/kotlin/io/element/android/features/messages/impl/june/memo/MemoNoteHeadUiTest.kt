@@ -80,7 +80,8 @@ class MemoNoteHeadUiTest : RobolectricTest() {
     }
 
     @Test
-    fun `a pinned note loses its pin from the tray 📌 and gets it back with undo`() = runAndroidComposeUiTest<ComponentActivity> {
+    // The name has no emoji: Robolectric could not decode it ("Error decoding percent encoded characters").
+    fun `a pinned note loses its pin from the tray pin mark and gets it back with undo`() = runAndroidComposeUiTest<ComponentActivity> {
         val backend = backend()
         val id = runBlocking {
             backend.create("점심으로 돈까스 먹는 중").also { backend.call(MemoOp.pin(MemoTarget(it)), "p") }
