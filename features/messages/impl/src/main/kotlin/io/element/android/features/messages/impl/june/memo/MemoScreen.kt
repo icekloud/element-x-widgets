@@ -102,6 +102,9 @@ internal object MemoTags {
     const val RECORD = "memo_record"
     const val RECORD_ROW = "memo_record_row"
     const val FOLDER_ROOT = "memo_folder_root"
+    const val ICON_GRID = "memo_icon_grid"
+    const val ICON_CHOICE = "memo_icon_choice"
+    const val ICON_RESET = "memo_icon_reset"
     const val SEARCH = "memo_search"
     const val ERROR = "memo_error"
     const val NOTE_ATTACHMENT = "memo_note_attachment"
@@ -151,6 +154,9 @@ internal sealed interface MemoSheet {
     data class AskText(val title: String, val value: String, val onSubmit: (String) -> Unit) : MemoSheet
     data class Confirm(val text: String, val submit: String, val onSubmit: () -> Unit) : MemoSheet
     data class PickDate(val onPick: (String) -> Unit) : MemoSheet
+
+    /** 앱14 C: the icon grid of one folder ([MEMO_FOLDER_ICON_CHOICES]); a press applies it at once. */
+    data class PickIcon(val path: String, val current: String) : MemoSheet
 }
 
 /** Everything the memo tabs share: the store, the navigation, the sheets and the error banner. */
@@ -643,8 +649,10 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
         // 앱11 D: a text note's photos, small, under its text.
         item.photos?.let { MemoCardPhotos(controller, it, Modifier.padding(top = 4.dp), size = 56) }
         FlowRow(modifier = Modifier.padding(top = 4.dp)) {
+            // 앱14 A: the folder's own icon ([memoFolderIcon] through the folder list).
+            val index by controller.store.index.collectAsState()
             MemoChip(
-                (if (item.folder == MEMO_INBOX) "📥 " else "📁 ") + item.folder,
+                memoFolderLabel(index, item.folder),
                 accent = item.folder != MEMO_INBOX,
                 onClick = { controller.pickFolderThenMove(target) },
             )
@@ -756,6 +764,42 @@ private fun MemoSheetHost(controller: MemoController) {
             close()
             sheet.onPick(d)
         }, onDismiss = close)
+        is MemoSheet.PickIcon -> ModalBottomSheet(onDismissRequest = close, scrollable = true) {
+            MemoIconPicker(sheet.path, sheet.current) { icon ->
+                close()
+                controller.run(memoFolderIconOp(sheet.path, icon))
+            }
+        }
+    }
+}
+
+/** 앱14 C: the icon choices of a folder, then 기본으로 되돌리기 (empty icon). No free text field. */
+@Composable
+private fun MemoIconPicker(path: String, current: String, onPick: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text("'$path' 아이콘", style = ElementTheme.typography.fontHeadingSmMedium, modifier = Modifier.padding(16.dp))
+        FlowRow(Modifier.padding(horizontal = 12.dp).testTag(MemoTags.ICON_GRID)) {
+            MEMO_FOLDER_ICON_CHOICES.forEach { icon ->
+                val selected = icon == current
+                Text(
+                    icon,
+                    style = ElementTheme.typography.fontHeadingMdRegular,
+                    modifier = Modifier
+                        .padding(2.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) ElementTheme.colors.bgActionSecondaryPressed else ElementTheme.colors.bgCanvasDefault)
+                        .clickable { onPick(icon) }
+                        .padding(8.dp)
+                        .testTag(MemoTags.ICON_CHOICE),
+                )
+            }
+        }
+        Text(
+            "기본으로 되돌리기 (" + memoAutoFolderIcon(path) + ")",
+            color = ElementTheme.colors.textActionAccent,
+            modifier = Modifier.fillMaxWidth().clickable { onPick("") }.padding(16.dp).testTag(MemoTags.ICON_RESET),
+        )
+        Spacer(Modifier.height(24.dp))
     }
 }
 

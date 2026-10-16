@@ -314,6 +314,21 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         listOf(f.path, f.icon, f.source, f.order, f.deleted, rev.ms, rev.device, rev.seq, dirty),
     )
 
+    /**
+     * 앱14 C: the icons set on this phone that the server has not taken (rows changed here, `dirty`, with an icon of
+     * their own; 📁 was the old default of a folder made here, not a choice).
+     */
+    fun pickedFolderIcons(): Map<String, String> = query(
+        "SELECT path, icon FROM folder WHERE dirty = 1 AND deleted = 0 AND icon NOT IN ('', ?)",
+        listOf(MEMO_FOLDER_ICON_DEFAULT),
+    ) { c -> c.getString(0)!! to c.getString(1)!! }.toMap()
+
+    /** 앱14 C: the place of a folder from the server, leaving its icon, stamp and `dirty` as they are. */
+    fun moveFolderRow(f: MemoFolderRow) = exec(
+        "UPDATE folder SET source = ?, order_idx = ?, deleted = ? WHERE path = ?",
+        listOf(f.source, f.order, f.deleted, f.path),
+    )
+
     /** Note counts of every folder that has notes (trash = notes with 삭제 1) and the three newest titles. */
     fun folderCounts(): List<MemoFolderCount> {
         val counts = query(
@@ -499,20 +514,6 @@ private fun marks(n: Int) = List(n) { "?" }.joinToString(", ")
 private fun likeEscape(s: String) = s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 internal const val MEMO_PREVIEW_CHARS = 90
-
-/** The built-in folders (server `BUILTIN_FOLDERS` + archive and trash), created with the database. */
-internal val MEMO_BUILTIN_FOLDERS = listOf(
-    MEMO_INBOX to "📥",
-    "여행" to "✈️",
-    "쇼핑·구매" to "🛒",
-    "아이디어" to "💡",
-    "집·생활" to "🏠",
-    "일·공부" to "📚",
-    "사람" to "👤",
-    "링크보관" to "🔗",
-    MEMO_ARCHIVE to "📦",
-    MEMO_TRASH to "🗑",
-)
 
 private const val NOTE_COLS = "id, folder, title, body, kind, created_ms, rev_json, modified_ms, modified_device, modified_seq, deleted, pinned, " +
     "pin_suggested, pin_dismissed, link_json, header_json, origin_event, schedule_state, server_rev, dirty"

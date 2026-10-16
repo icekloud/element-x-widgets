@@ -190,15 +190,20 @@ internal object MemoSync {
         revs = revs.with(MemoBundle.Body, mine.revs.body),
     )
 
+    /**
+     * 앱14 A·C: the server's folder list. Its empty icons never wipe what the phone holds (the built-in icons put in
+     * with the database, an icon picked here); an icon picked here and not taken by the server yet stays with its stamp
+     * ([memoMergedFolderIcon]).
+     */
     private fun applyFolders(db: MemoDb, folders: JSONArray) {
+        val picked = db.pickedFolderIcons()
+        val stored = db.folders().associate { it.path to it.icon }
         for (i in 0 until folders.length()) {
             val f = folders.optJSONObject(i) ?: continue
             val path = f.optString("경로").takeIf { it.isNotEmpty() } ?: continue
-            db.putFolder(
-                MemoFolderRow(path, f.optString("아이콘"), f.optString("출처").ifEmpty { "서버" }, i, f.optInt("삭제") == 1),
-                MemoRev.ZERO,
-                dirty = false,
-            )
+            val icon = memoMergedFolderIcon(f.optString("아이콘"), picked[path], stored[path])
+            val row = MemoFolderRow(path, icon, f.optString("출처").ifEmpty { "서버" }, i, f.optInt("삭제") == 1)
+            if (picked[path] != null) db.moveFolderRow(row) else db.putFolder(row, MemoRev.ZERO, dirty = false)
         }
     }
 

@@ -10,10 +10,14 @@
 package io.element.android.features.messages.impl.june.memo
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -21,8 +25,10 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.v2.runAndroidComposeUiTest
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.element.android.compound.theme.ElementTheme
+import io.element.android.libraries.designsystem.theme.components.TextField
 import io.element.android.tests.testutils.robolectric.RobolectricTest
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.coroutines.EmptyCoroutineContext
@@ -64,17 +70,32 @@ class MemoEditScreenUiTest : RobolectricTest() {
             ElementTheme {
                 val scope = rememberCoroutineScope()
                 val controller = MemoController(store, scope, mutableStateOf(MemoLocation().openNote(id).startEditing()))
-                MemoNoteScreen(controller, id)
+                Box {
+                    MemoNoteScreen(controller, id)
+                    // 앱14 D: the 앱12 title field (design system TextField with its label), drawn over the editor only to
+                    // be measured; it takes no room from it.
+                    TextField(value = "제목", onValueChange = {}, label = "제목", singleLine = true, modifier = Modifier.fillMaxWidth().testTag(OLD_FIELD))
+                }
             }
         }
         waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.EDIT_BODY).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(onAllNodesWithTag(MemoTags.NOTE_HEAD).fetchSemanticsNodes().isEmpty())
         assertTrue(onAllNodesWithTag(MemoTags.NOTE_DATE, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
         val title = onNodeWithTag(MemoTags.EDIT_TITLE).fetchSemanticsNode().size.height
+        val tags = onNodeWithTag(MemoTags.EDIT_TAGS).fetchSemanticsNode().size.height
         val body = onNodeWithTag(MemoTags.EDIT_BODY).fetchSemanticsNode().size.height
-        val oldField = MEMO_OLD_FIELD_DP * density.density
-        assertTrue("title $title px, 앱12 field $oldField px", title < oldField * 0.6f)
+        val oldField = onNodeWithTag(OLD_FIELD).fetchSemanticsNode().size.height
+        // About half of the 앱12 field, measured on the same screen (no estimated constant).
+        assertTrue("title $title px, 앱12 field $oldField px", title in (oldField * 0.25f).toInt()..(oldField * 0.6f).toInt())
+        assertEquals("title and tags", title, tags)
+        // The set height: 37 dp at font scale 1.
+        val expected = memoEditFieldHeight(density.fontScale) * density.density
+        assertTrue("title $title px, expected $expected px", kotlin.math.abs(title - expected) <= 1f)
         assertTrue("title $title px, body $body px", body > title * 3)
         MemoEditHub.drop(id)
+    }
+
+    private companion object {
+        const val OLD_FIELD = "memo_test_old_field"
     }
 }

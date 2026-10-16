@@ -101,7 +101,10 @@ class MemoEditLayoutTest : RobolectricTest() {
         assertTrue(MEMO_DATE_TEXT_SP in 7..8)
         // Two date lines are about as high as the two title lines beside them would allow.
         assertTrue(2 * MEMO_DATE_LINE_SP <= 2 * 22)
-        assertTrue(memoEditFieldHeight() * 2 <= MEMO_OLD_FIELD_DP + 2)
+        // 앱14 D: a set height, 37 dp at font scale 1, growing with a bigger font (never below scale 1).
+        assertEquals(37, memoEditFieldHeight())
+        assertEquals(37, memoEditFieldHeight(0.85f))
+        assertEquals(54, memoEditFieldHeight(2f))
         assertTrue(MEMO_EDIT_FIELD_TEXT_SP < 16)
         assertEquals(2, MEMO_HEAD_TITLE_LINES)
     }
