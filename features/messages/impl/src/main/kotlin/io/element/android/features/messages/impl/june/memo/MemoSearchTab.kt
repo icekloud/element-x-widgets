@@ -16,6 +16,11 @@ import android.speech.RecognizerIntent
 import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,9 +33,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -56,6 +63,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
@@ -64,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,7 +84,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.element.android.compound.theme.ElementTheme
+import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.libraries.core.extensions.runCatchingExceptions
+import io.element.android.libraries.designsystem.theme.components.Icon
 import io.element.android.libraries.designsystem.theme.components.Text
 import io.element.android.libraries.designsystem.theme.components.TextField
 import io.noties.markwon.Markwon
@@ -428,45 +439,86 @@ internal fun MemoNoteScreen(
             nav.editing -> MemoNoteEditor(controller, n)
             // 앱12 C (관리자: "메모 화면에서 꾹 누르면 편집모드로"): a long press anywhere on the reading area starts the
             // editor. Over the body text itself the Android text selection takes the press first (결정기록 3).
-            else -> Column(
-                Modifier
-                    .fillMaxSize()
-                    .memoLongPressEdit(controller)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp)
-                    .testTag(MemoTags.NOTE_READ)
-            ) {
-                Text(
-                    memoFolderLabel(index, n.folder) + if (n.pinned) " · 📌" else "",
-                    style = ElementTheme.typography.fontBodySmRegular,
-                    color = ElementTheme.colors.textSecondary
-                )
-                MemoTagLine(n.tags.toImmutableList(), max = 20, modifier = Modifier.padding(vertical = 4.dp))
-                // 📅 proposal linked to this note (앱9: grouped and locked like the proposal area)
-                memoPanelGroups(index).filter { it.first.noteId == id }.forEach { g -> MemoProposalCard(controller, g) }
-                MemoMarkdown(n.body)
-                if (n.truncated) Text("(본문이 길어 일부만 받았습니다)", color = ElementTheme.colors.textSecondary)
-                if (n.attachments.isNotEmpty()) {
-                    FlowRow(Modifier.padding(vertical = 8.dp)) {
-                        n.attachments.forEachIndexed { i, a ->
-                            // 앱7 항목 2: the memo viewer, from the phone file or the server copy (no room timeline).
-                            val open = Modifier.memoOpenPhoto(controller, n.attachments, i)
-                            MemoThumbnail(
-                                a.mxc,
-                                a.fileJson,
-                                Modifier
-                                    .padding(end = 6.dp, bottom = 6.dp)
-                                    .size(96.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .then(open)
-                                    .testTag(MemoTags.NOTE_ATTACHMENT),
-                                a.localPath,
-                            )
-                        }
-                    }
+            // 앱15 G: the 편집 box floats at the bottom right over it, and the body ends above the box. This area already
+            // ends above the tab bar and the composer, and the whole screen shrinks with the keyboard (imePadding up the
+            // tree), so the box needs no inset padding of its own (결정기록 G).
+            else -> Box(Modifier.fillMaxSize()) {
+                MemoNoteReading(controller, n, index, id)
+                val edit = memoReadingLongPress(nav, controller.select.active)
+                if (edit != null) {
+                    MemoEditBox(
+                        onClick = { controller.go { edit } },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(MEMO_EDIT_BOX_MARGIN_DP.dp),
+                    )
                 }
             }
         }
+    }
+}
+
+/** The reading area of an open note (folder, tags, linked proposals, body, photos); it scrolls under the 편집 box. */
+@Composable
+private fun MemoNoteReading(
+    controller: MemoController,
+    n: MemoNote,
+    index: MemoIndex,
+    id: String,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .memoLongPressEdit(controller)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp)
+            .testTag(MemoTags.NOTE_READ)
+    ) {
+        // 앱15 H: the 📌 of a pinned note takes the pin off when pressed (with 되돌리기); no 📌 on the others.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                memoFolderLabel(index, n.folder),
+                style = ElementTheme.typography.fontBodySmRegular,
+                color = ElementTheme.colors.textSecondary
+            )
+            if (n.pinned) {
+                Text(
+                    " · 📌",
+                    style = ElementTheme.typography.fontBodySmRegular,
+                    color = ElementTheme.colors.textSecondary,
+                    modifier = Modifier
+                        .clickable { controller.unpinWithUndo(id) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .testTag(MemoA11Tags.PIN_OFF),
+                )
+            }
+        }
+        MemoTagLine(n.tags.toImmutableList(), max = 20, modifier = Modifier.padding(vertical = 4.dp))
+        // 📅 proposal linked to this note (앱9: grouped and locked like the proposal area)
+        memoPanelGroups(index).filter { it.first.noteId == id }.forEach { g -> MemoProposalCard(controller, g) }
+        MemoMarkdown(n.body)
+        if (n.truncated) Text("(본문이 길어 일부만 받았습니다)", color = ElementTheme.colors.textSecondary)
+        if (n.attachments.isNotEmpty()) {
+            FlowRow(Modifier.padding(vertical = 8.dp)) {
+                n.attachments.forEachIndexed { i, a ->
+                    // 앱7 항목 2: the memo viewer, from the phone file or the server copy (no room timeline).
+                    val open = Modifier.memoOpenPhoto(controller, n.attachments, i)
+                    MemoThumbnail(
+                        a.mxc,
+                        a.fileJson,
+                        Modifier
+                            .padding(end = 6.dp, bottom = 6.dp)
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .then(open)
+                            .testTag(MemoTags.NOTE_ATTACHMENT),
+                        a.localPath,
+                    )
+                }
+            }
+        }
+        // 앱15 G: room for the 편집 box, so the last line is never under it.
+        Spacer(Modifier.height(MEMO_EDIT_BOX_ROOM_DP.dp).testTag(MemoTags.NOTE_EDIT_ROOM))
     }
 }
 
@@ -494,19 +546,21 @@ private fun MemoNoteHead(controller: MemoController, note: MemoNote?) {
                 else -> Unit
             }
         }
+        // 앱15 E (관리자: "제목 폰트를 지금의 3/4정도로 줄이고 날짜영역 침범하지 않는 선까지 공간활용"): the title takes all the
+        // room up to the dates (the dates only their own width); 앱15 G: the 편집 button left the head for the box below.
         Text(
             "‹ $title",
-            style = ElementTheme.typography.fontBodyLgMedium,
+            style = memoNoteHeadTitleStyle(ElementTheme.typography.fontBodyLgMedium),
             maxLines = MEMO_HEAD_TITLE_LINES,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).clickable(onClick = goBack).testTag(MemoTags.NOTE_HEAD),
         )
         if (note != null) {
-            MemoDateLines(memoNoteDateLines(note).toImmutableList(), Modifier.padding(start = 6.dp).testTag(MemoTags.NOTE_DATE))
-            Text(
-                "편집",
-                color = ElementTheme.colors.textActionAccent,
-                modifier = Modifier.clickable { controller.go { it.startEditing() } }.padding(8.dp)
+            val sending by MemoSendingNotes.ids.collectAsState()
+            MemoDateArea(
+                lines = memoNoteDateLines(note).toImmutableList(),
+                mark = memoSyncMark(note.syncWaiting, note.id in sending),
+                modifier = Modifier.padding(start = 6.dp).testTag(MemoTags.NOTE_DATE),
             )
         }
     }
@@ -514,6 +568,114 @@ private fun MemoNoteHead(controller: MemoController, note: MemoNote?) {
 
 /** 앱13 A: a long title wraps onto this many lines (the two date lines beside it are about as high). */
 internal const val MEMO_HEAD_TITLE_LINES = 2
+
+/** 앱15 E: the title of the open note is this much of the 앱14 size (the record card keeps its own size, 추가요청 6). */
+internal const val MEMO_NOTE_HEAD_TITLE_SCALE = 0.75f
+
+/** 앱15 E: [base] (the 앱14 head style) at [MEMO_NOTE_HEAD_TITLE_SCALE], the line height with it. */
+internal fun memoNoteHeadTitleStyle(base: TextStyle): TextStyle = base.copy(
+    fontSize = base.fontSize * MEMO_NOTE_HEAD_TITLE_SCALE,
+    lineHeight = base.lineHeight * MEMO_NOTE_HEAD_TITLE_SCALE,
+)
+
+/**
+ * 앱15 F: the dates of a note with the small sync mark on their left (no text, only its content description). The
+ * open note and the record card both draw it. No mark when [mark] is null (not a note of the phone database).
+ */
+@Composable
+internal fun MemoDateArea(
+    lines: ImmutableList<String>,
+    mark: MemoSyncMark?,
+    modifier: Modifier = Modifier,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+        if (mark != null) MemoSyncMarkIcon(mark, Modifier.padding(end = 4.dp))
+        MemoDateLines(lines)
+    }
+}
+
+/**
+ * 앱15 F: 대기 = a clock, 동기화 중 = a turning spinner (it turns only while it is drawn, and a push takes a moment),
+ * 동기화됨 = a light check. The size of one date line.
+ */
+@Composable
+private fun MemoSyncMarkIcon(mark: MemoSyncMark, modifier: Modifier = Modifier) {
+    val size = Modifier.size(MEMO_SYNC_MARK_DP.dp)
+    val tagged = modifier.then(size).testTag(memoSyncMarkTag(mark))
+    when (mark) {
+        MemoSyncMark.Waiting -> Icon(
+            imageVector = CompoundIcons.Time(),
+            contentDescription = mark.description,
+            tint = ElementTheme.colors.iconSecondary,
+            modifier = tagged,
+        )
+        MemoSyncMark.Sending -> {
+            val turn = rememberInfiniteTransition(label = "memoSyncTurn")
+            val angle by turn.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(tween(durationMillis = MEMO_SYNC_TURN_MS, easing = LinearEasing)),
+                label = "memoSyncAngle",
+            )
+            Icon(
+                imageVector = CompoundIcons.Spinner(),
+                contentDescription = mark.description,
+                tint = ElementTheme.colors.iconAccentPrimary,
+                modifier = tagged.rotate(angle),
+            )
+        }
+        MemoSyncMark.Synced -> Icon(
+            imageVector = CompoundIcons.Check(),
+            contentDescription = mark.description,
+            tint = ElementTheme.colors.iconQuaternary,
+            modifier = tagged,
+        )
+    }
+}
+
+/** 앱15 F: the test tag of each mark (the screen shows no text for it). */
+internal fun memoSyncMarkTag(mark: MemoSyncMark): String = "${MemoTags.SYNC_MARK}_${mark.name}"
+
+/** 앱15 F: the mark is as high as one date line, a little more to be seen. */
+internal const val MEMO_SYNC_MARK_DP = 11
+private const val MEMO_SYNC_TURN_MS = 1_000
+
+/**
+ * 앱15 G (관리자: "우측상단 편집 아이콘 우측 하단에 고정시키고 박스형태의 버튼으로"): the 편집 box at the bottom right of the
+ * open note, over the reading area (it stays while the body scrolls). Rounded corners, the accent colour, 48 dp high.
+ */
+@Composable
+private fun MemoEditBox(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .heightIn(min = MEMO_EDIT_BOX_HEIGHT_DP.dp)
+            .clip(RoundedCornerShape(MEMO_EDIT_BOX_CORNER_DP.dp))
+            .background(ElementTheme.colors.bgActionPrimaryRest)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp)
+            .testTag(MemoTags.NOTE_EDIT),
+    ) {
+        Icon(
+            imageVector = CompoundIcons.Edit(),
+            contentDescription = null,
+            tint = ElementTheme.colors.iconOnSolidPrimary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            "편집",
+            color = ElementTheme.colors.textOnSolidPrimary,
+            style = ElementTheme.typography.fontBodyMdMedium,
+            modifier = Modifier.padding(start = 6.dp),
+        )
+    }
+}
+
+/** 앱15 G: the box is at least this high (a comfortable touch) and this far from the edges; the body ends above it. */
+internal const val MEMO_EDIT_BOX_HEIGHT_DP = 48
+internal const val MEMO_EDIT_BOX_MARGIN_DP = 16
+internal const val MEMO_EDIT_BOX_ROOM_DP = MEMO_EDIT_BOX_HEIGHT_DP + MEMO_EDIT_BOX_MARGIN_DP * 2
+private const val MEMO_EDIT_BOX_CORNER_DP = 12
 
 /**
  * 앱12 A / 앱13 A: `작성 …` and, when the user changed the note later, `수정 …` under it, right aligned, in the grey

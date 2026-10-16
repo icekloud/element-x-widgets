@@ -296,7 +296,14 @@ internal class MemoSyncRunner(
             MemoSync.folderIconsJson(icons),
         ) ?: return Pushed(true, 0)
         log("올리기 요청 노트 ${notes.size}건 · 제안응답 ${answers.size}건 · 폴더아이콘 ${icons.size}건")
-        val ack = callOrNull(MemoOp("sync_push", args.toArgs())) as? MemoResponse.SyncAck
+        // 앱15 F: the notes of this push show "동기화 중" from the request to the answer (or the failure).
+        val sending = notes.map { it.target }
+        MemoSendingNotes.start(sending)
+        val ack = try {
+            callOrNull(MemoOp("sync_push", args.toArgs())) as? MemoResponse.SyncAck
+        } finally {
+            MemoSendingNotes.end(sending)
+        }
         if (ack == null) {
             log("올리기 실패(답 없음)")
             MemoSync.failUploads(db, notes + answers + icons, now, "서버에 닿지 못함")
@@ -367,6 +374,8 @@ internal class MemoSyncRunner(
                 }
             }
             log("사진 올리기 ${sealed.cipher.size}바이트")
+            // 앱15 F: the note of this photo shows "동기화 중" while the photo goes up.
+            MemoSendingNotes.start(listOf(noteId))
             val mxc = try {
                 transport.upload(sealed.cipher)
             } catch (e: CancellationException) {
@@ -380,6 +389,8 @@ internal class MemoSyncRunner(
                 log("사진 올리기 실패 (${e.javaClass.simpleName})")
                 uploadFailed(a)
                 return false
+            } finally {
+                MemoSendingNotes.end(listOf(noteId))
             }
             log("사진 올림")
             val now = clock()

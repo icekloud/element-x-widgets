@@ -76,6 +76,7 @@ import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.io.File
@@ -110,6 +111,11 @@ internal object MemoTags {
     const val NOTE_ATTACHMENT = "memo_note_attachment"
     const val NOTE_HEAD = "memo_note_head"
     const val NOTE_NUMBER = "memo_note_number"
+
+    /** 앱15 F·G: the small sync mark beside the dates, the 편집 box of the open note and the room kept for it. */
+    const val SYNC_MARK = "memo_sync_mark"
+    const val NOTE_EDIT = "memo_note_edit"
+    const val NOTE_EDIT_ROOM = "memo_note_edit_room"
 
     /** 앱12 A·B·C: the date lines of the head, the reading area (long press) and the editor's body, 취소 and status. */
     const val NOTE_DATE = "memo_note_date"
@@ -260,7 +266,25 @@ internal class MemoController(
         if (select.ids.isEmpty()) return
         run(op) { endSelect() }
     }
+
+    /** 앱15 H: the banner with one undo action, shown a moment after a change made outside the editor. */
+    var undo by mutableStateOf<MemoUndo?>(null)
+
+    /**
+     * 앱15 H (관리자: "편집 화면 아니더라도 고정 해제 가능하게끔"): a press on 📌 takes the pin off at once (the same
+     * `unpin` op as the menus, 앱3) and offers 되돌리기 (`pin`) for a moment. Nothing in the selection mode.
+     */
+    fun unpinWithUndo(id: String) {
+        if (select.active) return
+        val target = MemoTarget(id)
+        run(MemoOp.unpin(target)) {
+            undo = MemoUndo("고정을 해제했습니다") { run(MemoOp.pin(target)) }
+        }
+    }
 }
+
+/** 앱15 H: the text of the undo banner and what 되돌리기 does. */
+internal class MemoUndo(val text: String, val onUndo: () -> Unit)
 
 /**
  * Element June memo bot screen (요구 B): the record, folders and search tabs, drawn instead of the timeline of the
@@ -320,6 +344,7 @@ internal fun MemoScreen(
     val index by store.index.collectAsState()
     Column(modifier = modifier.fillMaxSize()) {
         controller.error?.let { (reason, retry) -> MemoErrorBanner(reason, retry, onClose = { controller.error = null }) }
+        controller.undo?.let { MemoUndoBanner(controller, it) }
         if (!useFakeData) MemoAttachmentBanners(local, localVersion)
         // 추가요청 2: swipe sideways anywhere on a tab to go to the next / previous one (not over a note, a photo, or in
         // the selection mode). The tab keeps its state as with the tab buttons.
@@ -447,6 +472,36 @@ private fun MemoErrorBanner(reason: String, retry: (() -> Unit)?, onClose: () ->
             }.padding(8.dp), color = ElementTheme.colors.textActionAccent)
         }
         Text("✕", modifier = Modifier.clickable(onClick = onClose).padding(8.dp), color = ElementTheme.colors.textSecondary)
+    }
+}
+
+/** 앱15 H: "고정을 해제했습니다 · 되돌리기" for [MEMO_UNDO_SHOW_MS], then it goes by itself (a new one starts again). */
+@Composable
+private fun MemoUndoBanner(controller: MemoController, undo: MemoUndo) {
+    LaunchedEffect(undo) {
+        delay(MEMO_UNDO_SHOW_MS)
+        if (controller.undo === undo) controller.undo = null
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(MemoA11Tags.UNDO)
+            .background(ElementTheme.colors.bgSubtleSecondary)
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(undo.text, modifier = Modifier.weight(1f), style = ElementTheme.typography.fontBodySmRegular)
+        Text(
+            "되돌리기",
+            modifier = Modifier
+                .clickable {
+                    controller.undo = null
+                    undo.onUndo()
+                }
+                .padding(8.dp),
+            color = ElementTheme.colors.textActionAccent,
+            style = ElementTheme.typography.fontBodySmMedium,
+        )
     }
 }
 
@@ -609,6 +664,8 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
         val text = memoCardText(item)
         // 앱10 C: `#번호  제목`, no author ("나"). 앱13 A (관리자: "작성, 수정일자 표시방식이 이 화면에서는 반영안됨. 절반정도로
         // 폰트크기 줄이고 두줄로 나누고 우측정렬"): the dates right aligned on two small lines, the same ones as the open note.
+        // 앱15 E·F (추가요청 6: the card keeps its title size): the title takes the room up to the dates, the small sync
+        // mark sits left of the dates.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 memoRecordTitle(item, text),
@@ -618,7 +675,12 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).testTag(MemoTags.RECORD_HEAD),
             )
-            MemoDateLines(memoItemDateLines(item).toImmutableList(), Modifier.padding(start = 6.dp).testTag(MemoTags.RECORD_DATE))
+            val sending by MemoSendingNotes.ids.collectAsState()
+            MemoDateArea(
+                lines = memoItemDateLines(item).toImmutableList(),
+                mark = memoSyncMark(item.syncWaiting, item.id in sending),
+                modifier = Modifier.padding(start = 6.dp).testTag(MemoTags.RECORD_DATE),
+            )
         }
         val uploadMark = memoPhotoUploadMark(item)
         if (uploadMark.isNotEmpty()) {
@@ -657,7 +719,14 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
                 onClick = { controller.pickFolderThenMove(target) },
             )
             item.tags.forEach { tag -> MemoChip("#$tag", onClick = { controller.editTagsOf(target, item.tags) }) }
-            if (item.pinned) MemoChip("📌")
+            // 앱15 H: a press on 📌 takes the pin off (with 되돌리기).
+            if (item.pinned) {
+                MemoChip(
+                    "📌",
+                    modifier = Modifier.testTag(MemoA11Tags.PIN_OFF),
+                    onClick = { controller.unpinWithUndo(item.id) },
+                )
+            }
         }
     }
 }
