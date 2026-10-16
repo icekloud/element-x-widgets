@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -188,7 +190,9 @@ internal fun MemoSearchTab(controller: MemoController) {
         // Filter chips: kinds 4 · folder ▾ · period ▾ · 📅 · 📌
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
             MEMO_KINDS.forEach { k -> MemoChip(memoKindIcon(k) + " " + k, selected = k in ui.query.kinds, onClick = { run(ui.query.toggleKind(k)) }) }
-            MemoChip("📁 " + (ui.query.folder ?: "폴더") + " ▾", selected = ui.query.folder != null, onClick = {
+            val folderIndex by controller.store.index.collectAsState()
+            val folderChip = ui.query.folder?.let { memoFolderLabel(folderIndex, it) } ?: "$MEMO_FOLDER_ICON_DEFAULT 폴더"
+            MemoChip("$folderChip ▾", selected = ui.query.folder != null, onClick = {
                 if (ui.query.folder != null) {
                     run(ui.query.copy(folder = null))
                 } else {
@@ -310,7 +314,12 @@ private fun MemoResultRow(controller: MemoController, item: MemoItem, onOpen: ()
         // 앱11 D: the note's photos, small (search results come from the same local list).
         (item.photos ?: item.preview as? MemoPreview.Photo)?.let { MemoCardPhotos(controller, it, Modifier.padding(vertical = 2.dp), size = 36) }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("📁 ${item.folder} · ${item.shortDate}  ", style = ElementTheme.typography.fontBodyXsRegular, color = ElementTheme.colors.textSecondary)
+            val index by controller.store.index.collectAsState()
+            Text(
+                "${memoFolderLabel(index, item.folder)} · ${item.shortDate}  ",
+                style = ElementTheme.typography.fontBodyXsRegular,
+                color = ElementTheme.colors.textSecondary,
+            )
             MemoTagLine(item.tags.toImmutableList(), max = 4, onTag = onTag)
         }
     }
@@ -428,7 +437,7 @@ internal fun MemoNoteScreen(
                     .testTag(MemoTags.NOTE_READ)
             ) {
                 Text(
-                    "📁 ${n.folder}" + if (n.pinned) " · 📌" else "",
+                    memoFolderLabel(index, n.folder) + if (n.pinned) " · 📌" else "",
                     style = ElementTheme.typography.fontBodySmRegular,
                     color = ElementTheme.colors.textSecondary
                 )
@@ -680,13 +689,20 @@ private fun MemoEditField(field: TextFieldState, hint: String, modifier: Modifie
         lineLimits = if (singleLine) TextFieldLineLimits.SingleLine else TextFieldLineLimits.MultiLine(),
         cursorBrush = SolidColor(ElementTheme.colors.textPrimary),
         decorator = { inner ->
+            // 앱14 D: a one line field has a set height ([memoEditFieldHeight]) with its line in the middle.
+            val fontScale = LocalDensity.current.fontScale
+            val size = if (singleLine) {
+                Modifier.fillMaxWidth().height(memoEditFieldHeight(fontScale).dp).padding(horizontal = 8.dp)
+            } else {
+                Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = MEMO_EDIT_FIELD_PAD_DP.dp)
+            }
             Box(
                 Modifier
-                    .then(if (singleLine) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
                     .border(1.dp, ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 8.dp, vertical = MEMO_EDIT_FIELD_PAD_DP.dp),
+                    .then(size),
+                contentAlignment = if (singleLine) Alignment.CenterStart else Alignment.TopStart,
             ) {
-                if (field.text.isEmpty()) Text(hint, style = style, color = ElementTheme.colors.textSecondary, maxLines = 1)
+                if (field.text.isEmpty()) Text(hint, style = style, color = ElementTheme.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 inner()
             }
         },

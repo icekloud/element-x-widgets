@@ -237,7 +237,8 @@ class MemoSelectTest : RobolectricTest() {
         store.refreshIndex()
         val f = store.index.value.folders.associateBy { it.path }
         assertEquals("📥", f.getValue(MEMO_INBOX).icon)
-        assertEquals("📁", f.getValue("쇼핑").icon)
+        // 앱14 B: no icon stored → the name rules (쇼핑 → 🛒).
+        assertEquals("🛒", f.getValue("쇼핑").icon)
         assertEquals("🧑", f.getValue("사람").icon)
         // The database keeps what the server sent (no schema or value change).
         assertEquals("", db.folders().first { it.path == "쇼핑" }.icon)

@@ -90,6 +90,8 @@ private fun MemoFolderRoot(controller: MemoController) {
                     dimmed = cell.dimmed,
                     highlighted = cell.folder.path == MEMO_INBOX && cell.folder.unfiledCount > 0,
                     onClick = { controller.go { it.openFolder(cell.folder.path) } },
+                    // 앱14 C: a long press on a folder card picks its icon.
+                    onLongClick = { controller.sheet = MemoSheet.PickIcon(cell.folder.path, cell.folder.icon) },
                 )
                 MemoGridCell.NewFolder -> MemoFolderCell(
                     icon = "＋",
@@ -114,6 +116,7 @@ private fun MemoFolderCell(
     dimmed: Boolean,
     highlighted: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -121,7 +124,7 @@ private fun MemoFolderCell(
             .alpha(if (dimmed) 0.5f else 1f)
             .clip(RoundedCornerShape(8.dp))
             .border(1.dp, if (highlighted) ElementTheme.colors.textActionAccent else ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -261,6 +264,8 @@ private fun MemoFolderView(controller: MemoController, path: String) {
                             "하위 폴더 만들기" to { controller.sheet = MemoSheet.AskText("하위 폴더 이름", "") { n -> controller.run(MemoOp.mkdir("$path/$n", null)) } },
                             "이름 바꾸기" to
                                 { controller.sheet = MemoSheet.AskText("새 이름", folder?.name.orEmpty()) { n -> controller.run(MemoOp.renameDir(path, n)) } },
+                            // 앱14 C
+                            "아이콘 바꾸기" to { controller.sheet = MemoSheet.PickIcon(path, memoFolderIconIn(index, path)) },
                             "폴더 지우기 (비어 있을 때)" to {
                                 controller.sheet = MemoSheet.Confirm("'$path' 폴더를 지울까요? 비어 있어야 지워집니다.", "지우기") {
                                     controller.run(MemoOp.rmdir(path)) { controller.go { s -> (s.back() as? MemoBack.To)?.state ?: s } }

@@ -255,7 +255,7 @@ internal fun parseMemoFolder(o: JSONObject): MemoFolder? {
     val count = o.optInt("개수")
     return MemoFolder(
         path = path,
-        icon = o.optString("아이콘").ifEmpty { defaultMemoFolderIcon(path) },
+        icon = memoFolderIcon(path, o.optString("아이콘")),
         count = count,
         unfiledCount = o.optInt("폴더없음수"),
         pinnedCount = o.optInt("고정수"),
@@ -263,13 +263,6 @@ internal fun parseMemoFolder(o: JSONObject): MemoFolder? {
         total = if (o.has("전체")) o.optInt("전체") else count,
         source = o.optString("출처").ifEmpty { "기본" },
     )
-}
-
-internal fun defaultMemoFolderIcon(path: String): String = when (path) {
-    MEMO_INBOX -> "📥"
-    MEMO_ARCHIVE -> "📦"
-    MEMO_TRASH -> "🗑"
-    else -> "📁"
 }
 
 internal fun parseMemoProposal(o: JSONObject): MemoProposal? {

@@ -235,7 +235,8 @@ internal object MemoEditingRooms {
 /**
  * 앱13 A·B sizes, in sp / dp, kept here so the tests see them. The dates are about half of what 앱12 drew (14 sp) but
  * not below [MEMO_DATE_TEXT_SP] (결정기록 A). The title and tag fields are one line of [MEMO_EDIT_FIELD_TEXT_SP] with
- * [MEMO_EDIT_FIELD_PAD_DP] inside, about half of the design system field (label + 16 dp padding, [MEMO_OLD_FIELD_DP]).
+ * [MEMO_EDIT_FIELD_PAD_DP] inside, about half of the design system field (label + 16 dp padding); 앱14 D measures that
+ * field next to it in MemoEditScreenUiTest.
  */
 internal const val MEMO_DATE_TEXT_SP = 8
 internal const val MEMO_DATE_LINE_SP = 10
@@ -243,8 +244,11 @@ internal const val MEMO_EDIT_FIELD_TEXT_SP = 13
 internal const val MEMO_EDIT_FIELD_LINE_SP = 17
 internal const val MEMO_EDIT_FIELD_PAD_DP = 10
 
-/** The 앱12 field: label line 20 + gap 8 + padding 16 × 2 + one 22 line (fontBodyLgRegular). */
-internal const val MEMO_OLD_FIELD_DP = 82
-
-/** The height of one compact field with the font scale at 1 (the border is drawn inside, it takes no room). */
-internal fun memoEditFieldHeight(lineSp: Int = MEMO_EDIT_FIELD_LINE_SP, padDp: Int = MEMO_EDIT_FIELD_PAD_DP): Int = lineSp + 2 * padDp
+/**
+ * 앱14 D: the fixed height of one compact field, in dp: one [MEMO_EDIT_FIELD_LINE_SP] line grown with the phone's
+ * font scale, plus [MEMO_EDIT_FIELD_PAD_DP] above and below (37 dp at scale 1). 앱13 left the height to the text
+ * layout, which the tests measured at 55 dp (결정기록 D); a set height keeps it at about half of the 앱12 field and
+ * still grows with a bigger font, so the 13 sp text is never cut.
+ */
+internal fun memoEditFieldHeight(fontScale: Float = 1f): Int =
+    kotlin.math.ceil(MEMO_EDIT_FIELD_LINE_SP * fontScale.coerceAtLeast(1f)).toInt() + 2 * MEMO_EDIT_FIELD_PAD_DP

@@ -125,14 +125,15 @@ internal class MemoLocalBackend(
         val counts = db.folderCounts().associateBy { it.path }
         // Folders that only exist through their notes (a folder removed elsewhere, a note restored from the trash).
         val known = rows.map { it.path }.toSet()
-        val extra = counts.keys.filter { it !in known }.sorted().map { MemoFolderRow(it, defaultMemoFolderIcon(it), "사용자", Int.MAX_VALUE) }
+        val extra = counts.keys.filter { it !in known }.sorted().map { MemoFolderRow(it, "", "사용자", Int.MAX_VALUE) }
         val folders = (rows + extra).map { f ->
             val own = counts[f.path]
             val total = counts.values.filter { it.path == f.path || it.path.startsWith(f.path + "/") }.sumOf { it.count }
             MemoFolder(
                 path = f.path,
-                // 추가요청 1: the server sends an empty icon for every folder; the screens show the default one then.
-                icon = f.icon.ifBlank { defaultMemoFolderIcon(f.path) },
+                // 앱14 A·B: the stored icon (picked here or sent by the server), else the built-in table, the name
+                // rules, 📁. Every screen draws this value.
+                icon = memoFolderIcon(f.path, f.icon),
                 count = own?.count ?: 0,
                 unfiledCount = if (f.path == MEMO_INBOX) own?.count ?: 0 else 0,
                 pinnedCount = own?.pinned ?: 0,
@@ -214,7 +215,16 @@ internal class MemoLocalBackend(
                     val path = (a["path"] as String).trim('/')
                     if (path.isEmpty()) return@transactionWithResult err("폴더 이름이 없습니다")
                     if (db.folders().any { it.path == path && !it.deleted }) return@transactionWithResult err("이미 있는 폴더입니다")
-                    saveFolder(MemoFolderRow(path, a["icon"] as? String ?: defaultMemoFolderIcon(path), "사용자", nextOrder()), now)
+                    // 앱14 B: no icon given = none stored; the screens work it out from the name.
+                    saveFolder(MemoFolderRow(path, (a["icon"] as? String).orEmpty(), "사용자", nextOrder()), now)
+                    ok(null, path)
+                }
+                // 앱14 C: the icon picked for a folder (empty = back to the default). Only the phone database changes.
+                MEMO_OP_FOLDER_ICON -> {
+                    val path = (a["path"] as? String).orEmpty().trim('/')
+                    val icon = memoChosenFolderIcon(a["icon"]) ?: return@transactionWithResult err("고를 수 없는 아이콘입니다")
+                    val row = folderRowFor(path) ?: return@transactionWithResult err("폴더가 없습니다")
+                    saveFolder(row.copy(icon = icon), now)
                     ok(null, path)
                 }
                 "rename_dir" -> renameFolder(a["path"] as String, a["new"] as String, now)?.let { ok(null, it) } ?: err("폴더가 없습니다")
@@ -335,7 +345,7 @@ internal class MemoLocalBackend(
                 val tags = content.optJSONArray("태그")?.let { t -> (0 until t.length()).map { t.optString(it) }.filter { it.isNotEmpty() } }
                 val folder = content.optString("폴더").trim('/').takeIf { it.isNotEmpty() }
                 if (tags.isNullOrEmpty() && folder == null) return
-                folder?.let { if (!folderExists(it)) saveFolder(MemoFolderRow(it, defaultMemoFolderIcon(it), "사용자", nextOrder()), now) }
+                folder?.let { if (!folderExists(it)) saveFolder(MemoFolderRow(it, "", "사용자", nextOrder()), now) }
                 val rev = db.nextRev(device(), now)
                 save(n.copy(tags = tags?.distinct() ?: n.tags, folder = folder ?: n.folder, revs = n.revs.with(MemoBundle.Class, rev)), now)
             }
@@ -399,6 +409,14 @@ internal class MemoLocalBackend(
     private fun nextOrder(): Int = (db.folders().maxOfOrNull { it.order } ?: 0) + 1
 
     private fun folderExists(path: String) = db.folders().any { it.path == path && !it.deleted } || path == MEMO_INBOX || path == MEMO_ARCHIVE
+
+    /** 앱14 C: the stored row of [path], or a new one for a folder that only exists through its notes. */
+    private fun folderRowFor(path: String): MemoFolderRow? {
+        if (path.isEmpty()) return null
+        db.folders().firstOrNull { it.path == path && !it.deleted }?.let { return it }
+        val hasNotes = db.notesInFolder(path, withSubfolders = false).isNotEmpty()
+        return if (hasNotes || folderExists(path)) MemoFolderRow(path, "", "사용자", nextOrder()) else null
+    }
 
     private fun targetId(a: Map<String, Any?>): String? =
         (a["id"] as? String)?.takeIf { it.isNotEmpty() } ?: (a["이벤트"] as? String)?.let { db.noteIdByOrigin(it) }
