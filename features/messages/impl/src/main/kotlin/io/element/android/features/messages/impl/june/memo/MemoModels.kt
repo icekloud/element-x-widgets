@@ -178,6 +178,8 @@ internal data class MemoItem(
     /** 앱13 A: the creation and the user's last change (ISO, "" = none), for the two date lines of the record card. */
     val created: String = "",
     val userModified: String = "",
+    /** 앱15 F: true while a change or a photo of this phone note waits for the server; null when not known (no mark). */
+    val syncWaiting: Boolean? = null,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date
@@ -197,6 +199,8 @@ internal data class MemoNote(
     val body: String,
     val attachments: List<MemoAttachment>,
     val truncated: Boolean,
+    /** 앱15 F: as [MemoItem.syncWaiting], for the head of the open note. */
+    val syncWaiting: Boolean? = null,
 ) {
     val folder: String get() = header.optString("폴더")
     val tags: List<String> get() = header.optJSONArray("태그").strings()

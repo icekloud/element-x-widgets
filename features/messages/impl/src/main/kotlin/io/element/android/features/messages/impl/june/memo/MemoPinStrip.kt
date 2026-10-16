@@ -12,7 +12,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,9 +23,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -56,14 +56,17 @@ import kotlinx.collections.immutable.ImmutableList
  */
 
 /**
- * The pinned notes over a list (앱11 A·B): a header "📌 고정 N ▾" and, unfolded, one row that scrolls sideways (a
- * small photo for a photo-only note, a short line for the others). It stays above the list: only the list scrolls.
- * A tap opens the note (in the selection mode: selects it). Nothing is drawn without pinned notes.
+ * The pinned notes over a list (앱11 A·B): a header "📌 고정 N ▾" and, unfolded, the pinned notes. It stays above the
+ * list: only the list scrolls. A tap opens the note (in the selection mode: selects it). Nothing is drawn without
+ * pinned notes. 앱15 H (관리자: "고정 메모는 한줄에 하나씩 … 오른쪽 여백 공간 활용해서 메모 제목 … 고유번호는 나오지않게"):
+ * one note per line over the whole width (a small photo first for a photo-only note), no number, and a 📌 at the end
+ * that takes the pin off. Unfolded it is at most [MEMO_PIN_TRAY_MAX_PART] of the screen and scrolls inside.
  */
 @Composable
 internal fun MemoPinStrip(controller: MemoController, pinned: ImmutableList<MemoItem>, modifier: Modifier = Modifier) {
     if (pinned.isEmpty()) return
     var folded by rememberSaveable { mutableStateOf(false) }
+    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * MEMO_PIN_TRAY_MAX_PART
     Column(
         modifier
             .fillMaxWidth()
@@ -78,51 +81,67 @@ internal fun MemoPinStrip(controller: MemoController, pinned: ImmutableList<Memo
             style = ElementTheme.typography.fontBodySmMedium,
         )
         if (!folded) {
-            // One row at most (about 56 dp): the list below keeps the screen.
-            Row(
+            Column(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 64.dp)
-                    .horizontalScroll(rememberScrollState())
+                    .heightIn(max = maxHeight)
+                    .verticalScroll(rememberScrollState())
                     .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                pinned.forEach { item -> MemoPinCellView(controller, item) }
+                pinned.forEach { item -> MemoPinRowView(controller, item) }
             }
         }
     }
 }
 
 @Composable
-private fun MemoPinCellView(controller: MemoController, item: MemoItem) {
+private fun MemoPinRowView(controller: MemoController, item: MemoItem) {
     val selected = controller.select.isSelected(item.id)
     val shape = RoundedCornerShape(6.dp)
     val border = if (selected) ElementTheme.colors.textActionAccent else ElementTheme.colors.borderInteractiveSecondary
-    val base = Modifier
-        .clip(shape)
-        .border(if (selected) 2.dp else 1.dp, border, shape)
-        .clickable { controller.openOrSelect(item.id) }
-        .testTag(MemoA11Tags.PIN_CELL)
-    when (val cell = memoPinCell(item)) {
-        is MemoPinCell.Photo -> Box(base.size(48.dp)) {
-            MemoThumbnail(cell.photo.mxc, cell.photo.fileJson, Modifier.fillMaxSize(), cell.photo.localPath)
-            if (cell.count > 1) {
-                Text(
-                    "${cell.count}",
-                    modifier = Modifier.align(Alignment.BottomEnd).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 3.dp),
-                    color = Color.White,
-                    style = ElementTheme.typography.fontBodyXsRegular,
-                )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .border(if (selected) 2.dp else 1.dp, border, shape)
+            .background(ElementTheme.colors.bgCanvasDefault)
+            .clickable { controller.openOrSelect(item.id) }
+            .padding(start = 6.dp)
+            .testTag(MemoA11Tags.PIN_CELL),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val cell = memoPinCell(item)
+        if (cell is MemoPinCell.Photo) {
+            Box(Modifier.padding(vertical = 4.dp).size(32.dp).clip(RoundedCornerShape(4.dp))) {
+                MemoThumbnail(cell.photo.mxc, cell.photo.fileJson, Modifier.fillMaxSize(), cell.photo.localPath)
+                if (cell.count > 1) {
+                    Text(
+                        "${cell.count}",
+                        modifier = Modifier.align(Alignment.BottomEnd).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 2.dp),
+                        color = Color.White,
+                        style = ElementTheme.typography.fontBodyXsRegular,
+                    )
+                }
             }
         }
-        is MemoPinCell.Text -> Text(
-            cell.text,
-            modifier = base.widthIn(max = 160.dp).background(ElementTheme.colors.bgCanvasDefault).padding(horizontal = 8.dp, vertical = 6.dp),
+        Text(
+            memoPinRowText(item),
+            modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 8.dp),
             style = ElementTheme.typography.fontBodySmRegular,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (!controller.select.active) {
+            Text(
+                "📌",
+                modifier = Modifier
+                    .clickable { controller.unpinWithUndo(item.id) }
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .testTag(MemoA11Tags.PIN_OFF),
+                style = ElementTheme.typography.fontBodySmRegular,
+            )
+        }
     }
 }
 

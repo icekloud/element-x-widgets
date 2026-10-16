@@ -210,12 +210,26 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         val attachments = attachmentsOf(ids)
         val proposals = suggestionCounts(ids)
         val metas = memoNoteMetas(this, ids)
+        val waiting = waitingNoteIds(ids)
         return rows.map {
             // 앱13 D: the cards draw copies of one picture once, like the open note.
-            val photos = memoDistinctPhotos(attachments[it.id].orEmpty())
-            it.toItem(tags[it.id].orEmpty(), photos, metas[it.id] ?: MemoNoteMeta()).copy(proposals = proposals[it.id] ?: 0)
+            val all = attachments[it.id].orEmpty()
+            val photos = memoDistinctPhotos(all)
+            it.toItem(tags[it.id].orEmpty(), photos, metas[it.id] ?: MemoNoteMeta()).copy(
+                proposals = proposals[it.id] ?: 0,
+                // 앱15 F: the small sync mark beside the dates.
+                syncWaiting = memoNoteWaiting(it.id, waiting, all),
+            )
         }
     }
+
+    /** 앱15 F: those of [ids] with a change in the outbox (not taken by the server yet). */
+    fun waitingNoteIds(ids: List<String>): Set<String> = inChunks(ids) { chunk ->
+        query(
+            "SELECT target FROM outbox WHERE kind = ? AND target IN (${marks(chunk.size)})",
+            listOf<Any?>(MEMO_OUTBOX_NOTE) + chunk,
+        ) { c -> c.getString(0)!! }
+    }.toSet()
 
     private fun tagsOf(ids: List<String>): Map<String, List<String>> = inChunks(ids) { chunk ->
         query("SELECT note_id, tag FROM note_tag WHERE note_id IN (${marks(chunk.size)}) ORDER BY rowid", chunk) { c -> c.getString(0)!! to c.getString(1)!! }

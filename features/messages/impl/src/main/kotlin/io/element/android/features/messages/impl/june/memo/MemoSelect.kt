@@ -31,6 +31,24 @@ internal fun memoItemLine(item: MemoItem): String {
     return if (item.number > 0) "#${item.number}$MEMO_HEAD_GAP$date" else listOf(memoKindIcon(item.kind) + " " + item.kind, date).joinToString(MEMO_HEAD_GAP)
 }
 
+/**
+ * 앱15 H (관리자: "메모 고유번호(ex.#14)는 나오지않게"): the line of one pinned note in the tray, without its number:
+ * the title, else the first line of its text, else its kind and date. One line, the tray cuts it with "…".
+ */
+internal fun memoPinRowText(item: MemoItem): String {
+    val title = item.title.takeIf { it.isNotBlank() && it != item.id }
+    if (title != null) return title.lineSequence().first().trim()
+    val text = memoCardText(item)?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
+    if (text != null) return text
+    return listOf(memoKindIcon(item.kind) + " " + item.kind, item.shortDate).joinToString(MEMO_HEAD_GAP)
+}
+
+/** 앱15 H: the tray unfolded is at most this part of the screen height; more pinned notes scroll inside it. */
+internal const val MEMO_PIN_TRAY_MAX_PART = 0.4f
+
+/** 앱15 H: the undo banner after a pin is taken off outside the editor stays this long. */
+internal const val MEMO_UNDO_SHOW_MS = 5_000L
+
 /** True when the note has no text to show: only its photos (앱11 B: the strip shows a thumbnail for it). */
 internal fun memoPhotoOnly(item: MemoItem): Boolean {
     val noTitle = item.untitled || item.title.isBlank() || item.title == item.id
@@ -44,6 +62,10 @@ internal object MemoA11Tags {
     const val CARD_PHOTOS = "memo_card_photos"
     const val SELECT_BAR = "memo_select_bar"
     const val SELECT_MARK = "memo_select_mark"
+
+    /** 앱15 H: the 📌 that takes the pin off (open note, card, tray row) and the undo banner. */
+    const val PIN_OFF = "memo_pin_off"
+    const val UNDO = "memo_undo"
 }
 
 /** One cell of the pinned strip: a small photo (photo-only notes) or a short text. */

@@ -172,7 +172,9 @@ internal class MemoLocalBackend(
         n.scheduleState?.let { header.put("일정상태", it) }
         // 앱13 D: copies of one picture stored by the 앱12 editor are drawn once (the rows themselves stay).
         val files = memoDistinctPhotos(n.attachments).mapNotNull { it.toScreen() }
-        return MemoResponse.Note(rid, MemoNote(n.id, header, n.body, files, truncated = false))
+        // 앱15 F: the small sync mark of the head.
+        val waiting = memoNoteWaiting(n.id, db.waitingNoteIds(listOf(n.id)), n.attachments)
+        return MemoResponse.Note(rid, MemoNote(n.id, header, n.body, files, truncated = false, syncWaiting = waiting))
     }
 
     // ---------------------------------------------------------------- changes
