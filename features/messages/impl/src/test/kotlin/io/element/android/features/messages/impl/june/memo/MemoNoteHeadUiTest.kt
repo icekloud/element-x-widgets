@@ -140,6 +140,12 @@ class MemoNoteHeadUiTest : RobolectricTest() {
         return controller!!
     }
 
+    /** What the 📌 button of the open note says to the screen reader (null when there is no button). */
+    private fun AndroidComposeUiTest<ComponentActivity>.pinButtonSays(): List<String>? {
+        val node = onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().firstOrNull() ?: return null
+        return node.config.getOrNull(SemanticsProperties.ContentDescription)
+    }
+
     private fun pinnedNow(backend: MemoLocalBackend, id: String): Boolean =
         runBlocking { (backend.call(MemoOp.get(id), "g") as MemoResponse.Note).note.pinned }
 
@@ -159,10 +165,7 @@ class MemoNoteHeadUiTest : RobolectricTest() {
         waitUntil(timeoutMillis = 5_000) { pinnedNow(backend, id) }
         waitUntil(timeoutMillis = 5_000) { controller.undo != null }
         assertEquals("고정했습니다", controller.undo?.text)
-        waitUntil(timeoutMillis = 5_000) {
-            onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().firstOrNull()
-                ?.config?.getOrNull(SemanticsProperties.ContentDescription) == listOf("고정 해제")
-        }
+        waitUntil(timeoutMillis = 5_000) { pinButtonSays() == listOf("고정 해제") }
         controller.undo!!.onUndo()
         waitUntil(timeoutMillis = 5_000) { !pinnedNow(backend, id) }
     }
@@ -172,10 +175,7 @@ class MemoNoteHeadUiTest : RobolectricTest() {
         val backend = backend()
         val id = runBlocking { backend.create("고정된 메모").also { backend.call(MemoOp.pin(MemoTarget(it)), "p") } }
         val controller = open(backend, id)
-        waitUntil(timeoutMillis = 5_000) {
-            onAllNodesWithTag(MemoA11Tags.PIN_TOGGLE).fetchSemanticsNodes().firstOrNull()
-                ?.config?.getOrNull(SemanticsProperties.ContentDescription) == listOf("고정 해제")
-        }
+        waitUntil(timeoutMillis = 5_000) { pinButtonSays() == listOf("고정 해제") }
         onNodeWithTag(MemoA11Tags.PIN_TOGGLE).performClick()
         waitUntil(timeoutMillis = 5_000) { !pinnedNow(backend, id) }
         waitUntil(timeoutMillis = 5_000) { controller.undo != null }
