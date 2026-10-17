@@ -73,6 +73,18 @@ internal object MemoSyncHub {
 
     fun room(context: Context, sessionStore: SessionStore, roomId: String): MemoRoomBackend = entry(context, sessionStore, roomId).first
 
+    private val directives = mutableMapOf<String, MemoDirectives>()
+
+    /** 앱9 D: the instructions of the proposal area, one per room for the process (the sends go on across screens). */
+    @Synchronized
+    fun directives(context: Context, sessionStore: SessionStore, roomId: String): MemoDirectives = directives.getOrPut(roomId) {
+        MemoDirectives(
+            MemoDatabase.get(context),
+            MemoRoomSyncTransport(sessionStore, room(context, sessionStore, roomId)),
+            log = { Timber.i("June memo sync: %s", it) },
+        )
+    }
+
     /** Leaving the screen with attachments still to upload: one job, run when the network is there (not a periodic one). */
     fun scheduleUpload(scheduler: WorkManagerScheduler) {
         scope.launch {

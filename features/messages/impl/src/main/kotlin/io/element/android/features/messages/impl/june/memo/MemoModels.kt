@@ -85,7 +85,7 @@ internal data class MemoIndex(
 ) {
     fun folder(path: String): MemoFolder? = folders.firstOrNull { it.path == path }
 
-    /** Number of proposals still waiting for an answer (folder tab badge). */
+    /** Number of proposals still waiting for an answer. */
     val pendingProposals: Int get() = proposals.count { it.isWaiting }
 
     companion object {
@@ -129,7 +129,8 @@ internal fun memoCardText(item: MemoItem): String? {
  */
 /** 앱7 항목 1: the line a list shows for a note, the stored title or else the start of its body (not stored). */
 internal fun memoDisplayTitle(title: String, preview: String, id: String): String =
-    title.ifEmpty { preview.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().take(MEMO_TITLE_CHARS).ifEmpty { id } }
+    // 앱11 B: never the note id (it showed on the folder tab); the screens draw `#번호  날짜` instead ([memoItemLine]).
+    title.ifEmpty { preview.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().take(MEMO_TITLE_CHARS) }.takeIf { it != id }.orEmpty()
 
 /** Test tag of the photo upload mark of a record card (앱8). */
 internal const val MEMO_PHOTO_UPLOAD_MARK_TAG = "memo_photo_upload_mark"
@@ -170,6 +171,15 @@ internal data class MemoItem(
     /** 앱8 항목 1 d: attachments of a local note still waiting for their upload, and those that failed. */
     val photosWaiting: Int = 0,
     val photosFailed: Int = 0,
+    /** 앱10: the note number the server gave (`#N`), 0 before the first sync. [date] is the date shown. */
+    val number: Int = 0,
+    /** 앱11 D: the photos of a note with text, drawn under its text on the cards (null: none, or [preview] is them). */
+    val photos: MemoPreview.Photo? = null,
+    /** 앱13 A: the creation and the user's last change (ISO, "" = none), for the two date lines of the record card. */
+    val created: String = "",
+    val userModified: String = "",
+    /** 앱15 F: true while a change or a photo of this phone note waits for the server; null when not known (no mark). */
+    val syncWaiting: Boolean? = null,
 ) {
     /** "10-11" from "2026-10-11T14:30:12+09:00". */
     val shortDate: String get() = if (date.length >= 10) date.substring(5, 10) else date
@@ -189,11 +199,20 @@ internal data class MemoNote(
     val body: String,
     val attachments: List<MemoAttachment>,
     val truncated: Boolean,
+    /** 앱15 F: as [MemoItem.syncWaiting], for the head of the open note. */
+    val syncWaiting: Boolean? = null,
 ) {
     val folder: String get() = header.optString("폴더")
     val tags: List<String> get() = header.optJSONArray("태그").strings()
     val created: String get() = header.optString("생성")
     val pinned: Boolean get() = header.optBoolean("고정")
+
+    /** 앱16 B: the note is in the trash (the phone database marks it, a server copy is filed in the trash folder). */
+    val trashed: Boolean get() = header.optInt("삭제") == MEMO_DELETED_TRASH || folder == MEMO_TRASH
+
+    /** 앱10: the server number (0 = none yet) and the date shown (the user's last change, else the creation). */
+    val number: Int get() = header.optInt(MEMO_FIELD_NUMBER, 0)
+    val shownDate: String get() = memoShownDate(created, header.optString(MEMO_FIELD_USER_MODIFIED))
 }
 
 internal data class MemoTag(
@@ -214,7 +233,14 @@ internal sealed interface MemoResponse {
     data class Search(override val requestId: String, val page: MemoPage) : MemoResponse
     data class Note(override val requestId: String, val note: MemoNote) : MemoResponse
     data class Tags(override val requestId: String, val tags: kotlin.collections.List<MemoTag>) : MemoResponse
-    data class Ok(override val requestId: String, val op: String, val id: String?, val path: String?) : MemoResponse
+    /** [content] = the whole answer (앱9: `지시` / `지시조회` read `상태`, `메시지`, `결과[]` from it). */
+    data class Ok(
+        override val requestId: String,
+        val op: String,
+        val id: String?,
+        val path: String?,
+        val content: JSONObject = JSONObject(),
+    ) : MemoResponse
     data class Error(override val requestId: String, val op: String, val reason: String) : MemoResponse
 
     /** [v2] `app.june.memo.sync` / `app.june.memo.sync_ack`: the raw content, applied by [MemoSync]. */
@@ -236,7 +262,7 @@ internal fun parseMemoFolder(o: JSONObject): MemoFolder? {
     val count = o.optInt("개수")
     return MemoFolder(
         path = path,
-        icon = o.optString("아이콘").ifEmpty { defaultMemoFolderIcon(path) },
+        icon = memoFolderIcon(path, o.optString("아이콘")),
         count = count,
         unfiledCount = o.optInt("폴더없음수"),
         pinnedCount = o.optInt("고정수"),
@@ -244,13 +270,6 @@ internal fun parseMemoFolder(o: JSONObject): MemoFolder? {
         total = if (o.has("전체")) o.optInt("전체") else count,
         source = o.optString("출처").ifEmpty { "기본" },
     )
-}
-
-internal fun defaultMemoFolderIcon(path: String): String = when (path) {
-    MEMO_INBOX -> "📥"
-    MEMO_ARCHIVE -> "📦"
-    MEMO_TRASH -> "🗑"
-    else -> "📁"
 }
 
 internal fun parseMemoProposal(o: JSONObject): MemoProposal? {
@@ -383,7 +402,7 @@ internal fun parseMemoResponse(type: String, content: JSONObject): MemoResponse?
             }
             MemoResponse.Tags(rid, tags)
         }
-        MEMO_OK_TYPE -> MemoResponse.Ok(rid, content.optString("op"), content.optStringOrNull("id"), content.optStringOrNull("경로"))
+        MEMO_OK_TYPE -> MemoResponse.Ok(rid, content.optString("op"), content.optStringOrNull("id"), content.optStringOrNull("경로"), content)
         MEMO_ERROR_TYPE -> MemoResponse.Error(rid, content.optString("op"), content.optString("사유").ifEmpty { "알 수 없는 오류" })
         MEMO_SYNC_TYPE -> MemoResponse.Sync(rid, content)
         MEMO_SYNC_ACK_TYPE -> MemoResponse.SyncAck(rid, content)

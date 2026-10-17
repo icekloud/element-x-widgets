@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -44,6 +43,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,6 +64,7 @@ import dev.zacsweers.metro.ContributesTo
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.features.messages.impl.R
 import io.element.android.features.messages.impl.timeline.model.TimelineItem
+import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.theme.components.ModalBottomSheet
@@ -73,7 +74,9 @@ import io.element.android.libraries.matrix.api.media.MediaSource
 import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.io.File
@@ -84,6 +87,14 @@ internal object MemoTags {
     const val TAB_FOLDERS = "memo_tab_folders"
     const val TAB_SEARCH = "memo_tab_search"
     const val FOLDER_BADGE = "memo_folder_badge"
+    const val PANEL = "memo_panel"
+    const val PANEL_EMPTY = "memo_panel_empty"
+    const val PANEL_INPUT = "memo_panel_input"
+    const val PANEL_SEND = "memo_panel_send"
+    const val PANEL_DIRECTIVE = "memo_panel_directive"
+    const val PANEL_RESEND = "memo_panel_resend"
+    const val PANEL_BADGE = "memo_panel_badge"
+    const val PROPOSAL_SENDING = "memo_proposal_sending"
     const val BAND = "memo_band"
     const val TILE = "memo_tile"
     const val TILE_PREVIEW = "memo_tile_preview"
@@ -92,9 +103,40 @@ internal object MemoTags {
     const val RECORD = "memo_record"
     const val RECORD_ROW = "memo_record_row"
     const val FOLDER_ROOT = "memo_folder_root"
+    const val ICON_GRID = "memo_icon_grid"
+    const val ICON_CHOICE = "memo_icon_choice"
+    const val ICON_RESET = "memo_icon_reset"
     const val SEARCH = "memo_search"
     const val ERROR = "memo_error"
     const val NOTE_ATTACHMENT = "memo_note_attachment"
+    const val NOTE_HEAD = "memo_note_head"
+    const val NOTE_NUMBER = "memo_note_number"
+
+    /** 앱15 F·G: the small sync mark beside the dates, the 편집 box of the open note and the room kept for it. */
+    const val SYNC_MARK = "memo_sync_mark"
+    const val NOTE_EDIT = "memo_note_edit"
+    const val NOTE_EDIT_ROOM = "memo_note_edit_room"
+
+    /** 앱12 A·B·C: the date lines of the head, the reading area (long press) and the editor's body, 취소 and status. */
+    const val NOTE_DATE = "memo_note_date"
+
+    /** 앱13 A·B: the date lines of a record card, the compact title and tag fields of the editor. */
+    const val RECORD_DATE = "memo_record_date"
+    const val EDIT_TITLE = "memo_edit_title"
+    const val EDIT_TAGS = "memo_edit_tags"
+    const val EDIT_BODY = "memo_edit_body"
+    const val NOTE_READ = "memo_note_read"
+    const val EDIT_CANCEL = "memo_edit_cancel"
+    const val EDIT_STATUS = "memo_edit_status"
+
+    /** 앱10 D: the photos of the note editor. */
+    const val EDIT_PHOTO_ADD = "memo_edit_photo_add"
+    const val EDIT_PHOTO = "memo_edit_photo"
+    const val EDIT_PHOTO_REMOVE = "memo_edit_photo_remove"
+    const val EDIT_PHOTO_UNDO = "memo_edit_photo_undo"
+    const val EDIT_PHOTO_PICKED = "memo_edit_photo_picked"
+
+    const val RECORD_HEAD = "memo_record_head"
     const val RECORD_PHOTO = "memo_record_photo"
     const val RECORD_TEXT = "memo_record_text"
     const val PHOTO_RETRY = "memo_photo_retry"
@@ -113,11 +155,14 @@ interface MemoBindings {
 /** Sheets and dialogs of the memo screen. They close the standard way and never add a back step (요구 F). */
 internal sealed interface MemoSheet {
     data class PickFolder(val title: String, val onPick: (String) -> Unit) : MemoSheet
-    data class EditTags(val tags: List<String>, val onSave: (List<String>) -> Unit) : MemoSheet
+    data class EditTags(val tags: List<String>, val title: String = "태그 편집", val onSave: (List<String>) -> Unit) : MemoSheet
     data class Actions(val title: String, val actions: List<Pair<String, () -> Unit>>) : MemoSheet
     data class AskText(val title: String, val value: String, val onSubmit: (String) -> Unit) : MemoSheet
     data class Confirm(val text: String, val submit: String, val onSubmit: () -> Unit) : MemoSheet
     data class PickDate(val onPick: (String) -> Unit) : MemoSheet
+
+    /** 앱14 C: the icon grid of one folder ([MEMO_FOLDER_ICON_CHOICES]); a press applies it at once. */
+    data class PickIcon(val path: String, val current: String) : MemoSheet
 }
 
 /** Everything the memo tabs share: the store, the navigation, the sheets and the error banner. */
@@ -131,6 +176,34 @@ internal class MemoController(
     /** 앱7 항목 2: the photos open full screen (not a sheet: back closes it first). */
     var viewer by mutableStateOf<MemoViewerRequest?>(null)
     var error by mutableStateOf<Pair<String, (() -> Unit)?>?>(null)
+
+    /** 앱9 C: proposal ids whose answer is being written right now (the card is locked from the press on). */
+    val answering = mutableStateSetOf<String>()
+
+    /**
+     * Answers a proposal card once: locks it at once, then one op per proposal id ([memoGroupOps]). A second press
+     * on a locked card does nothing; the local backend also answers an id only once, whatever screen asks.
+     */
+    fun answer(group: MemoProposalGroup, answer: MemoAnswer, date: String? = null, folder: String? = null) {
+        if (group.isSending || group.ids.any { it in answering }) return
+        val ops = memoGroupOps(group, answer, date, folder)
+        if (ops.isEmpty()) return
+        answering += group.ids
+        scope.launch {
+            try {
+                for (op in ops) {
+                    val r = store.request(op)
+                    if (r is MemoResult.Failed) {
+                        error = r.reason to null
+                        break
+                    }
+                }
+                store.refreshIndex()
+            } finally {
+                answering -= group.ids.toSet()
+            }
+        }
+    }
 
     /** Tag filters per folder: kept when going back (요구 F "태그 필터는 뒤로가기로 해제 안 함"). */
     val folderTags = mutableStateMapOf<String, List<String>>()
@@ -160,7 +233,64 @@ internal class MemoController(
     fun editTagsOf(target: MemoTarget, current: List<String>) {
         sheet = MemoSheet.EditTags(current) { tags -> run(MemoOp.editTags(target, tags)) }
     }
+
+    /** 앱11 C: the selection mode (the top bar icon). Ending it drops the selection. */
+    var select by mutableStateOf(MemoSelect())
+
+    /** The notes the current tab shows, for "전체 선택" (each tab sets it while shown). */
+    var visibleIds by mutableStateOf<List<String>>(emptyList())
+
+    /** A tap on a card or a pinned note: opens it, or in the selection mode selects / unselects it (never opens). */
+    fun openOrSelect(id: String) {
+        if (select.active) select = select.toggle(id) else go { it.openNote(id) }
+    }
+
+    fun endSelect() {
+        select = select.end()
+    }
+
+    fun bulkTrash() = runBulk(memoBulkTrash(select.ids))
+
+    fun bulkMove() {
+        sheet = MemoSheet.PickFolder("${select.count}개를 폴더로 옮기기") { folder -> runBulk(memoBulkMove(select.ids, folder)) }
+    }
+
+    /** Tags typed or picked are added to every selected note (the tags they have stay). */
+    fun bulkTags() {
+        sheet = MemoSheet.EditTags(emptyList(), title = "${select.count}개에 태그 더하기") { tags ->
+            if (tags.isNotEmpty()) runBulk(memoBulkTag(select.ids, tags))
+        }
+    }
+
+    private fun runBulk(op: MemoOp) {
+        if (select.ids.isEmpty()) return
+        run(op) { endSelect() }
+    }
+
+    /** 앱15 H: the banner with one undo action, shown a moment after a change made outside the editor. */
+    var undo by mutableStateOf<MemoUndo?>(null)
+
+    /**
+     * 앱15 H (관리자: "편집 화면 아니더라도 고정 해제 가능하게끔"): a press on 📌 takes the pin off at once (the same
+     * `unpin` op as the menus, 앱3) and offers 되돌리기 (`pin`) for a moment. Nothing in the selection mode.
+     */
+    fun unpinWithUndo(id: String) = setPinWithUndo(id, pin = false)
+
+    /**
+     * 앱16 B: the 📌 button of the open note pins a note that is not pinned (`pin`, the same op as the menus) and offers
+     * 되돌리기 (`unpin`) in the same banner; on a pinned note it is [unpinWithUndo].
+     */
+    fun setPinWithUndo(id: String, pin: Boolean) {
+        if (select.active) return
+        val target = MemoTarget(id)
+        run(if (pin) MemoOp.pin(target) else MemoOp.unpin(target)) {
+            undo = MemoUndo(memoPinUndoText(pinnedNow = pin)) { run(if (pin) MemoOp.unpin(target) else MemoOp.pin(target)) }
+        }
+    }
 }
+
+/** 앱15 H: the text of the undo banner and what 되돌리기 does. */
+internal data class MemoUndo(val text: String, val onUndo: () -> Unit)
 
 /**
  * Element June memo bot screen (요구 B): the record, folders and search tabs, drawn instead of the timeline of the
@@ -193,35 +323,43 @@ internal fun MemoScreen(
     LaunchedEffect(store, localVersion) {
         store.refreshIndex()
     }
-    if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion)
-
     val state = nav.value
-    var discardAsked by remember { mutableStateOf(false) }
+    // 추가요청 2: while a note is being edited nothing goes up to the server (the auto save stays local).
+    if (!useFakeData) MemoSyncEffects(roomId, timelineItems, localVersion, editing = state.editing)
+    // 앱13 B·C: the editor takes the whole screen; the tab bar and the room composer below come back when it ends.
+    val fullEditor = memoEditorFullScreen(state)
+    LaunchedEffect(roomId, fullEditor) { MemoEditingRooms.set(roomId, fullEditor) }
+    DisposableEffect(roomId) { onDispose { MemoEditingRooms.set(roomId, false) } }
+
+    // 앱11 C: the top bar icon turns the selection mode on and off; ending it here (종료, back, a bulk action) turns
+    // the icon off too.
+    val selectRooms by MemoSelectHub.rooms.collectAsState()
+    val selectOn = roomId in selectRooms
+    LaunchedEffect(selectOn) { controller.select = if (selectOn) controller.select.start() else controller.select.end() }
+    LaunchedEffect(controller.select.active) { if (!controller.select.active) MemoSelectHub.set(roomId, false) }
+    DisposableEffect(roomId) { onDispose { MemoSelectHub.set(roomId, false) } }
+    // Back ends the selection mode first (registered after the screen's own handler: it is asked first).
     BackHandler(enabled = state.handlesBack) {
         when (val b = state.back()) {
             is MemoBack.To -> nav.value = b.state
-            MemoBack.ConfirmDiscard -> discardAsked = true
             MemoBack.Exit -> Unit
         }
     }
-    if (discardAsked) {
-        ConfirmationDialog(
-            content = "편집한 내용을 버리고 나갈까요?",
-            submitText = "버리기",
-            cancelText = "계속 편집",
-            onSubmitClick = {
-                discardAsked = false
-                nav.value = nav.value.afterDiscardConfirmed()
-            },
-            onDismiss = { discardAsked = false },
-        )
-    }
+    BackHandler(enabled = controller.select.active) { controller.endSelect() }
 
     val index by store.index.collectAsState()
     Column(modifier = modifier.fillMaxSize()) {
         controller.error?.let { (reason, retry) -> MemoErrorBanner(reason, retry, onClose = { controller.error = null }) }
+        controller.undo?.let { MemoUndoBanner(controller, it) }
         if (!useFakeData) MemoAttachmentBanners(local, localVersion)
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        // 추가요청 2: swipe sideways anywhere on a tab to go to the next / previous one (not over a note, a photo, or in
+        // the selection mode). The tab keeps its state as with the tab buttons.
+        val swipe = memoSwipeAllowed(state, controller.select.active, controller.viewer != null)
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth().memoTabSwipe(swipe) { direction ->
+                memoSwipeTab(nav.value.tab, direction)?.let { tab -> controller.go { it.selectTab(tab) } }
+            },
+        ) {
             val note = state.note
             when {
                 // 앱7 항목 2: a photo of the note opens the memo viewer from the phone file or the server copy, so the
@@ -232,10 +370,43 @@ internal fun MemoScreen(
                 else -> MemoSearchTab(controller)
             }
         }
-        MemoTabBar(
-            selected = state.tab,
-            pendingProposals = index.pendingProposals,
-            onSelect = { tab -> controller.go { it.closeNote().selectTab(tab) } },
+        if (controller.select.active && state.note == null) MemoSelectBar(controller, controller.visibleIds.toImmutableList())
+        if (!fullEditor) {
+            MemoTabBar(
+                selected = state.tab,
+                onSelect = { tab -> controller.go { it.closeNote().selectTab(tab) } },
+            )
+        }
+    }
+    // 앱9 A: the proposal area opens from the list icon of the top bar; the badge there counts the waiting cards.
+    val waitingCards = remember(index) { memoPanelWaitingCount(index) }
+    LaunchedEffect(roomId, waitingCards) { MemoPanelHub.setCount(roomId, waitingCards) }
+    DisposableEffect(roomId) { onDispose { MemoPanelHub.leave(roomId) } }
+    val panelRoom by MemoPanelHub.openRoom.collectAsState()
+    if (panelRoom == roomId) {
+        val directives = if (useFakeData) {
+            null
+        } else {
+            remember(roomId) {
+                MemoSyncHub.directives(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+            }
+        }
+        val runner = if (useFakeData) {
+            null
+        } else {
+            remember(roomId) {
+                MemoSyncHub.runner(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+            }
+        }
+        MemoPanel(
+            controller = controller,
+            directives = directives,
+            // A finished instruction changed notes or tags on the server: one sync brings them down.
+            onSync = {
+                runner?.syncNow()
+                store.refreshIndex()
+            },
+            onClose = { MemoPanelHub.close() },
         )
     }
     MemoSheetHost(controller)
@@ -243,7 +414,7 @@ internal fun MemoScreen(
 }
 
 @Composable
-internal fun MemoTabBar(selected: MemoTab, pendingProposals: Int, onSelect: (MemoTab) -> Unit) {
+internal fun MemoTabBar(selected: MemoTab, onSelect: (MemoTab) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -270,10 +441,7 @@ internal fun MemoTabBar(selected: MemoTab, pendingProposals: Int, onSelect: (Mem
                     style = if (on) ElementTheme.typography.fontBodyMdMedium else ElementTheme.typography.fontBodyMdRegular,
                     color = if (on) ElementTheme.colors.textActionAccent else ElementTheme.colors.textSecondary,
                 )
-                if (tab == MemoTab.Folders && pendingProposals > 0) {
-                    Spacer(Modifier.width(4.dp))
-                    MemoBadge(pendingProposals.toString(), Modifier.testTag(MemoTags.FOLDER_BADGE))
-                }
+                // 앱9 A: no badge on the folder tab: the proposals moved to the list icon of the top bar.
             }
         }
     }
@@ -310,6 +478,36 @@ private fun MemoErrorBanner(reason: String, retry: (() -> Unit)?, onClose: () ->
             }.padding(8.dp), color = ElementTheme.colors.textActionAccent)
         }
         Text("✕", modifier = Modifier.clickable(onClick = onClose).padding(8.dp), color = ElementTheme.colors.textSecondary)
+    }
+}
+
+/** 앱15 H: "고정을 해제했습니다 · 되돌리기" for [MEMO_UNDO_SHOW_MS], then it goes by itself (a new one starts again). */
+@Composable
+private fun MemoUndoBanner(controller: MemoController, undo: MemoUndo) {
+    LaunchedEffect(undo) {
+        delay(MEMO_UNDO_SHOW_MS)
+        if (controller.undo === undo) controller.undo = null
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(MemoA11Tags.UNDO)
+            .background(ElementTheme.colors.bgSubtleSecondary)
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(undo.text, modifier = Modifier.weight(1f), style = ElementTheme.typography.fontBodySmRegular)
+        Text(
+            "되돌리기",
+            modifier = Modifier
+                .clickable {
+                    controller.undo = null
+                    undo.onUndo()
+                }
+                .padding(8.dp),
+            color = ElementTheme.colors.textActionAccent,
+            style = ElementTheme.typography.fontBodySmMedium,
+        )
     }
 }
 
@@ -431,15 +629,21 @@ internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
             .distinctUntilChanged()
             .collect { last -> if (memoShouldLoadMore(store.list(key), last)) store.loadMore(key) }
     }
-    if (list.items.isEmpty()) {
-        Box(Modifier.fillMaxSize().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
-            Text("아래 입력창에 붙여넣기 / 📷 / 🎤 로 메모를 남기세요", color = ElementTheme.colors.textSecondary)
+    // 앱11 A: the pinned notes of every folder stay on top; only the list below scrolls.
+    val pinned = memoPinnedOfAll(controller, localVersion)
+    LaunchedEffect(list.items) { controller.visibleIds = list.items.map { it.id } }
+    Column(Modifier.fillMaxSize()) {
+        MemoPinStrip(controller, pinned.toImmutableList())
+        if (list.items.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.RECORD), contentAlignment = Alignment.Center) {
+                Text("아래 입력창에 붙여넣기 / 📷 / 🎤 로 메모를 남기세요", color = ElementTheme.colors.textSecondary)
+            }
+        } else {
+            // Newest note at the bottom, right above the composer (reverse layout: index 0 = newest).
+            LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.RECORD)) {
+                items(list.items, key = { it.id }) { item -> MemoRecordRow(controller, item) }
+            }
         }
-        return
-    }
-    // Newest note at the bottom, right above the composer (reverse layout: index 0 = newest).
-    LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize().testTag(MemoTags.RECORD)) {
-        items(list.items, key = { it.id }) { item -> MemoRecordRow(controller, item) }
     }
 }
 
@@ -447,27 +651,43 @@ internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
 @Composable
 internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
     val target = MemoTarget(item.id)
+    val (borderWidth, borderColor) = memoCardBorder(controller, item.id)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(10.dp))
+            .border(borderWidth, borderColor, RoundedCornerShape(10.dp))
             .combinedClickable(
-                onClick = { controller.go { it.openNote(item.id) } },
-                onLongClick = { controller.sheet = memoItemActions(controller, item) },
+                // 앱11 C: in the selection mode a tap selects, it does not open.
+                onClick = { controller.openOrSelect(item.id) },
+                onLongClick = { if (controller.select.active) controller.openOrSelect(item.id) else controller.sheet = memoItemActions(controller, item) },
             )
             .padding(8.dp)
             .testTag(MemoTags.RECORD_ROW),
     ) {
+        if (controller.select.active) MemoSelectMark(controller.select.isSelected(item.id))
         val text = memoCardText(item)
-        Text(
-            ("나 · ${memoRecordTime(item.date)} · ${memoKindIcon(item.kind)} " + memoCardHeadTitle(item, text)).trimEnd(),
-            style = ElementTheme.typography.fontBodySmRegular,
-            color = ElementTheme.colors.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        // 앱10 C: `#번호  제목`, no author ("나"). 앱13 A (관리자: "작성, 수정일자 표시방식이 이 화면에서는 반영안됨. 절반정도로
+        // 폰트크기 줄이고 두줄로 나누고 우측정렬"): the dates right aligned on two small lines, the same ones as the open note.
+        // 앱15 E·F (추가요청 6: the card keeps its title size): the title takes the room up to the dates, the small sync
+        // mark sits left of the dates.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                memoRecordTitle(item, text),
+                style = ElementTheme.typography.fontBodySmRegular,
+                color = ElementTheme.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).testTag(MemoTags.RECORD_HEAD),
+            )
+            val sending by MemoSendingNotes.ids.collectAsState()
+            MemoDateArea(
+                lines = memoItemDateLines(item).toImmutableList(),
+                mark = memoSyncMark(item.syncWaiting, item.id in sending),
+                modifier = Modifier.padding(start = 6.dp).testTag(MemoTags.RECORD_DATE),
+            )
+        }
         val uploadMark = memoPhotoUploadMark(item)
         if (uploadMark.isNotEmpty()) {
             Text(
@@ -494,17 +714,34 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // 앱11 D: a text note's photos, small, under its text.
+        item.photos?.let { MemoCardPhotos(controller, it, Modifier.padding(top = 4.dp), size = 56) }
         FlowRow(modifier = Modifier.padding(top = 4.dp)) {
+            // 앱14 A: the folder's own icon ([memoFolderIcon] through the folder list).
+            val index by controller.store.index.collectAsState()
             MemoChip(
-                (if (item.folder == MEMO_INBOX) "📥 " else "📁 ") + item.folder,
+                memoFolderLabel(index, item.folder),
                 accent = item.folder != MEMO_INBOX,
                 onClick = { controller.pickFolderThenMove(target) },
             )
             item.tags.forEach { tag -> MemoChip("#$tag", onClick = { controller.editTagsOf(target, item.tags) }) }
-            if (item.pinned) MemoChip("📌")
+            // 앱15 H: a press on 📌 takes the pin off (with 되돌리기).
+            if (item.pinned) {
+                MemoChip(
+                    "📌",
+                    modifier = Modifier.testTag(MemoA11Tags.PIN_OFF),
+                    onClick = { controller.unpinWithUndo(item.id) },
+                )
+            }
         }
     }
 }
+
+/** The head line of a record card: `#12  제목  10-15 11:31` ([memoNoteHead]). */
+internal fun memoRecordHead(item: MemoItem, text: String?): String = memoNoteHead(item.number, memoCardHeadTitle(item, text), memoRecordTime(item.date))
+
+/** 앱13 A: the left part of the record card head, `#12  제목` (the dates are drawn beside it, [memoItemDateLines]). */
+internal fun memoRecordTitle(item: MemoItem, text: String?): String = memoNoteHead(item.number, memoCardHeadTitle(item, text), "")
 
 /** "10-12 11:31" from "2026-10-12T11:31:00+09:00". */
 internal fun memoRecordTime(date: String): String = if (date.length >= 16) date.substring(5, 16).replace('T', ' ') else date
@@ -536,9 +773,18 @@ private fun MemoSheetHost(controller: MemoController) {
             var text by remember(sheet) { mutableStateOf(sheet.tags.joinToString(" ") { "#$it" }) }
             ModalBottomSheet(onDismissRequest = close, scrollable = false) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("태그 편집", style = ElementTheme.typography.fontHeadingSmMedium)
+                    Text(sheet.title, style = ElementTheme.typography.fontHeadingSmMedium)
                     Text("띄어쓰기로 구분합니다. #은 없어도 됩니다.", style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary)
                     TextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    // 앱11 C: the tags there are, to pick (more than one); a tap adds it to the text.
+                    val known by controller.store.tags.collectAsState()
+                    LaunchedEffect(Unit) { controller.store.loadTags() }
+                    val typed = memoParseTagInput(text)
+                    FlowRow {
+                        known.filter { it.name !in typed }.take(MEMO_PICK_TAGS).forEach { t ->
+                            MemoChip("#${t.name}", onClick = { text = (text.trimEnd() + " #" + t.name).trimStart() })
+                        }
+                    }
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                         Text("취소", modifier = Modifier.clickable(onClick = close).padding(12.dp))
                         Text(
@@ -593,12 +839,47 @@ private fun MemoSheetHost(controller: MemoController) {
             close()
             sheet.onPick(d)
         }, onDismiss = close)
+        is MemoSheet.PickIcon -> ModalBottomSheet(onDismissRequest = close, scrollable = true) {
+            MemoIconPicker(sheet.path, sheet.current) { icon ->
+                close()
+                controller.run(memoFolderIconOp(sheet.path, icon))
+            }
+        }
     }
 }
 
-/** "#교토 이동, 빵집" → [교토, 이동, 빵집]. */
-internal fun memoParseTagInput(text: String): List<String> =
-    text.split(' ', ',', '\n').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }.distinct()
+/** 앱14 C: the icon choices of a folder, then 기본으로 되돌리기 (empty icon). No free text field. */
+@Composable
+private fun MemoIconPicker(path: String, current: String, onPick: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text("'$path' 아이콘", style = ElementTheme.typography.fontHeadingSmMedium, modifier = Modifier.padding(16.dp))
+        FlowRow(Modifier.padding(horizontal = 12.dp).testTag(MemoTags.ICON_GRID)) {
+            MEMO_FOLDER_ICON_CHOICES.forEach { icon ->
+                val selected = icon == current
+                Text(
+                    icon,
+                    style = ElementTheme.typography.fontHeadingMdRegular,
+                    modifier = Modifier
+                        .padding(2.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) ElementTheme.colors.bgActionSecondaryPressed else ElementTheme.colors.bgCanvasDefault)
+                        .clickable { onPick(icon) }
+                        .padding(8.dp)
+                        .testTag(MemoTags.ICON_CHOICE),
+                )
+            }
+        }
+        Text(
+            "기본으로 되돌리기 (" + memoAutoFolderIcon(path) + ")",
+            color = ElementTheme.colors.textActionAccent,
+            modifier = Modifier.fillMaxWidth().clickable { onPick("") }.padding(16.dp).testTag(MemoTags.ICON_RESET),
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** Known tags the tag sheet offers to pick (앱11 C). */
+private const val MEMO_PICK_TAGS = 30
 
 @Composable
 private fun MemoDatePicker(onPick: (String) -> Unit, onDismiss: () -> Unit) {
