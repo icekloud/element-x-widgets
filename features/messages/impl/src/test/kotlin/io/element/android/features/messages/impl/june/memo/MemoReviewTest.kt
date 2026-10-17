@@ -219,7 +219,11 @@ class MemoReviewTest {
             ok(op, states(state))
         }
         val waits = mutableListOf<Long>()
-        val r = MemoReviewer(room, clock = { now }, dispatcher = Dispatchers.Unconfined, sleep = { waits += it; now += it })
+        val sleep: suspend (Long) -> Unit = { ms ->
+            waits += ms
+            now += ms
+        }
+        val r = MemoReviewer(room, clock = { now }, dispatcher = Dispatchers.Unconfined, sleep = sleep)
         assertEquals("검토 완료: 제안 2건", r.follow(listOf("n1")))
         assertEquals(listOf(3_000L, 3_000L, 3_000L), waits)
         assertTrue(room.ops.all { it.op == MEMO_OP_REVIEW_STATUS && ids(it) == listOf("n1") })
