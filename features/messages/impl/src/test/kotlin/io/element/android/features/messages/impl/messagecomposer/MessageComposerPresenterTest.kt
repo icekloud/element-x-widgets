@@ -1728,6 +1728,11 @@ class MessageComposerPresenterTest : RobolectricTest() {
         slashCommandService = slashCommandService,
         featureFlagService = featureFlagService,
         contentScannerService = { _, _ -> },
+        attachmentImageEditor = object : AttachmentImageEditor {
+            override suspend fun canEdit(localMedia: LocalMedia) = false
+            override suspend fun exportEdits(localMedia: LocalMedia, edits: AttachmentImageEdits) =
+                Result.failure<EditedLocalMedia>(IllegalStateException("not used"))
+        },
         contentValidationCache = InMemoryEventContentValidationCache(),
     ).apply {
         isTesting = true

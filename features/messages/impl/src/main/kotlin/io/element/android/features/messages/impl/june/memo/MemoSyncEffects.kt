@@ -41,7 +41,7 @@ import timber.log.Timber
  * Nothing runs on a timer when the screen is not visible, and nothing is shown while it works: the notes are local.
  */
 @Composable
-internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<TimelineItem>, localVersion: Long) {
+internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<TimelineItem>, localVersion: Long, editing: Boolean = false) {
     val context = LocalContext.current.applicationContext
     val bindings = remember(context) { context.bindings<MemoSyncBindings>() }
     val sessionStore = remember(bindings) { bindings.memoSyncSessionStore() }
@@ -93,16 +93,20 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
     }
 
     // Shown: pull once (and push what waits). Each time the screen comes back, once more — never on a timer.
-    LaunchedEffect(runner, visible) {
+    // 추가요청 2: while the editor is open the pull still runs (the draft is never overwritten, MemoEditTest), but
+    // nothing goes up: the server would review a half written note again and again.
+    LaunchedEffect(runner, visible, editing) {
         if (!visible) return@LaunchedEffect
         // The first request waits (a short while) for the answer reader, so its answer is not missed.
         withTimeoutOrNull(MEMO_READER_WAIT_MS) { readerReady.await() }
-        runner.syncNow()
+        runner.syncNow(push = !editing)
     }
 
     // A local change while visible: wait for the input to stop, then one push. A new change restarts the wait.
-    LaunchedEffect(runner, visible, localVersion, retryTick) {
-        if (!visible || !runner.hasPendingUploads()) return@LaunchedEffect
+    // 추가요청 2: the auto save of the editor writes locally only; the push waits for the editing to end (editing
+    // turning false runs this effect again, so what piled up goes up in one round).
+    LaunchedEffect(runner, visible, editing, localVersion, retryTick) {
+        if (!memoPushAllowed(visible, editing, runner.hasPendingUploads())) return@LaunchedEffect
         delay(MemoSyncRunner.PUSH_DELAY_MS)
         runner.push()
         // Still something left (server off): one more try after its back-off, cancelled as soon as the screen hides.
