@@ -118,8 +118,9 @@ class MemoPanelBottomUiTest : RobolectricTest() {
         waitForIdle()
         assertTrue(shown("대기 중인 제안이 없어요"))
         assertFalse(shown("위에서 읽는 중에 온 지시"))
-        // At the bottom (row 21: the empty line, 20 old ones, the one just sent): the next one is followed.
-        onNode(hasScrollToIndexAction()).performScrollToIndex(21)
+        // At the bottom: the phone keeps 20 instructions (MEMO_DIRECTIVE_KEEP), so the rows are the empty line and 20, the
+        // last is row 20. The next one is followed.
+        onNode(hasScrollToIndexAction()).performScrollToIndex(MEMO_DIRECTIVE_KEEP)
         waitForIdle()
         runBlocking { d.send("맨 아래에서 온 지시") }
         waitForIdle()
