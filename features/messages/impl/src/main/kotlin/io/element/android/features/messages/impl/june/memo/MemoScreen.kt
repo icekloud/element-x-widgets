@@ -58,6 +58,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.compose.AsyncImage
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesTo
@@ -76,6 +79,7 @@ import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -251,6 +255,14 @@ internal class MemoController(
 
     fun bulkTrash() = runBulk(memoBulkTrash(select.ids))
 
+    /** 앱17 B: every selected note goes to the review (in turns of [MEMO_REVIEW_MAX]); the selection mode ends. */
+    fun bulkReview() {
+        val ids = select.ids
+        if (ids.isEmpty() || reviewer == null) return
+        review(ids)
+        endSelect()
+    }
+
     fun bulkMove() {
         sheet = MemoSheet.PickFolder("${select.count}개를 폴더로 옮기기") { folder -> runBulk(memoBulkMove(select.ids, folder)) }
     }
@@ -287,6 +299,46 @@ internal class MemoController(
             undo = MemoUndo(memoPinUndoText(pinnedNow = pin)) { run(if (pin) MemoOp.unpin(target) else MemoOp.pin(target)) }
         }
     }
+
+    /** 앱17: the review requests of the room (null: no server, e.g. the fake data; the review controls are not shown). */
+    var reviewer: MemoReviewer? by mutableStateOf(null)
+
+    /** 앱17: the small notice of a review request and of its end. */
+    var notice by mutableStateOf<MemoNotice?>(null)
+
+    private val following = mutableListOf<Job>()
+
+    /**
+     * 앱17 A·B·C: asks for the review of [ids] at once. A note asked for less than [MEMO_REVIEW_REPEAT_MS] ago is not sent
+     * again. [before] runs first (C: the save of the editor ends). Then the notice says what was taken, and
+     * `review_status` is asked until the reviews are done ("검토 완료: 제안 N건"); it stops quietly on a failed look-up,
+     * after two minutes, or when the screen goes away.
+     */
+    fun review(ids: List<String>, before: suspend () -> Unit = {}) {
+        val r = reviewer ?: return
+        val fresh = r.repeat.admit(ids)
+        if (fresh.isEmpty()) return
+        scope.launch {
+            before()
+            val sent = r.request(fresh)
+            notice = MemoNotice(memoReviewSentText(sent))
+            if (sent.accepted.isEmpty()) return@launch
+            val job = scope.launch { r.follow(sent.accepted)?.let { notice = MemoNotice(it) } }
+            following += job
+            job.invokeOnCompletion { following -= job }
+        }
+    }
+
+    /** 앱17 C: the review of the open note, after the save of its editor (running, or still to come) has ended. */
+    fun reviewNote(id: String) {
+        if (select.active) return
+        review(listOf(id)) { MemoEditHub.settled(id) }
+    }
+
+    /** 앱17: leaving the screen or the app stops the look-ups (the proposals still come to the proposal area). */
+    fun stopFollowing() {
+        following.toList().forEach { it.cancel() }
+    }
 }
 
 /** 앱15 H: the text of the undo banner and what 되돌리기 does. */
@@ -317,6 +369,22 @@ internal fun MemoScreen(
     val scope = rememberCoroutineScope()
     val nav = remember(roomId) { mutableStateOf(MemoLocation()) }
     val controller = remember(store) { MemoController(store, scope, nav) }
+    // 앱17: the review requests go to the memo bot room (not with the fake data of the developer setting).
+    if (!useFakeData) {
+        val reviewer = remember(roomId) {
+            MemoSyncHub.reviewer(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+        }
+        LaunchedEffect(controller, reviewer) { controller.reviewer = reviewer }
+    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, controller) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) controller.stopFollowing() }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            controller.stopFollowing()
+        }
+    }
 
     // The index is read again when the local notes change (no polling, 설계 §k).
     val localVersion by MemoLocalChanges.version.collectAsState()
@@ -351,15 +419,11 @@ internal fun MemoScreen(
     Column(modifier = modifier.fillMaxSize()) {
         controller.error?.let { (reason, retry) -> MemoErrorBanner(reason, retry, onClose = { controller.error = null }) }
         controller.undo?.let { MemoUndoBanner(controller, it) }
+        controller.notice?.let { MemoNoticeBanner(controller, it) }
         if (!useFakeData) MemoAttachmentBanners(local, localVersion)
-        // 추가요청 2: swipe sideways anywhere on a tab to go to the next / previous one (not over a note, a photo, or in
-        // the selection mode). The tab keeps its state as with the tab buttons.
-        val swipe = memoSwipeAllowed(state, controller.select.active, controller.viewer != null)
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth().memoTabSwipe(swipe) { direction ->
-                memoSwipeTab(nav.value.tab, direction)?.let { tab -> controller.go { it.selectTab(tab) } }
-            },
-        ) {
+        // 앱17 D (관리자: "슬라이드로 탭 간 이동하는 기능은 폐기"): the tab swipe of 앱11 추가요청 2 is gone; a card pushed to
+        // the left asks for its review now (MemoReviewSwipe). The tab buttons stay.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val note = state.note
             when {
                 // 앱7 항목 2: a photo of the note opens the memo viewer from the phone file or the server copy, so the
@@ -641,7 +705,7 @@ internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
         } else {
             // Newest note at the bottom, right above the composer (reverse layout: index 0 = newest).
             LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.RECORD)) {
-                items(list.items, key = { it.id }) { item -> MemoRecordRow(controller, item) }
+                items(list.items, key = { it.id }) { item -> MemoReviewSwipe(controller, item.id, item.folder) { m -> MemoRecordRow(controller, item, m) } }
             }
         }
     }
@@ -649,11 +713,11 @@ internal fun MemoRecordTab(controller: MemoController, localVersion: Long) {
 
 /** One local note of the record tab: what was saved, where it is filed, its tags. A tap opens it. */
 @Composable
-internal fun MemoRecordRow(controller: MemoController, item: MemoItem) {
+internal fun MemoRecordRow(controller: MemoController, item: MemoItem, modifier: Modifier = Modifier) {
     val target = MemoTarget(item.id)
     val (borderWidth, borderColor) = memoCardBorder(controller, item.id)
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(10.dp))

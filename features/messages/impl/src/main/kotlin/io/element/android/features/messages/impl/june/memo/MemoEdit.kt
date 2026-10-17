@@ -10,6 +10,7 @@ package io.element.android.features.messages.impl.june.memo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -201,8 +202,29 @@ internal object MemoEditHub {
 
     /** The same save, started from this object's own scope: the editor left the screen and took its scope with it. */
     fun saveLater(noteId: String, dropWhenDone: Boolean = true, persist: suspend (MemoEditState) -> MemoSaveResult) {
-        scope.launch { save(noteId, dropWhenDone, persist) }
+        pending.incrementAndGet()
+        scope.launch {
+            try {
+                save(noteId, dropWhenDone, persist)
+            } finally {
+                pending.decrementAndGet()
+            }
+        }
     }
+
+    private val pending = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * 앱17 C: returns once the saves of [noteId] have ended: the one running now, and the last one the editor started
+     * when it left ([saveLater]; it may still be on its way to the lock). Nothing is written here, the editor's own saves
+     * do it (앱12 자동 저장). A note with no session returns at once.
+     */
+    suspend fun settled(noteId: String) {
+        while (pending.get() > 0) delay(SETTLE_STEP_MS)
+        lock.withLock { state(noteId) }
+    }
+
+    private const val SETTLE_STEP_MS = 20L
 }
 
 /**

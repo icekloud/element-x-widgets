@@ -10,8 +10,6 @@ package io.element.android.features.messages.impl.june.memo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,8 +36,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,8 +47,8 @@ import io.element.android.libraries.designsystem.theme.components.Text
 import kotlinx.collections.immutable.ImmutableList
 
 /*
- * 앱11 screens: the pinned strip (A·B), the photos under a card's text (D), the selection bar (C) and the tab swipe
- * (추가요청 2). The rules are in MemoSelect.kt.
+ * 앱11 screens: the pinned strip (A·B), the photos under a card's text (D) and the selection bar (C). The rules are in
+ * MemoSelect.kt. 앱17 D: the tab swipe of 추가요청 2 is gone.
  */
 
 /**
@@ -197,8 +193,9 @@ internal fun memoCardBorder(controller: MemoController, id: String): Pair<Dp, Co
     if (controller.select.isSelected(id)) 2.dp to ElementTheme.colors.textActionAccent else 1.dp to ElementTheme.colors.borderInteractiveSecondary
 
 /**
- * 앱11 C: the bar of the selection mode, above the tabs: the count, select all / none, end, and the three bulk
- * actions. [visible] = the ids of the notes the current screen shows ("전체 선택").
+ * 앱11 C: the bar of the selection mode, above the tabs: the count, select all / none, end, and the bulk actions.
+ * [visible] = the ids of the notes the current screen shows ("전체 선택"). 앱17 B: "✨ 검토" sends the selected notes to the
+ * review (only with a server).
  */
 @Composable
 internal fun MemoSelectBar(controller: MemoController, visible: ImmutableList<String>) {
@@ -213,14 +210,18 @@ internal fun MemoSelectBar(controller: MemoController, visible: ImmutableList<St
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
             val on = s.count > 0
-            listOf<Pair<String, () -> Unit>>(
-                "🗑 휴지통" to { askTrash = true },
-                "# 태그" to { controller.bulkTags() },
-                "📁 폴더 이동" to { controller.bulkMove() },
-            ).forEach { (label, action) ->
+            listOfNotNull<Triple<String, () -> Unit, String?>>(
+                Triple("🗑 휴지통", { askTrash = true }, null),
+                Triple("# 태그", { controller.bulkTags() }, null),
+                Triple("📁 폴더 이동", { controller.bulkMove() }, null),
+                Triple("$MEMO_REVIEW_MARK 검토", { controller.bulkReview() }, MemoReviewTags.BULK).takeIf { controller.reviewer != null },
+            ).forEach { (label, action, tag) ->
                 Text(
                     label,
-                    modifier = Modifier.clickable(enabled = on, onClick = action).padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .clickable(enabled = on, onClick = action)
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                        .then(if (tag != null) Modifier.testTag(tag) else Modifier),
                     color = if (on) ElementTheme.colors.textActionAccent else ElementTheme.colors.textDisabled,
                     style = ElementTheme.typography.fontBodyMdMedium,
                 )
@@ -239,40 +240,5 @@ internal fun MemoSelectBar(controller: MemoController, visible: ImmutableList<St
             },
             onDismiss = { askTrash = false },
         )
-    }
-}
-
-/**
- * 추가요청 2: a horizontal swipe anywhere on the tab goes to the next / previous tab. It looks at the gesture after
- * the children ([PointerEventPass.Main] runs child first): a list scrolling or a row scrolling sideways takes the move
- * first and the tab stays. Once the move is clearly sideways and long enough, it is taken here (consumed) so the
- * card under the finger does not open on release.
- */
-internal fun Modifier.memoTabSwipe(enabled: Boolean, onSwipe: (Int) -> Unit): Modifier = if (!enabled) {
-    this
-} else {
-    pointerInput(Unit) {
-        val edge = 24.dp.toPx()
-        val min = 72.dp.toPx()
-        awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Main)
-            var byChild = false
-            var claimed = false
-            var direction = 0
-            var pressed = true
-            while (pressed) {
-                val c = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.id == down.id }
-                pressed = c?.pressed == true
-                if (c != null) {
-                    if (c.isConsumed && !claimed) byChild = true
-                    val dx = c.position.x - down.position.x
-                    val dy = c.position.y - down.position.y
-                    direction = memoSwipeDirection(down.position.x, dx, dy, size.width.toFloat(), edge, min, byChild)
-                    if (direction != 0) claimed = true
-                    if (claimed) c.consume()
-                }
-            }
-            if (claimed && direction != 0) onSwipe(direction)
-        }
     }
 }

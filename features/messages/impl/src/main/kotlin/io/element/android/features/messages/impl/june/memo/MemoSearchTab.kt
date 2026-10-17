@@ -255,14 +255,18 @@ internal fun MemoSearchTab(controller: MemoController) {
             LaunchedEffect(ui.results) { controller.visibleIds = ui.results.map { it.id } }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(ui.results, key = { it.id }) { item ->
-                    MemoResultRow(
-                        controller,
-                        item,
-                        onOpen = { controller.openOrSelect(item.id) },
-                        onTag = { t ->
-                            run(ui.query.withTag(t), submitted = true)
-                        },
-                    )
+                    // 앱17 A: a result pushed to the left asks for its review.
+                    MemoReviewSwipe(controller, item.id, item.folder) { m ->
+                        MemoResultRow(
+                            controller,
+                            item,
+                            onOpen = { controller.openOrSelect(item.id) },
+                            onTag = { t ->
+                                run(ui.query.withTag(t), submitted = true)
+                            },
+                            modifier = m,
+                        )
+                    }
                 }
             }
         }
@@ -294,11 +298,11 @@ private fun MemoSearchEmpty(
 }
 
 @Composable
-private fun MemoResultRow(controller: MemoController, item: MemoItem, onOpen: () -> Unit, onTag: (String) -> Unit) {
+private fun MemoResultRow(controller: MemoController, item: MemoItem, onOpen: () -> Unit, onTag: (String) -> Unit, modifier: Modifier = Modifier) {
     val accent = ElementTheme.colors.textActionAccent
     val selected = controller.select.isSelected(item.id)
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
             .background(if (selected) ElementTheme.colors.bgSubtleSecondary else Color.Transparent)
             .clickable(onClick = onOpen)
@@ -480,6 +484,7 @@ private fun MemoNoteReading(
     ) {
         // 앱16 B (관리자: "메모고정 버튼이 따로 안보임"): the 📌 button at the right end of the folder line, for every note
         // (앱15 H showed it on pinned notes only): a light outline pin pins the note, the filled 📌 takes the pin off.
+        // 앱17 C (관리자: "고정버튼 좌측에 검토받게하는 버튼"): the review button of the same size left of it.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(
                 memoFolderLabel(index, n.folder),
@@ -487,6 +492,11 @@ private fun MemoNoteReading(
                 color = ElementTheme.colors.textSecondary,
                 modifier = Modifier.weight(1f),
             )
+            if (controller.reviewer != null) {
+                memoReviewButton(n.trashed, controller.nav.value.editing, controller.select.active)?.let { button ->
+                    MemoReviewToggle(button, onClick = { controller.reviewNote(id) })
+                }
+            }
             memoPinButton(n.pinned, n.trashed, controller.nav.value.editing, controller.select.active)?.let { button ->
                 MemoPinToggle(button, onClick = { controller.setPinWithUndo(id, pin = !button.pinned) })
             }
