@@ -32,15 +32,16 @@ class MemoPanelChatTest : RobolectricTest() {
         return MemoDb(driver)
     }
 
-    /** The memo bot room: 지시 is taken (접수), 지시조회 answers [pollRows]. */
+    /** The memo bot room: 지시 is taken (접수), 지시조회 answers [pollRows] after [beforeAnswer] (the user acts meanwhile). */
     private class Room(var pollRows: JSONArray = JSONArray()) : MemoSyncTransport {
         val ops = mutableListOf<MemoOp>()
+        var beforeAnswer: suspend () -> Unit = {}
 
         override suspend fun call(op: MemoOp): MemoResponse {
             ops += op
             return when (op.op) {
                 "지시" -> MemoResponse.Ok("r", "지시", null, null, JSONObject().put("id", op.args["id"]).put("상태", "접수"))
-                "지시조회" -> MemoResponse.Ok("r", "지시조회", null, null, JSONObject().put("결과", pollRows))
+                "지시조회" -> MemoResponse.Ok("r", "지시조회", null, null, JSONObject().put("결과", pollRows)).also { beforeAnswer() }
                 else -> MemoResponse.Error("r", op.op, "모름")
             }
         }
@@ -60,7 +61,7 @@ class MemoPanelChatTest : RobolectricTest() {
     // ---------------------------------------------------------------- ① 지우기
 
     @Test
-    fun `the ended instructions can go, the running ones stay`() {
+    fun `clear tidies the screen - every instruction goes, the running ones too`() {
         val all = listOf(
             directive("a", MemoDirectiveStatus.DONE),
             directive("b", MemoDirectiveStatus.QUESTION),
@@ -71,15 +72,17 @@ class MemoPanelChatTest : RobolectricTest() {
             directive("g", MemoDirectiveStatus.RECEIVED),
             directive("h", MemoDirectiveStatus.WORKING),
         )
-        assertEquals(listOf("a", "b", "c", "d", "e"), memoDirectivesClearable(all).map { it.id })
-        assertEquals("지시 5건을 목록에서 지울까요? 메모봇이 이미 한 일은 되돌려지지 않아요. 진행 중 3건은 남아요.", memoDirectivesClearText(all))
-        assertEquals("지시 2건을 목록에서 지울까요? 메모봇이 이미 한 일은 되돌려지지 않아요.", memoDirectivesClearText(all.take(2)))
-        // Only running ones: nothing to clear (the button is hidden).
-        assertTrue(memoDirectivesClearable(all.drop(5)).isEmpty())
+        // 추가요청 1 ("그냥 화면상의 내용 정리하는 기능"): all of them, the running ones too.
+        assertEquals(listOf("a", "b", "c", "d", "e", "f", "g", "h"), memoDirectivesClearable(all).map { it.id })
+        assertEquals("지시 8건을 화면에서 지울까요? 메모봇이 하는 일에는 영향이 없어요\n진행 중 3건도 화면에서만 지워져요", memoDirectivesClearText(all))
+        assertEquals("지시 2건을 화면에서 지울까요? 메모봇이 하는 일에는 영향이 없어요", memoDirectivesClearText(all.take(2)))
+        assertEquals(listOf("f", "g", "h"), memoDirectivesClearable(all.drop(5)).map { it.id })
+        // Nothing on the list: nothing to clear (the button is hidden).
+        assertTrue(memoDirectivesClearable(emptyList()).isEmpty())
     }
 
     @Test
-    fun `clearing takes the ended ones off the phone only, and a later answer does not bring one back`() = runTest {
+    fun `clearing takes every instruction off the phone only, remembers the ids, and a later answer brings none back`() = runTest {
         val db = db()
         val room = Room()
         keep(
@@ -90,24 +93,65 @@ class MemoPanelChatTest : RobolectricTest() {
         )
         val d = MemoDirectives(db, room, clock = { now }, dispatcher = Dispatchers.Unconfined)
         d.load()
-        assertEquals(2, d.clear())
-        assertEquals(listOf("run1"), d.items.value.map { it.id })
-        // The database keeps the same: a new process reads the running one only.
-        assertEquals(listOf("run1"), MemoDirectives(db, room, dispatcher = Dispatchers.Unconfined).load().map { it.id })
-        // Nothing was sent to the server by the clear.
+        assertEquals(3, d.clear())
+        assertTrue(d.items.value.isEmpty())
+        // The phone remembers the cleared ids in its state table (no new table), and a new process reads an empty list.
+        assertEquals(setOf("old1", "old2", "run1"), JSONArray(db.state("directives_cleared")).let { a -> (0 until a.length()).map(a::getString).toSet() })
+        assertTrue(MemoDirectives(db, room, dispatcher = Dispatchers.Unconfined).load().isEmpty())
+        // Nothing was sent to the server by the clear, and nothing is asked about any more.
         assertTrue(room.ops.isEmpty())
-        // The look-up asks only for the running one; an answer that also lists a cleared id does not bring it back.
-        room.pollRows = JSONArray()
-            .put(JSONObject().put("id", "old1").put("상태", "완료").put("메시지", "끝"))
-            .put(JSONObject().put("id", "run1").put("상태", "완료").put("메시지", "태그를 지웠어요"))
-        assertEquals(1, d.poll())
-        assertEquals(listOf(listOf("run1")), room.asked())
-        assertEquals(listOf("run1"), d.items.value.map { it.id })
-        assertEquals(MemoDirectiveStatus.DONE, d.items.value.single().status)
-        // Nothing left to clear but the one now ended; a second clear empties the list.
-        assertEquals(1, d.clear())
+        room.pollRows = JSONArray().put(JSONObject().put("id", "run1").put("상태", "완료").put("메시지", "태그를 지웠어요"))
+        assertEquals(0, d.poll())
+        assertTrue(room.asked().isEmpty())
         assertTrue(d.items.value.isEmpty())
         assertEquals(0, d.clear())
+    }
+
+    @Test
+    fun `an answer that comes after a clear made during its look-up is ignored, a new instruction is shown`() = runTest {
+        val db = db()
+        val room = Room()
+        keep(db, directive("run1", MemoDirectiveStatus.WORKING, t0))
+        val d = MemoDirectives(db, room, clock = { now }, dispatcher = Dispatchers.Unconfined)
+        d.load()
+        // The user presses 지우기 while the look-up for run1 is on its way; its answer (완료) comes after.
+        room.pollRows = JSONArray().put(JSONObject().put("id", "run1").put("상태", "완료").put("메시지", "끝"))
+        room.beforeAnswer = { d.clear() }
+        assertEquals(0, d.poll())
+        assertEquals(listOf(listOf("run1")), room.asked())
+        assertTrue(d.items.value.isEmpty())
+        room.beforeAnswer = {}
+        // A new instruction after the clear is on the list as usual.
+        val next = d.send("새 지시")!!
+        assertEquals(listOf(next.id), d.items.value.map { it.id })
+        // A send still on its way when the list is cleared does not come back with its answer either.
+        val db2 = db()
+        val room2 = object : MemoSyncTransport by room {
+            lateinit var dd: MemoDirectives
+
+            override suspend fun call(op: MemoOp): MemoResponse {
+                if (op.op == "지시") dd.clear()
+                return room.call(op)
+            }
+        }
+        val d2 = MemoDirectives(db2, room2, clock = { now }, dispatcher = Dispatchers.Unconfined).also { room2.dd = it }
+        d2.send("보내는 사이에 지움")
+        assertTrue(d2.items.value.isEmpty())
+    }
+
+    @Test
+    fun `the phone remembers at most the newest cleared ids`() = runTest {
+        val db = db()
+        val d = MemoDirectives(db, Room(), clock = { now }, dispatcher = Dispatchers.Unconfined)
+        repeat(6) { round ->
+            keep(db, *(0 until MEMO_DIRECTIVE_KEEP).map { directive("r$round-$it", MemoDirectiveStatus.DONE, t0 + it) }.toTypedArray())
+            d.load()
+            assertEquals(MEMO_DIRECTIVE_KEEP, d.clear())
+        }
+        val ids = JSONArray(db.state("directives_cleared")).let { a -> (0 until a.length()).map(a::getString) }
+        assertEquals(MEMO_DIRECTIVE_CLEARED_KEEP, ids.size)
+        assertEquals("r5-${MEMO_DIRECTIVE_KEEP - 1}", ids.last())
+        assertFalse("r0-0" in ids)
     }
 
     // ---------------------------------------------------------------- ② the chat order
