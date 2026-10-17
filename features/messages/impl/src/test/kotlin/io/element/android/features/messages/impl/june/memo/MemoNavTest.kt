@@ -17,7 +17,6 @@ import org.junit.Test
 class MemoNavTest : RobolectricTest() {
     private fun MemoLocation.pressBack(): MemoLocation = when (val b = back()) {
         is MemoBack.To -> b.state
-        MemoBack.ConfirmDiscard -> error("confirm expected to be handled")
         MemoBack.Exit -> error("exit")
     }
 
@@ -59,12 +58,16 @@ class MemoNavTest : RobolectricTest() {
     }
 
     @Test
-    fun `editing with changes asks once`() {
-        val s = MemoLocation().openFolder("여행").openNote("n").startEditing().edited(true)
-        assertEquals(MemoBack.ConfirmDiscard, s.back())
-        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행"), s.afterDiscardConfirmed())
-        // Without changes: straight back.
-        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행"), s.edited(false).pressBack())
+    fun `back ends the editing first, then closes the note, and asks nothing`() {
+        // 앱12 B: there is no [저장] button and no discard question any more. What was typed is written on the way
+        // out (MemoEditTest), so back simply walks one step at a time.
+        val s = MemoLocation().openFolder("여행").openNote("n").startEditing()
+        val read = s.pressBack()
+        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행", note = "n"), read)
+        assertFalse(read.editing)
+        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행"), read.pressBack())
+        // Reading a note (never edited): back closes it as before.
+        assertEquals(MemoLocation(tab = MemoTab.Folders, folder = "여행"), MemoLocation().openFolder("여행").openNote("n").pressBack())
     }
 
     @Test
@@ -96,7 +99,8 @@ class MemoNavTest : RobolectricTest() {
     }
 
     @Test
-    fun `bands show only when there are proposals`() {
+    fun `the proposal area shows every proposal, nothing when there is none`() {
+        // 앱9 A: the folder tab has no proposal cards any more; the area of the list icon has them all.
         val index = MemoIndex(
             folders = emptyList(),
             proposals = listOf(
@@ -104,10 +108,9 @@ class MemoNavTest : RobolectricTest() {
                 MemoProposal("p2", "폴더생성", "s", "대기", folder = "여행/오사카"),
             ),
         )
-        assertEquals(2, memoRootBand(index).size)
-        assertEquals(listOf("p2"), memoFolderBand(index, "여행", emptySet()).map { it.id })
-        assertEquals(listOf("p1", "p2"), memoFolderBand(index, "여행", setOf("n1")).map { it.id })
-        assertTrue(memoFolderBand(index, "쇼핑", emptySet()).isEmpty())
-        assertTrue(memoRootBand(MemoIndex.EMPTY).isEmpty())
+        assertEquals(listOf("p1", "p2"), memoPanelGroups(index).map { it.first.id })
+        assertEquals(2, memoPanelWaitingCount(index))
+        assertTrue(memoPanelGroups(MemoIndex.EMPTY).isEmpty())
+        assertEquals(0, memoPanelWaitingCount(MemoIndex.EMPTY))
     }
 }

@@ -101,28 +101,31 @@ internal class MemoSyncRunner(
     private fun device(): String = memoDeviceOf(db)
 
     /** True when something waits for the server: notes, suggestion answers or attachments (the screen retry test). */
-    fun hasPendingUploads(): Boolean =
-        db.outbox().any { it.kind == MEMO_OUTBOX_NOTE || it.kind == MEMO_OUTBOX_PROPOSAL } || hasPendingAttachments()
+    fun hasPendingUploads(): Boolean = db.outbox().any { it.kind in PUSHED_KINDS } || hasPendingAttachments()
 
     /** True when attachments still wait for their upload (the one-time job test, 관리자 결정 1-1 (가)). */
     fun hasPendingAttachments(): Boolean = db.pendingAttachments().isNotEmpty()
 
     /** Millis until the earliest waiting upload (note, answer or attachment) may be tried again, null when nothing waits. */
     fun nextRetryInMs(): Long? {
-        val rows = db.outbox().filter { it.kind == MEMO_OUTBOX_NOTE || it.kind == MEMO_OUTBOX_PROPOSAL }
+        val rows = db.outbox().filter { it.kind in PUSHED_KINDS }
         val times = rows.map { it.nextTryMs } + db.pendingAttachments().map { it.second.retryAtMs }
         if (times.isEmpty()) return null
         return (times.min() - clock()).coerceAtLeast(0)
     }
 
-    /** Screen shown: pull what changed, then send what waits. Returns false when the server could not be reached. */
-    suspend fun syncNow(): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+    /**
+     * Screen shown: pull what changed, then send what waits. Returns false when the server could not be reached.
+     * 추가요청 2 (2026-10-15): [push] false while the note editor is open — what the auto save wrote stays local until
+     * the editing ends, so the server does not review the same half written note again and again.
+     */
+    suspend fun syncNow(push: Boolean = true): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
         mutex.withLock {
-            log("화면 동기화 시작")
+            log("화면 동기화 시작${if (push) "" else " (편집 중: 올리기 보류)"}")
             val pulled = pullLocked()
-            val pushed = if (pulled) uploadLocked(force = false).ok else false
+            val pushed = if (pulled && push) uploadLocked(force = false).ok else false
             log("화면 동기화 끝 받기=$pulled 올리기=$pushed")
-            pulled && pushed
+            pulled && (pushed || !push)
         }
     } ?: false.also { log("화면 동기화 시간 초과") }
 
@@ -181,6 +184,11 @@ internal class MemoSyncRunner(
         mutex.withLock { uploadLocked(force).ok }
     } ?: false.also { log("올리기 시간 초과") }
 
+    /** 앱17: the notes that wait go up now (no photos, no back-off), so an asked review sees what the phone shows. */
+    suspend fun pushNotes(): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+        mutex.withLock { pushNotesLocked(force = true).ok }
+    } ?: false.also { log("올리기 시간 초과") }
+
     /**
      * The one-time job after the screen went away (관리자 결정 2026-10-13 1-1 (가)): the attachments only, without
      * waiting for their back-off (WorkManager has its own). No `sync_push`: its answer can only be read through the
@@ -196,6 +204,7 @@ internal class MemoSyncRunner(
     // ---------------------------------------------------------------- pull
 
     private suspend fun pullLocked(): Boolean {
+        if (MemoSync.repairPhotosOnce(db)) log("사진 목록 복구: 한 번 전체 받기")
         var withSegments = true
         repeat(MAX_PULL_ROUNDS) {
             log("받기 요청")
@@ -231,11 +240,15 @@ internal class MemoSyncRunner(
         val now = clock()
         val local = db.suggestions().associateBy { it.id }
         val answering = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }.map { it.target }.toSet()
+        // 앱9 C: answered and confirmed by the server. An index written before the server had it still lists it as
+        // waiting; it must not come back as a card (and be answered a second time).
+        val done = memoAnsweredProposals(db)
         val seen = mutableSetOf<String>()
         db.transaction {
             items.forEach { o ->
                 val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@forEach
                 seen += id
+                if (id in done) return@forEach
                 val mine = local[id]
                 // An answer given here stays until the server has it (no flicker back to "waiting").
                 if (mine != null && (mine.status != MEMO_SUGGESTION_WAITING || id in answering)) return@forEach
@@ -279,17 +292,31 @@ internal class MemoSyncRunner(
         val due = if (force) db.outbox() else db.outboxDue(now)
         val notes = due.filter { it.kind == MEMO_OUTBOX_NOTE }.take(MemoSync.PUSH_BATCH)
         val answers = due.filter { it.kind == MEMO_OUTBOX_PROPOSAL }
-        val args = MemoSync.pushArgs(notes, device(), JSONArray(answers.mapNotNull { tryOrNull { JSONObject(it.payload) } }))
-            ?: return Pushed(true, 0)
-        log("올리기 요청 노트 ${notes.size}건 · 제안응답 ${answers.size}건")
-        val ack = callOrNull(MemoOp("sync_push", args.toArgs())) as? MemoResponse.SyncAck
+        // 앱15 A: the folder icons picked here go along (a renamed or removed folder's row is dropped, not sent).
+        val icons = MemoSync.dueFolderIcons(db, due)
+        val args = MemoSync.pushArgs(
+            notes,
+            device(),
+            JSONArray(answers.mapNotNull { tryOrNull { JSONObject(it.payload) } }),
+            MemoSync.folderIconsJson(icons),
+        ) ?: return Pushed(true, 0)
+        log("올리기 요청 노트 ${notes.size}건 · 제안응답 ${answers.size}건 · 폴더아이콘 ${icons.size}건")
+        // 앱15 F: the notes of this push show "동기화 중" from the request to the answer (or the failure).
+        val sending = notes.map { it.target }
+        MemoSendingNotes.start(sending)
+        val ack = try {
+            callOrNull(MemoOp("sync_push", args.toArgs())) as? MemoResponse.SyncAck
+        } finally {
+            MemoSendingNotes.end(sending)
+        }
         if (ack == null) {
             log("올리기 실패(답 없음)")
-            MemoSync.failUploads(db, notes + answers, now, "서버에 닿지 못함")
+            MemoSync.failUploads(db, notes + answers + icons, now, "서버에 닿지 못함")
             return Pushed(false, 0)
         }
         val result = MemoSync.applyAck(db, ack.content, notes, clock())
         applyProposalResults(ack.content.optJSONArray("제안결과"), answers)
+        MemoSync.applyFolderIconAck(db, icons)
         log("올리기 응답 받음 ${result.accepted} · 합침 ${result.merged} · 거절 ${result.rejected}")
         // 진단앱수신: a merged note whose server body is newer came back without it; fetched like a truncated note.
         result.wantedIds.take(MAX_GETS).forEach { id ->
@@ -306,17 +333,28 @@ internal class MemoSyncRunner(
         val answered = (0 until (results?.length() ?: 0))
             .mapNotNull { results?.optJSONObject(it) }
             .mapNotNull { r -> byId[r.optString("id")]?.let { row -> r to row } }
+        val confirmed = mutableListOf<String>()
         db.transaction {
             for ((r, row) in answered) {
-                if (r.optString("상태") == "오류") {
-                    // The server could not apply it (expired, gone): the local answer stands, nothing is retried.
-                    db.dropOutbox(row.seq)
-                } else {
-                    db.dropOutbox(row.seq)
-                    db.deleteSuggestion(row.target)
+                when (memoProposalResultOf(r)) {
+                    MemoProposalResult.Done -> {
+                        db.dropOutbox(row.seq)
+                        db.deleteSuggestion(row.target)
+                        confirmed += row.target
+                    }
+                    MemoProposalResult.Deferred -> {
+                        // Hidden until tomorrow by the server, which shows the same id again then: not remembered.
+                        db.dropOutbox(row.seq)
+                        db.deleteSuggestion(row.target)
+                    }
+                    // The server could not apply it (expired, gone) or answered a value this app does not know: the
+                    // local answer stands and nothing is sent again (앱9 C: unknown values are ignored safely).
+                    MemoProposalResult.NotApplied -> db.dropOutbox(row.seq)
                 }
             }
+            if (confirmed.isNotEmpty()) memoRememberAnswered(db, confirmed)
         }
+        if (answered.isNotEmpty()) log("제안결과 ${answered.size}건 정리")
     }
 
     /**
@@ -341,6 +379,8 @@ internal class MemoSyncRunner(
                 }
             }
             log("사진 올리기 ${sealed.cipher.size}바이트")
+            // 앱15 F: the note of this photo shows "동기화 중" while the photo goes up.
+            MemoSendingNotes.start(listOf(noteId))
             val mxc = try {
                 transport.upload(sealed.cipher)
             } catch (e: CancellationException) {
@@ -354,6 +394,8 @@ internal class MemoSyncRunner(
                 log("사진 올리기 실패 (${e.javaClass.simpleName})")
                 uploadFailed(a)
                 return false
+            } finally {
+                MemoSendingNotes.end(listOf(noteId))
             }
             log("사진 올림")
             val now = clock()
@@ -463,6 +505,9 @@ internal class MemoSyncRunner(
 
 private fun JSONObject.toArgs(): Map<String, Any?> = keys().asSequence().associateWith { opt(it) }
 
+/** The outbox kinds that go up with `sync_push` (앱15 A: the folder icons picked here too). */
+private val PUSHED_KINDS = setOf(MEMO_OUTBOX_NOTE, MEMO_OUTBOX_PROPOSAL, MEMO_OUTBOX_FOLDER_ICON)
+
 /**
  * A `get` answer (`머리말` + `본문` + `첨부`) as a `노트변경` (이벤트규약 v2 §5), so the same merge stores it. The header
  * holds the stamps (`rev`, `수정기기`, `수정순번`) and the content hash.
@@ -487,6 +532,9 @@ internal fun memoChangeOfNote(note: MemoNote): JSONObject {
         .put("머리말", h)
     h.optJSONObject("rev")?.let { o.put("rev", it) }
     h.optJSONObject("링크")?.let { o.put("링크", it) }
+    // 앱10: a `get` answer has no top level besides its header, so the number and the user time are read from there.
+    h.optInt(MEMO_FIELD_NUMBER, 0).takeIf { it > 0 }?.let { o.put(MEMO_FIELD_NUMBER, it) }
+    h.optString(MEMO_FIELD_USER_MODIFIED).takeIf { it.isNotEmpty() }?.let { o.put(MEMO_FIELD_USER_MODIFIED, it) }
     val files = JSONArray()
     note.attachments.forEach { a ->
         val f = JSONObject().put("mxc", a.mxc)
@@ -494,4 +542,39 @@ internal fun memoChangeOfNote(note: MemoNote): JSONObject {
         files.put(f)
     }
     return o.put("첨부", files)
+}
+
+/** What a `제안결과[]` item means for the phone (규약-지시.md "제안결과 추가 값"). */
+internal enum class MemoProposalResult { Done, Deferred, NotApplied }
+
+internal fun memoProposalResultOf(r: JSONObject): MemoProposalResult = when (r.optString("상태")) {
+    MEMO_SUGGESTION_ACCEPTED, MEMO_SUGGESTION_DISMISSED, "무시" -> MemoProposalResult.Done
+    MEMO_SUGGESTION_DEFERRED -> MemoProposalResult.Deferred
+    // 서버 4차: the same answer came again. `원상태` 보류 is shown again tomorrow, the others are over.
+    "이미처리" -> if (r.optString("원상태") == MEMO_SUGGESTION_DEFERRED) MemoProposalResult.Deferred else MemoProposalResult.Done
+    else -> MemoProposalResult.NotApplied
+}
+
+private const val STATE_ANSWERED = "answered_proposals"
+
+/** How many confirmed suggestion ids are remembered (an index rewritten later no longer lists them). */
+internal const val MEMO_ANSWERED_KEEP = 300
+
+/** The suggestion ids the server confirmed as answered (앱9 C), newest last. */
+internal fun memoAnsweredProposals(db: MemoDb): Set<String> =
+    memoAnsweredList(db).toSet()
+
+private fun memoAnsweredList(db: MemoDb): List<String> {
+    val raw = db.state(STATE_ANSWERED) ?: return emptyList()
+    return try {
+        JSONArray(raw).strings()
+    } catch (e: org.json.JSONException) {
+        emptyList()
+    }
+}
+
+internal fun memoRememberAnswered(db: MemoDb, ids: List<String>) {
+    val old = memoAnsweredList(db)
+    val all = (old.filter { it !in ids } + ids.distinct()).takeLast(MEMO_ANSWERED_KEEP)
+    db.setState(STATE_ANSWERED, JSONArray(all).toString())
 }

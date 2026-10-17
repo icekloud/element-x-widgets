@@ -106,7 +106,8 @@ class MemoUntitledTest : RobolectricTest() {
     fun `the display title is the first non empty line, cut, and the id when there is nothing`() {
         assertEquals("둘째", memoDisplayTitle("", "\n  둘째  \n셋째", "n1"))
         assertEquals("x".repeat(MEMO_TITLE_CHARS), memoDisplayTitle("", "x".repeat(99), "n1"))
-        assertEquals("n1", memoDisplayTitle("", "", "n1"))
+        // 앱11 B: never the note id; the screens draw `#번호  날짜` instead.
+        assertEquals("", memoDisplayTitle("", "", "n1"))
         assertEquals("제목", memoDisplayTitle("제목", "본문", "n1"))
     }
 }
