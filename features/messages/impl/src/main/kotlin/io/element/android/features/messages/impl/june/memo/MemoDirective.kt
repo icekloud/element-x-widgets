@@ -52,24 +52,27 @@ internal object MemoDirectiveStatus {
     val OPEN = setOf(RECEIVED, WORKING)
     private val SERVER = setOf(RECEIVED, WORKING, DONE, QUESTION, FAILED, REFUSED)
 
-    /** 앱18 ①: on its way (sending, or open on the server); "지우기" keeps these, the answer is still to come. */
+    /** 앱18 ①: on its way (sending, or open on the server); the question before "지우기" counts them. */
     val RUNNING = setOf(SENDING, RECEIVED, WORKING)
 
     fun isServer(status: String) = status in SERVER
 }
 
-/**
- * 앱18 ① (관리자: "메모봇에 한 지시 내용을 클리어하는 버튼"): the instructions "지우기" takes off the list, the ended ones
- * (완료, 질문, 실패, 거절, 못보냄, and a status the phone does not know). The running ones stay.
- */
-internal fun memoDirectivesClearable(items: List<MemoDirective>): List<MemoDirective> = items.filter { it.status !in MemoDirectiveStatus.RUNNING }
+/** 앱18 추가요청 1: how many cleared ids the phone remembers (the newest), so a late answer for one is ignored. */
+internal const val MEMO_DIRECTIVE_CLEARED_KEEP = 100
 
-/** The question before "지우기": how many go, that the bot's work stays, and how many running ones stay. */
+/**
+ * 앱18 ① (관리자: "메모봇에 한 지시 내용을 클리어하는 버튼"), 추가요청 1 ("그냥 화면상의 내용 정리하는 기능"): "지우기" only tidies
+ * the screen, so every instruction goes, the running ones too (보내는중, 접수, 처리중). The bot's work goes on.
+ */
+internal fun memoDirectivesClearable(items: List<MemoDirective>): List<MemoDirective> = items
+
+/** The question before "지우기": how many go, that the bot's work is not touched, and that running ones go from the screen only. */
 internal fun memoDirectivesClearText(items: List<MemoDirective>): String {
     val gone = memoDirectivesClearable(items).size
-    val kept = items.size - gone
-    val keep = if (kept > 0) " 진행 중 ${kept}건은 남아요." else ""
-    return "지시 ${gone}건을 목록에서 지울까요? 메모봇이 이미 한 일은 되돌려지지 않아요.$keep"
+    val running = items.count { it.status in MemoDirectiveStatus.RUNNING }
+    val also = if (running > 0) "\n진행 중 ${running}건도 화면에서만 지워져요" else ""
+    return "지시 ${gone}건을 화면에서 지울까요? 메모봇이 하는 일에는 영향이 없어요$also"
 }
 
 internal data class MemoDirective(
@@ -150,6 +153,9 @@ private const val LAST_POLL_MS = 180_000L
 private const val NOT_FOUND_WORDS = "찾지 못"
 
 private const val STATE_DIRECTIVES = "directives"
+
+/** 앱18 추가요청 1: the ids "지우기" took off, a JSON array of strings in the same state table (no schema change). */
+private const val STATE_CLEARED = "directives_cleared"
 private const val ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 /** `<device>-<yyyyMMdd-HHmmss>-<4 chars>`: within the server id rule `[A-Za-z0-9._-]{1,64}`. */
@@ -276,8 +282,10 @@ internal class MemoDirectives(
         val r = callOrNull(MemoOp.directivePoll(open.map { it.id })) as? MemoResponse.Ok ?: return 0
         val rows = r.content.optJSONArray("결과") ?: JSONArray()
         val byId = open.associateBy { it.id }
+        // 추가요청 1: an instruction cleared while this look-up was on its way does not come back.
+        val cleared = withContext(dispatcher) { readCleared() }.toSet()
         val changed = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull { o ->
-            val mine = byId[o.optString("id")] ?: return@mapNotNull null
+            val mine = byId[o.optString("id")]?.takeIf { it.id !in cleared } ?: return@mapNotNull null
             val status = o.optString("상태").takeIf(MemoDirectiveStatus::isServer) ?: return@mapNotNull null
             val message = o.optString("메시지")
             // 추가요청 3: a send cut short that never reached the server can be sent again (same id), not "실패".
@@ -295,18 +303,34 @@ internal class MemoDirectives(
     }
 
     /**
-     * 앱18 ① "지우기": takes the ended instructions off the phone list (the `directives` state only). The server keeps its
-     * record and the notes; the running ones stay and are still asked about. No list of the cleared ids is needed: a
-     * look-up only asks for the ids still on the list, and its answers only change the ids still on it. Returns how many went.
+     * 앱18 ① "지우기", 추가요청 1: takes every instruction off the phone list, the running ones too (the `directives` state
+     * only, nothing is sent). The server keeps its record and the notes, and the bot goes on with what it does. The ids
+     * are remembered (`directives_cleared`, the newest [MEMO_DIRECTIVE_CLEARED_KEEP]) so a late answer of the server for
+     * one of them is ignored; a send still on its way does not put it back either ([update] only changes the list).
+     * Returns how many went.
      */
     suspend fun clear(): Int = mutex.withLock {
         withContext(dispatcher) {
             val all = read()
-            val gone = memoDirectivesClearable(all).map { it.id }.toSet()
-            if (gone.isNotEmpty()) write(all.filter { it.id !in gone })
+            val gone = memoDirectivesClearable(all).map { it.id }
+            if (gone.isNotEmpty()) {
+                val ids = (readCleared() + gone).distinct().takeLast(MEMO_DIRECTIVE_CLEARED_KEEP)
+                db.setState(STATE_CLEARED, JSONArray(ids).toString())
+                write(all.filter { it.id !in gone })
+            }
             gone.size
         }
     }.also { log("지시 지움 ${it}건") }
+
+    private fun readCleared(): List<String> {
+        val raw = db.state(STATE_CLEARED) ?: return emptyList()
+        val a = try {
+            JSONArray(raw)
+        } catch (e: org.json.JSONException) {
+            return emptyList()
+        }
+        return (0 until a.length()).map { a.optString(it) }.filter { it.isNotEmpty() }
+    }
 
     private suspend fun update(changed: List<MemoDirective>, keepSentMs: Boolean) {
         if (changed.isEmpty()) return

@@ -34,7 +34,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 앱18 ①: "지우기" on the line of the instructions asks once, then takes the ended ones off; the running ones stay. */
+/** 앱18 ①, 추가요청 1: "지우기" on the line of the instructions asks once, then takes every instruction off the screen. */
 class MemoPanelClearUiTest : RobolectricTest() {
     /** The memo bot room: the open instruction stays 처리중 (no answer yet). */
     private class Room : MemoSyncTransport {
@@ -77,7 +77,7 @@ class MemoPanelClearUiTest : RobolectricTest() {
     }
 
     @Test
-    fun `clear asks once, takes the ended instructions off and keeps the running one`() = runAndroidComposeUiTest<ComponentActivity> {
+    fun `clear asks once, then takes every instruction off the screen, the running one too`() = runAndroidComposeUiTest<ComponentActivity> {
         val now = System.currentTimeMillis()
         val db = db(
             MemoDirective("done", "끝난 지시", MemoDirectiveStatus.DONE, "했어요", now - 60_000),
@@ -92,32 +92,40 @@ class MemoPanelClearUiTest : RobolectricTest() {
         onNodeWithText("메모봇에 한 지시 3건").assertIsDisplayed()
         // Cancel: nothing goes.
         onNodeWithTag(MemoTags.PANEL_CLEAR).performClick()
-        onNodeWithText("지시 2건을 목록에서 지울까요? 메모봇이 이미 한 일은 되돌려지지 않아요. 진행 중 1건은 남아요.").assertIsDisplayed()
+        onNodeWithText("지시 3건을 화면에서 지울까요? 메모봇이 하는 일에는 영향이 없어요\n진행 중 1건도 화면에서만 지워져요").assertIsDisplayed()
         onNodeWithText("취소").performClick()
         waitForIdle()
         assertEquals(3, d.items.value.size)
-        // 지우기: the two ended ones go, the running one stays; the button goes (nothing more to clear).
+        // 지우기: all three go, the running one too; the line and the button go with them.
         onNodeWithTag(MemoTags.PANEL_CLEAR).performClick()
         onNode(hasTestTag(TestTags.dialogPositive.value)).performClick()
-        waitUntil(timeoutMillis = 5_000) { d.items.value.size == 1 }
-        assertEquals(listOf("run"), d.items.value.map { it.id })
+        waitUntil(timeoutMillis = 5_000) { d.items.value.isEmpty() }
         waitForIdle()
         assertTrue(onAllNodes(hasText("끝난 지시"), useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
-        onNodeWithText("메모봇에 한 지시 1건").assertIsDisplayed()
+        assertTrue(onAllNodes(hasText("진행 중인 지시"), useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodes(hasText("메모봇에 한 지시", substring = true)).fetchSemanticsNodes().isEmpty())
         assertTrue(onAllNodes(hasTestTag(MemoTags.PANEL_CLEAR)).fetchSemanticsNodes().isEmpty())
-        // Nothing of the clear went to the server (only the look-ups of the open one).
+        onNodeWithTag(MemoTags.PANEL_EMPTY).assertIsDisplayed()
+        // Nothing of the clear went to the server (only the look-up made when the area opened).
         assertTrue(room.ops.all { it.op == "지시조회" })
-        // The phone list is the same after a restart.
-        assertEquals(listOf("run"), runBlocking { MemoDirectives(db, room, dispatcher = Dispatchers.Unconfined).load() }.map { it.id })
+        // The phone list is the same after a restart, and a late answer for the running one does not bring it back.
+        val again = MemoDirectives(db, room, dispatcher = Dispatchers.Unconfined)
+        assertTrue(runBlocking { again.load() }.isEmpty())
+        assertEquals(0, runBlocking { again.poll() })
+        assertTrue(again.items.value.isEmpty())
     }
 
     @Test
-    fun `no clear button while every instruction is still running`() = runAndroidComposeUiTest<ComponentActivity> {
+    fun `a running instruction alone can be cleared too`() = runAndroidComposeUiTest<ComponentActivity> {
         val db = db(MemoDirective("run", "진행 중인 지시", MemoDirectiveStatus.WORKING, "", System.currentTimeMillis() - 240_000))
-        panel(MemoDirectives(db, Room(), dispatcher = Dispatchers.Unconfined))
+        val d = MemoDirectives(db, Room(), dispatcher = Dispatchers.Unconfined)
+        panel(d)
         waitUntil(timeoutMillis = 5_000) { onAllNodes(hasText("진행 중인 지시"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
         onNodeWithText("메모봇에 한 지시 1건").assertIsDisplayed()
-        assertTrue(onAllNodes(hasTestTag(MemoTags.PANEL_CLEAR)).fetchSemanticsNodes().isEmpty())
+        onNodeWithTag(MemoTags.PANEL_CLEAR).performClick()
+        onNodeWithText("지시 1건을 화면에서 지울까요? 메모봇이 하는 일에는 영향이 없어요\n진행 중 1건도 화면에서만 지워져요").assertIsDisplayed()
+        onNode(hasTestTag(TestTags.dialogPositive.value)).performClick()
+        waitUntil(timeoutMillis = 5_000) { d.items.value.isEmpty() }
     }
 
     @Test

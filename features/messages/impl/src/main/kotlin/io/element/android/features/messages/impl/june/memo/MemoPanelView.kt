@@ -246,8 +246,8 @@ internal fun MemoPanelContent(
 }
 
 /**
- * 앱18 ①: the line over the input, "메모봇에 한 지시 N건" and "지우기" on its right. The button is there only when an ended
- * instruction can go; the running ones stay on the list (their answer is still to come).
+ * 앱18 ①: the line over the input, "메모봇에 한 지시 N건" and "지우기" on its right ([canClear]: there is something to clear).
+ * 추가요청 1: it only tidies the screen, every instruction goes.
  */
 @Composable
 private fun MemoDirectiveHead(count: Int, canClear: Boolean, onClear: () -> Unit) {
