@@ -189,7 +189,7 @@ internal fun MemoPanelContent(
             }
         }
         if (directives != null && sentList.isNotEmpty()) {
-            MemoDirectiveHead(sentList, onClear = { askClear = true })
+            MemoDirectiveHead(count = sentList.size, canClear = memoDirectivesClearable(sentList).isNotEmpty(), onClear = { askClear = true })
         }
         controller.error?.let { (reason, _) ->
             Text(
@@ -250,15 +250,15 @@ internal fun MemoPanelContent(
  * instruction can go; the running ones stay on the list (their answer is still to come).
  */
 @Composable
-private fun MemoDirectiveHead(items: List<MemoDirective>, onClear: () -> Unit) {
+private fun MemoDirectiveHead(count: Int, canClear: Boolean, onClear: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "메모봇에 한 지시 ${items.size}건",
+            "메모봇에 한 지시 ${count}건",
             modifier = Modifier.weight(1f),
             style = ElementTheme.typography.fontBodySmMedium,
             color = ElementTheme.colors.textSecondary,
         )
-        if (memoDirectivesClearable(items).isNotEmpty()) {
+        if (canClear) {
             Text(
                 "지우기",
                 modifier = Modifier.clickable(onClick = onClear).padding(8.dp).testTag(MemoTags.PANEL_CLEAR),
@@ -279,6 +279,7 @@ private fun MemoDirectiveHead(items: List<MemoDirective>, onClear: () -> Unit) {
 private fun MemoPanelFollow(listState: LazyListState, rows: Int, shape: String, cause: MemoPanelScroll, done: () -> Unit) {
     var atBottom by remember { mutableStateOf(true) }
     val currentRows by rememberUpdatedState(rows)
+    val handled by rememberUpdatedState(done)
     LaunchedEffect(listState) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collect { atBottom = !listState.canScrollForward }
     }
@@ -290,7 +291,7 @@ private fun MemoPanelFollow(listState: LazyListState, rows: Int, shape: String, 
             listState.toBottom(rows)
             atBottom = true
         }
-        if (cause != MemoPanelScroll.Change) done()
+        if (cause != MemoPanelScroll.Change) handled()
     }
 }
 

@@ -62,7 +62,7 @@ class MemoPanelClearUiTest : RobolectricTest() {
     private fun db(vararg items: MemoDirective): MemoDb {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         MemoDb.Schema.create(driver)
-        return MemoDb(driver).also { it.setState("directives", JSONArray(items.map { d -> d.toJson() }).toString()) }
+        return MemoDb(driver).apply { setState("directives", JSONArray(items.map { d -> d.toJson() }).toString()) }
     }
 
     private fun AndroidComposeUiTest<ComponentActivity>.panel(directives: MemoDirectives?) {
