@@ -85,8 +85,21 @@ class WidgetRoomRepository(
     /**
      * Element June: rooms of the bot picker. [cacheOnly] reads the local cache only (fast, for the first frame).
      */
-    suspend fun botPickerRooms(sessionId: String, cacheOnly: Boolean): List<WidgetRoom> {
+    suspend fun botPickerPlan(sessionId: String, cacheOnly: Boolean): BotPickerPlan {
         val all = (if (cacheOnly) null else fetchRooms(sessionId)) ?: store.getCachedRooms(sessionId).values.toList()
+        // 앱15 B: some rooms of the order stay, the other places follow the badges ([botPickerSlots]).
+        // 앱16 A: which places stay is told by the screen (the picker knows where each node is drawn).
+        return BotPickerPlan(
+            ordered = botPickerOrder(sessionId, all),
+            candidates = botRooms(all),
+            counts = store.getBotPickerSlotCounts(),
+            side = store.getBotPickerFixedSide(),
+            marks = store.getBotBadgeMarks(sessionId),
+        )
+    }
+
+    /** The "펼쳐질 순서" list: the rooms the user chose, in order, or the default list when none were chosen. */
+    fun botPickerOrder(sessionId: String, all: Collection<WidgetRoom>): List<WidgetRoom> {
         val chosen = store.getBotPickerRoomIds(sessionId) ?: return defaultBotRooms(all)
         val byId = all.associateBy { it.roomId }
         return chosen.mapNotNull { byId[it] }
@@ -94,10 +107,14 @@ class WidgetRoomRepository(
 
     /** Default bot picker rooms: one-to-one rooms except home-ops, most recent first, at most 6. */
     fun defaultBotRooms(all: Collection<WidgetRoom>): List<WidgetRoom> {
-        return all.filter { it.direct && !it.name.contains("home-ops", ignoreCase = true) }
+        return botRooms(all)
             .sortedByDescending { it.timestamp ?: 0L }
             .take(6)
     }
+
+    /** The bot rooms: one-to-one rooms except home-ops. */
+    private fun botRooms(all: Collection<WidgetRoom>): List<WidgetRoom> =
+        all.filter { it.direct && !it.name.contains("home-ops", ignoreCase = true) }
 
     private suspend fun fetchRooms(sessionId: String): List<WidgetRoom>? {
         val client = restoredClient(sessionId) ?: return null
@@ -106,6 +123,8 @@ class WidgetRoomRepository(
         } ?: return null
         val rooms = summaries.map { it.toWidgetRoom() }
         store.saveCachedRooms(sessionId, rooms)
+        // 앱15 B: every fresh list (widget refresh, picker, settings) notes when a badge went up.
+        store.saveBotBadgeMarks(sessionId, botBadgeMarks(store.getBotBadgeMarks(sessionId), rooms, System.currentTimeMillis()))
         return rooms
     }
 

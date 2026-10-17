@@ -168,7 +168,18 @@ internal class FakeMemoBackend(
                 if (folders.any { it.path == path }) {
                     err("이미 있는 폴더입니다")
                 } else {
-                    folders += MemoFolder(path, a["icon"] as? String ?: "📁", 0, source = "사용자")
+                    folders += MemoFolder(path, memoFolderIcon(path, a["icon"] as? String), 0, source = "사용자")
+                    ok(null, path)
+                }
+            }
+            MEMO_OP_FOLDER_ICON -> {
+                val path = (a["path"] as? String).orEmpty()
+                val i = folders.indexOfFirst { it.path == path }
+                val icon = memoChosenFolderIcon(a["icon"])
+                if (i < 0 || icon == null) {
+                    err("폴더나 아이콘이 맞지 않습니다")
+                } else {
+                    folders[i] = folders[i].copy(icon = memoFolderIcon(path, icon))
                     ok(null, path)
                 }
             }
@@ -222,7 +233,7 @@ internal class FakeMemoBackend(
                 proposals.remove(p)
                 if (p.isFolderCreate) {
                     val path = a["folder"] as? String ?: p.folder ?: return err("폴더 이름이 없습니다")
-                    if (folders.none { it.path == path }) folders += MemoFolder(path, "📁", 0, source = "사용자")
+                    if (folders.none { it.path == path }) folders += MemoFolder(path, memoAutoFolderIcon(path), 0, source = "사용자")
                     ok(id, path)
                 } else {
                     ok(id)
