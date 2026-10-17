@@ -97,6 +97,8 @@ internal object MemoTags {
     const val PANEL_SEND = "memo_panel_send"
     const val PANEL_DIRECTIVE = "memo_panel_directive"
     const val PANEL_RESEND = "memo_panel_resend"
+    const val PANEL_LIST = "memo_panel_list"
+    const val PANEL_CLEAR = "memo_panel_clear"
     const val PANEL_BADGE = "memo_panel_badge"
     const val PROPOSAL_SENDING = "memo_proposal_sending"
     const val BAND = "memo_band"
@@ -321,9 +323,9 @@ internal class MemoController(
         scope.launch {
             before()
             val sent = r.request(fresh)
-            notice = MemoNotice(memoReviewSentText(sent))
+            notice = MemoNotice(memoReviewSentText(sent), memoReviewSentShowMs(sent))
             if (sent.accepted.isEmpty()) return@launch
-            val job = scope.launch { r.follow(sent.accepted)?.let { notice = MemoNotice(it) } }
+            val job = scope.launch { r.follow(sent.accepted)?.let { notice = MemoNotice(it, MEMO_NOTICE_RESULT_SHOW_MS) } }
             following += job
             job.invokeOnCompletion { following -= job }
         }

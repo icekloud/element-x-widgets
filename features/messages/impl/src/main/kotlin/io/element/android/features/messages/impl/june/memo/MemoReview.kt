@@ -41,8 +41,14 @@ internal const val MEMO_REVIEW_FOLLOW_MS = 120_000L
 /** A card pushed to the left this part of its width or more asks for its review when let go. */
 internal const val MEMO_REVIEW_SWIPE_FRACTION = 0.3f
 
-/** The notice under the error banner stays this long. */
+/** The notice under the error banner stays this long (the request taken). */
 internal const val MEMO_NOTICE_SHOW_MS = 4_000L
+
+/** 앱18 ③: a result (검토 완료, 검토 실패, 검토 요청 실패) stays longer; a tap still closes it at once. */
+internal const val MEMO_NOTICE_RESULT_SHOW_MS = 8_000L
+
+/** 앱18 ③: the longest reason of "제안 없음" the notice shows (the banner has two lines). */
+internal const val MEMO_REVIEW_REASON_CHARS = 60
 
 /** What the screen reader offers on a card, and the label of the review button and the swipe hint. */
 internal const val MEMO_REVIEW_ACTION = "AI 검토 요청"
@@ -145,8 +151,11 @@ internal fun memoReviewSentText(r: MemoReviewSent): String {
     }
 }
 
-/** The state of one note in a `review_status` answer. */
-internal data class MemoReviewProgress(val id: String, val state: String, val result: String = "", val time: String = "")
+/**
+ * The state of one note in a `review_status` answer. 앱18 ③: [reason] is the server's one line on why a review ended
+ * with "제안 없음" (서버 14차 `사유`); empty when the server does not send it (서버 13차) or for another result.
+ */
+internal data class MemoReviewProgress(val id: String, val state: String, val result: String = "", val time: String = "", val reason: String = "")
 
 internal object MemoReviewStates {
     const val WAITING = "대기"
@@ -160,7 +169,9 @@ internal object MemoReviewStates {
 internal fun memoReviewStates(content: JSONObject): List<MemoReviewProgress> {
     val rows = content.optJSONArray("상태") ?: JSONArray()
     return (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull { o ->
-        o.optString("id").takeIf { it.isNotEmpty() }?.let { MemoReviewProgress(it, o.optString("상태"), o.optString("결과"), o.optString("시각")) }
+        o.optString("id").takeIf { it.isNotEmpty() }?.let {
+            MemoReviewProgress(it, o.optString("상태"), o.optString("결과"), o.optString("시각"), o.optString("사유"))
+        }
     }
 }
 
@@ -180,18 +191,35 @@ internal fun memoReviewProposals(result: String): Int? = when {
 
 /**
  * The notice when the reviews of [ids] are done: "검토 완료: 제안 2건" / "검토 완료: 제안 없음" / "검토 실패". With more than one
- * note the proposals add up and the failed ones are counted beside them.
+ * note the proposals add up and the failed ones are counted beside them. 앱18 ③: one note without a proposal tells the
+ * server's reason ("검토 완료: 제안 없음 — <사유>", cut to [MEMO_REVIEW_REASON_CHARS]); more notes without any proposal
+ * only count them ("검토 완료: 제안 없음 2건"), the reasons would not fit.
  */
 internal fun memoReviewDoneText(ids: List<String>, states: List<MemoReviewProgress>): String {
     val done = states.filter { it.id in ids && it.state == MemoReviewStates.DONE }
     val failed = done.count { it.result.trim() == MemoReviewStates.FAILED || memoReviewProposals(it.result) == null }
     val proposals = done.sumOf { memoReviewProposals(it.result) ?: 0 }
     val ok = done.size - failed
+    val failedText = if (failed > 0) " (실패 ${failed}건)" else ""
     return when {
         ok == 0 -> "검토 실패"
-        else -> (if (proposals > 0) "검토 완료: 제안 ${proposals}건" else "검토 완료: 제안 없음") + if (failed > 0) " (실패 ${failed}건)" else ""
+        proposals > 0 -> "검토 완료: 제안 ${proposals}건$failedText"
+        ok > 1 -> "검토 완료: 제안 없음 ${ok}건$failedText"
+        else -> {
+            val reason = memoReviewReasonText(done.first { memoReviewProposals(it.result) == 0 }.reason)
+            "검토 완료: 제안 없음" + (if (reason.isEmpty()) "" else " — $reason") + failedText
+        }
     }
 }
+
+/** The reason on one line, at most [MEMO_REVIEW_REASON_CHARS] (a longer one ends with "…"). */
+internal fun memoReviewReasonText(reason: String): String {
+    val line = reason.split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+    return if (line.length <= MEMO_REVIEW_REASON_CHARS) line else line.take(MEMO_REVIEW_REASON_CHARS - 1).trimEnd() + "…"
+}
+
+/** 앱18 ③: how long the notice after a press stays; a failed request is a result and stays as long as one. */
+internal fun memoReviewSentShowMs(r: MemoReviewSent): Long = if (r.failure != null) MEMO_NOTICE_RESULT_SHOW_MS else MEMO_NOTICE_SHOW_MS
 
 /** When to ask again: [MEMO_REVIEW_POLL_MS] while the follow-up is younger than [MEMO_REVIEW_FOLLOW_MS], then null (stop). */
 internal fun memoReviewPollDelayMs(startMs: Long, nowMs: Long): Long? =

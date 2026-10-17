@@ -9,6 +9,7 @@ package io.element.android.features.messages.impl.june.memo
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +22,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.element.android.compound.theme.ElementTheme
+import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.theme.components.Text
 import io.element.android.libraries.designsystem.theme.components.TextField
 import kotlinx.coroutines.delay
@@ -49,9 +54,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 앱9 A·D: the proposal area of the memo bot room, full screen over the room (back closes it). The waiting cards on
- * top, "내 지시 → 메모봇 답" below them, and the instruction input at the bottom ([directives] null = no server, the fake
- * data mode: the input is off).
+ * 앱9 A·D: the proposal area of the memo bot room, full screen over the room (back closes it), with the instruction
+ * input at the bottom ([directives] null = no server, the fake data mode: the input is off). 앱18 ②: the waiting cards and
+ * "내 지시 → 메모봇 답" are one list like a chat (oldest on top, [memoPanelTimeline]) that opens at its newest row, the
+ * bottom; 앱18 ① a line over the input takes the ended instructions off the list ("지우기").
  */
 @Composable
 internal fun MemoPanel(
@@ -80,6 +86,13 @@ internal fun MemoPanelContent(
     var text by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     val synced by rememberUpdatedState(onSync)
+    val entries = remember(groups, sentList) { memoPanelTimeline(groups, sentList) }
+    // The empty line stays on top while there is no card; the rows of the list are it and the entries.
+    val rows = entries.size + if (groups.isEmpty()) 1 else 0
+    val listState = rememberLazyListState()
+    var scrollCause by remember { mutableStateOf(MemoPanelScroll.Open) }
+    var askClear by remember { mutableStateOf(false) }
+    MemoPanelFollow(listState, rows, entries.joinToString("|") { it.key + "=" + it.look }, scrollCause) { scrollCause = MemoPanelScroll.Change }
 
     suspend fun pollOnce() {
         if (directives == null) return
@@ -117,6 +130,7 @@ internal fun MemoPanelContent(
         val sentence = text.trim()
         if (sentence.isEmpty() || sending) return
         sending = true
+        scrollCause = MemoPanelScroll.Send
         scope.launch {
             try {
                 val ended = d.send(sentence)
@@ -142,6 +156,7 @@ internal fun MemoPanelContent(
             Text(
                 "새로고침",
                 modifier = Modifier.clickable {
+                    scrollCause = MemoPanelScroll.Refresh
                     scope.launch {
                         synced()
                         pollOnce()
@@ -152,7 +167,8 @@ internal fun MemoPanelContent(
             )
         }
         LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.PANEL_LIST),
+            state = listState,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -165,20 +181,15 @@ internal fun MemoPanelContent(
                     )
                 }
             }
-            items(groups, key = { it.key }) { g -> MemoProposalCard(controller, g) }
-            if (sentList.isNotEmpty()) {
-                item(key = "dir-head") {
-                    Text(
-                        "메모봇에 한 지시",
-                        modifier = Modifier.padding(top = 12.dp),
-                        style = ElementTheme.typography.fontBodySmMedium,
-                        color = ElementTheme.colors.textSecondary,
-                    )
-                }
-                items(sentList, key = { "d-" + it.id }) { d ->
-                    MemoDirectiveRow(d, nowMs, onResend = { scope.launch { directives?.resend(d.id) } })
+            items(entries, key = { it.key }) { e ->
+                when (e) {
+                    is MemoPanelEntry.Card -> MemoProposalCard(controller, e.group)
+                    is MemoPanelEntry.Order -> MemoDirectiveRow(e.directive, nowMs, onResend = { scope.launch { directives?.resend(e.directive.id) } })
                 }
             }
+        }
+        if (directives != null && sentList.isNotEmpty()) {
+            MemoDirectiveHead(sentList, onClear = { askClear = true })
         }
         controller.error?.let { (reason, _) ->
             Text(
@@ -219,7 +230,79 @@ internal fun MemoPanelContent(
             }
         }
     }
+    if (askClear && directives != null) {
+        ConfirmationDialog(
+            content = memoDirectivesClearText(sentList),
+            submitText = "지우기",
+            cancelText = "취소",
+            destructiveSubmit = true,
+            onSubmitClick = {
+                askClear = false
+                scope.launch { directives.clear() }
+            },
+            onDismiss = { askClear = false },
+        )
+    }
 }
+
+/**
+ * 앱18 ①: the line over the input, "메모봇에 한 지시 N건" and "지우기" on its right. The button is there only when an ended
+ * instruction can go; the running ones stay on the list (their answer is still to come).
+ */
+@Composable
+private fun MemoDirectiveHead(items: List<MemoDirective>, onClear: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "메모봇에 한 지시 ${items.size}건",
+            modifier = Modifier.weight(1f),
+            style = ElementTheme.typography.fontBodySmMedium,
+            color = ElementTheme.colors.textSecondary,
+        )
+        if (memoDirectivesClearable(items).isNotEmpty()) {
+            Text(
+                "지우기",
+                modifier = Modifier.clickable(onClick = onClear).padding(8.dp).testTag(MemoTags.PANEL_CLEAR),
+                color = ElementTheme.colors.textActionAccent,
+                style = ElementTheme.typography.fontBodySmMedium,
+            )
+        }
+    }
+}
+
+/**
+ * 앱18 ②: keeps the list at its newest row. [cause] Open, Refresh and Send always go down; a change of the rows ([shape])
+ * only when the list was at the bottom ([memoPanelFollows]), and so does a smaller area (the keyboard opened). "At the
+ * bottom" is read when the list is scrolled (by the user or here), not when rows come, so a new row does not make it
+ * look as if the user had scrolled up. [done] tells the caller the cause has been handled.
+ */
+@Composable
+private fun MemoPanelFollow(listState: LazyListState, rows: Int, shape: String, cause: MemoPanelScroll, done: () -> Unit) {
+    var atBottom by remember { mutableStateOf(true) }
+    val currentRows by rememberUpdatedState(rows)
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collect { atBottom = !listState.canScrollForward }
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.viewportSize }.collect { if (atBottom) listState.toBottom(currentRows) }
+    }
+    LaunchedEffect(shape, cause) {
+        if (memoPanelFollows(cause, atBottom)) {
+            listState.toBottom(rows)
+            atBottom = true
+        }
+        if (cause != MemoPanelScroll.Change) done()
+    }
+}
+
+/** Down to the end of the last row, also when that row is taller than the area (a few steps of one area height at most). */
+private suspend fun LazyListState.toBottom(rows: Int) {
+    if (rows <= 0) return
+    scrollToItem(rows - 1)
+    var steps = 0
+    while (canScrollForward && steps++ < MEMO_PANEL_BOTTOM_STEPS) scrollBy(layoutInfo.viewportSize.height.coerceAtLeast(1).toFloat())
+}
+
+private const val MEMO_PANEL_BOTTOM_STEPS = 4
 
 /** "내 지시 → 메모봇 답": the sentence on the right, the answer (or the state) on the left. */
 @Composable

@@ -62,6 +62,9 @@ internal data class MemoProposalGroup(val proposals: List<MemoProposal>) {
     val isWaiting: Boolean get() = first.isWaiting
     val isSending: Boolean get() = first.status == MEMO_PROPOSAL_SENDING
 
+    /** 앱18 ②: the earliest time the phone got one of its proposals, 0 when none is known. */
+    val seenMs: Long get() = proposals.map { it.seenMs }.filter { it > 0 }.minOrNull() ?: 0
+
     companion object {
         fun of(p: MemoProposal) = MemoProposalGroup(listOf(p))
     }
@@ -72,6 +75,58 @@ private fun groupKey(p: MemoProposal) = listOf(p.noteId.orEmpty(), p.kind, memoP
 /** The cards of the proposal area, in the order of the index. */
 internal fun memoPanelGroups(index: MemoIndex): List<MemoProposalGroup> =
     index.proposals.groupBy(::groupKey).values.map(::MemoProposalGroup)
+
+/** 앱18 ②: one row of the proposal area, a card or an instruction, and the time it is placed by (0 = not known). */
+internal sealed interface MemoPanelEntry {
+    val key: String
+    val atMs: Long
+
+    /** What changes the height of the row: the area follows it down when it is at the bottom. */
+    val look: String
+
+    data class Card(val group: MemoProposalGroup) : MemoPanelEntry {
+        override val key: String get() = group.key
+        override val atMs: Long get() = group.seenMs
+        override val look: String get() = group.first.status
+    }
+
+    data class Order(val directive: MemoDirective) : MemoPanelEntry {
+        override val key: String get() = "d-" + directive.id
+        override val atMs: Long get() = directive.sentMs
+        override val look: String get() = directive.status + directive.message.length
+    }
+}
+
+/**
+ * 앱18 ② (관리자: "제안탭 진입 시 채팅스크롤이 제일 하단부에 위치하도록 되어 제일 최근 내용부터"): the cards and the instructions
+ * in one list, oldest on top and newest at the bottom, like a chat. A card is placed by the time the phone got it, an
+ * instruction by the time it was sent. A row without a time (a card of the fake data, or one from before 앱18 without
+ * its row time) goes on top. Rows of the same time keep their order: the cards in the order of the index, then the
+ * instructions in the order they were sent.
+ */
+internal fun memoPanelTimeline(groups: List<MemoProposalGroup>, directives: List<MemoDirective>): List<MemoPanelEntry> =
+    (groups.map { MemoPanelEntry.Card(it) } + directives.map { MemoPanelEntry.Order(it) }).sortedBy { it.atMs }
+
+/** 앱18 ②: why the rows of the area changed or the area asks to be at the bottom. */
+internal enum class MemoPanelScroll {
+    /** The area was opened. */
+    Open,
+
+    /** "새로고침" was pressed. */
+    Refresh,
+
+    /** An instruction was sent from the input. */
+    Send,
+
+    /** A row came, went or changed on its own (a sync, an answer of the bot, "지우기"). */
+    Change,
+}
+
+/**
+ * 앱18 ②: whether the area goes down to its newest row. Opening, a refresh and a send of the user always do; a change on
+ * its own only when the list was at the bottom ([atBottom]), so it never takes the list from the user reading above.
+ */
+internal fun memoPanelFollows(cause: MemoPanelScroll, atBottom: Boolean): Boolean = cause != MemoPanelScroll.Change || atBottom
 
 /** The number on the list icon: the cards still waiting for an answer (0 = no badge). */
 internal fun memoPanelWaitingCount(index: MemoIndex): Int = memoPanelGroups(index).count { it.isWaiting }

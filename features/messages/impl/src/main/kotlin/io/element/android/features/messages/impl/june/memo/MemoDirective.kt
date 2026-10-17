@@ -52,7 +52,24 @@ internal object MemoDirectiveStatus {
     val OPEN = setOf(RECEIVED, WORKING)
     private val SERVER = setOf(RECEIVED, WORKING, DONE, QUESTION, FAILED, REFUSED)
 
+    /** 앱18 ①: on its way (sending, or open on the server); "지우기" keeps these, the answer is still to come. */
+    val RUNNING = setOf(SENDING, RECEIVED, WORKING)
+
     fun isServer(status: String) = status in SERVER
+}
+
+/**
+ * 앱18 ① (관리자: "메모봇에 한 지시 내용을 클리어하는 버튼"): the instructions "지우기" takes off the list, the ended ones
+ * (완료, 질문, 실패, 거절, 못보냄, and a status the phone does not know). The running ones stay.
+ */
+internal fun memoDirectivesClearable(items: List<MemoDirective>): List<MemoDirective> = items.filter { it.status !in MemoDirectiveStatus.RUNNING }
+
+/** The question before "지우기": how many go, that the bot's work stays, and how many running ones stay. */
+internal fun memoDirectivesClearText(items: List<MemoDirective>): String {
+    val gone = memoDirectivesClearable(items).size
+    val kept = items.size - gone
+    val keep = if (kept > 0) " 진행 중 ${kept}건은 남아요." else ""
+    return "지시 ${gone}건을 목록에서 지울까요? 메모봇이 이미 한 일은 되돌려지지 않아요.$keep"
 }
 
 internal data class MemoDirective(
@@ -276,6 +293,20 @@ internal class MemoDirectives(
         log("지시조회 답 ${changed.size}건 · 완료 $done")
         return done
     }
+
+    /**
+     * 앱18 ① "지우기": takes the ended instructions off the phone list (the `directives` state only). The server keeps its
+     * record and the notes; the running ones stay and are still asked about. No list of the cleared ids is needed: a
+     * look-up only asks for the ids still on the list, and its answers only change the ids still on it. Returns how many went.
+     */
+    suspend fun clear(): Int = mutex.withLock {
+        withContext(dispatcher) {
+            val all = read()
+            val gone = memoDirectivesClearable(all).map { it.id }.toSet()
+            if (gone.isNotEmpty()) write(all.filter { it.id !in gone })
+            gone.size
+        }
+    }.also { log("지시 지움 ${it}건") }
 
     private suspend fun update(changed: List<MemoDirective>, keepSentMs: Boolean) {
         if (changed.isEmpty()) return
