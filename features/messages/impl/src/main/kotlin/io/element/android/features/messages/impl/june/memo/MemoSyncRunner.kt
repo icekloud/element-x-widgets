@@ -184,6 +184,11 @@ internal class MemoSyncRunner(
         mutex.withLock { uploadLocked(force).ok }
     } ?: false.also { log("올리기 시간 초과") }
 
+    /** 앱17: the notes that wait go up now (no photos, no back-off), so an asked review sees what the phone shows. */
+    suspend fun pushNotes(): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+        mutex.withLock { pushNotesLocked(force = true).ok }
+    } ?: false.also { log("올리기 시간 초과") }
+
     /**
      * The one-time job after the screen went away (관리자 결정 2026-10-13 1-1 (가)): the attachments only, without
      * waiting for their back-off (WorkManager has its own). No `sync_push`: its answer can only be read through the

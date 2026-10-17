@@ -21,7 +21,7 @@ import org.junit.Test
 
 /**
  * 앱11: the pinned strip (A·B), the photos under the text of a card (D), the selection mode with its bulk actions
- * (C), the folder icons (추가요청 1), the tab swipe (추가요청 2) and the instruction look-ups (추가요청 3).
+ * (C), the folder icons (추가요청 1) and the instruction look-ups (추가요청 3). 앱17 D: the tab swipe (추가요청 2) is gone.
  * All data is made up.
  */
 class MemoSelectTest : RobolectricTest() {
@@ -242,31 +242,6 @@ class MemoSelectTest : RobolectricTest() {
         assertEquals("🧑", f.getValue("사람").icon)
         // The database keeps what the server sent (no schema or value change).
         assertEquals("", db.folders().first { it.path == "쇼핑" }.icon)
-    }
-
-    // ---------------------------------------------------------------- 추가요청 2: swipe between tabs
-
-    @Test
-    fun `a horizontal swipe goes to the next or previous tab, not past the ends, not from an edge`() {
-        val w = 1000f
-        assertEquals(1, memoSwipeDirection(500f, -200f, 10f, w, 40f, 80f, consumed = false))
-        assertEquals(-1, memoSwipeDirection(500f, 200f, 10f, w, 40f, 80f, consumed = false))
-        assertEquals(0, memoSwipeDirection(500f, -60f, 0f, w, 40f, 80f, consumed = false))
-        assertEquals(0, memoSwipeDirection(500f, -200f, 150f, w, 40f, 80f, consumed = false))
-        assertEquals(0, memoSwipeDirection(20f, -200f, 0f, w, 40f, 80f, consumed = false))
-        assertEquals(0, memoSwipeDirection(980f, 200f, 0f, w, 40f, 80f, consumed = false))
-        assertEquals(0, memoSwipeDirection(500f, -200f, 0f, w, 40f, 80f, consumed = true))
-        assertEquals(MemoTab.Folders, memoSwipeTab(MemoTab.Record, 1))
-        assertEquals(MemoTab.Search, memoSwipeTab(MemoTab.Folders, 1))
-        assertEquals(MemoTab.Record, memoSwipeTab(MemoTab.Folders, -1))
-        assertNull(memoSwipeTab(MemoTab.Search, 1))
-        assertNull(memoSwipeTab(MemoTab.Record, -1))
-        assertNull(memoSwipeTab(MemoTab.Folders, 0))
-        // An open note, the selection mode or a photo viewer: the screen does not swipe.
-        assertFalse(memoSwipeAllowed(MemoLocation(note = "n1"), selecting = false, viewer = false))
-        assertFalse(memoSwipeAllowed(MemoLocation(), selecting = true, viewer = false))
-        assertFalse(memoSwipeAllowed(MemoLocation(), selecting = false, viewer = true))
-        assertTrue(memoSwipeAllowed(MemoLocation(tab = MemoTab.Folders, folder = "여행"), selecting = false, viewer = false))
     }
 
     // ---------------------------------------------------------------- 추가요청 3: instruction look-ups

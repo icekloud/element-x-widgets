@@ -85,6 +85,23 @@ internal object MemoSyncHub {
         )
     }
 
+    private val reviewers = mutableMapOf<String, MemoReviewer>()
+
+    /**
+     * 앱17: the review requests of a room, one per room for the process (the 3 s repeat guard holds across screens).
+     * The notes still waiting go up first (one `sync_push`, photos later as usual), so the server has the note and
+     * reviews what the phone shows — a new note too: its id is made on the phone and is the same on the server.
+     */
+    @Synchronized
+    fun reviewer(context: Context, sessionStore: SessionStore, roomId: String): MemoReviewer = reviewers.getOrPut(roomId) {
+        val runner = runner(context, sessionStore, roomId)
+        MemoReviewer(
+            MemoRoomSyncTransport(sessionStore, room(context, sessionStore, roomId)),
+            prepare = { if (runner.hasPendingUploads()) runner.pushNotes() },
+            log = { Timber.i("June memo sync: %s", it) },
+        )
+    }
+
     /** Leaving the screen with attachments still to upload: one job, run when the network is there (not a periodic one). */
     fun scheduleUpload(scheduler: WorkManagerScheduler) {
         scope.launch {

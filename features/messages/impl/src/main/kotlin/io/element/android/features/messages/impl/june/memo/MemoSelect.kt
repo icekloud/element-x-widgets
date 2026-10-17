@@ -11,11 +11,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlin.math.abs
 
 /*
- * 앱11: the pure parts of the pinned strip (A·B), the cards with photos (D), the selection mode (C) and the tab swipe
- * (추가요청 2). The screens are in MemoPinStrip.kt.
+ * 앱11: the pure parts of the pinned strip (A·B), the cards with photos (D) and the selection mode (C). The screens are
+ * in MemoPinStrip.kt. 앱17 D: the tab swipe of 추가요청 2 is gone (the cards are pushed to the left for a review).
  */
 
 // ---------------------------------------------------------------- B: what a note shows in one short line
@@ -190,27 +189,3 @@ internal fun memoBulkChange(op: MemoOp, n: MemoNoteRecord, rev: MemoRev): MemoNo
 }
 
 internal fun memoArgStrings(v: Any?): List<String> = (v as? List<*>)?.map { it.toString() } ?: emptyList()
-
-// ---------------------------------------------------------------- 추가요청 2: swipe between the tabs
-
-/**
- * The tab a horizontal swipe goes to (추가요청 2): -1 = previous, +1 = next. 0 when the move was taken by a child
- * (a list scrolling, a row scrolling sideways), starts at a screen edge (the system back gesture), is too short, or
- * is not clearly horizontal.
- */
-internal fun memoSwipeDirection(startX: Float, dx: Float, dy: Float, width: Float, edge: Float, min: Float, consumed: Boolean): Int = when {
-    consumed -> 0
-    startX < edge || startX > width - edge -> 0
-    abs(dx) < min || abs(dx) < 2 * abs(dy) -> 0
-    dx < 0 -> 1
-    else -> -1
-}
-
-/** The screen swipes between tabs only on a tab itself: not over an open note, a photo, or in the selection mode. */
-internal fun memoSwipeAllowed(location: MemoLocation, selecting: Boolean, viewer: Boolean): Boolean {
-    val onTab = location.note == null && !location.tagManager
-    return onTab && !(selecting || viewer)
-}
-
-/** The neighbour of [tab] in the tab order, null at the ends. */
-internal fun memoSwipeTab(tab: MemoTab, direction: Int): MemoTab? = MemoTab.entries.getOrNull(tab.ordinal + direction)?.takeIf { direction != 0 }

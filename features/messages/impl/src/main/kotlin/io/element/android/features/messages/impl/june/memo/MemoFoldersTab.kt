@@ -324,7 +324,8 @@ private fun MemoFolderView(controller: MemoController, path: String) {
                 }
             }
             items(list.items, key = { "n-" + it.id }) { item ->
-                if (asList) MemoListRow(controller, item) else MemoTile(controller, item)
+                // 앱17 A: a card pushed to the left asks for its review.
+                MemoReviewSwipe(controller, item.id, item.folder) { m -> if (asList) MemoListRow(controller, item, m) else MemoTile(controller, item, m) }
             }
             if (list.loading) {
                 item(
@@ -384,10 +385,10 @@ internal fun memoItemActions(controller: MemoController, item: MemoItem): MemoSh
 
 /** A tile in three rows (요구 B2): preview / title · date · kind / tags (max 4, +N). */
 @Composable
-internal fun MemoTile(controller: MemoController, item: MemoItem) {
+internal fun MemoTile(controller: MemoController, item: MemoItem, modifier: Modifier = Modifier) {
     val (borderWidth, borderColor) = memoCardBorder(controller, item.id)
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 150.dp)
             .testTag(MemoTags.TILE)
@@ -509,9 +510,9 @@ internal fun memoVisibleTags(tags: List<String>, max: Int): Pair<List<String>, I
     tags.take(max) to (tags.size - max).coerceAtLeast(0)
 
 @Composable
-private fun MemoListRow(controller: MemoController, item: MemoItem) {
+private fun MemoListRow(controller: MemoController, item: MemoItem, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .testTag(MemoTags.TILE)
             .combinedClickable(
