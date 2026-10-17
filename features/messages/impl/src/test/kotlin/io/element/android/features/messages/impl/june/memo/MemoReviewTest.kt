@@ -7,6 +7,7 @@
 
 package io.element.android.features.messages.impl.june.memo
 
+import io.element.android.tests.testutils.robolectric.RobolectricTest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -20,8 +21,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 앱17: the AI review asked for from a card (A), the selection (B) and the open note (C); the server answers are fakes. */
-class MemoReviewTest {
+/**
+ * 앱17: the AI review asked for from a card (A), the selection (B) and the open note (C); the server answers are fakes.
+ * Robolectric: org.json of the plain unit tests is a stub.
+ */
+class MemoReviewTest : RobolectricTest() {
     /** A fake memo bot room: answers `review` and `review_status` with [answer]; [offline] throws like a lost network. */
     private class Room(var answer: (MemoOp) -> MemoResponse = { op -> ok(op, JSONObject()) }) : MemoSyncTransport {
         val ops = mutableListOf<MemoOp>()
@@ -219,7 +223,11 @@ class MemoReviewTest {
             ok(op, states(state))
         }
         val waits = mutableListOf<Long>()
-        val r = MemoReviewer(room, clock = { now }, dispatcher = Dispatchers.Unconfined, sleep = { waits += it; now += it })
+        val sleep: suspend (Long) -> Unit = { ms ->
+            waits += ms
+            now += ms
+        }
+        val r = MemoReviewer(room, clock = { now }, dispatcher = Dispatchers.Unconfined, sleep = sleep)
         assertEquals("검토 완료: 제안 2건", r.follow(listOf("n1")))
         assertEquals(listOf(3_000L, 3_000L, 3_000L), waits)
         assertTrue(room.ops.all { it.op == MEMO_OP_REVIEW_STATUS && ids(it) == listOf("n1") })
