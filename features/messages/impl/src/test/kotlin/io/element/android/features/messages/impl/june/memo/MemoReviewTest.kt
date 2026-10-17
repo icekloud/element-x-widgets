@@ -173,6 +173,49 @@ class MemoReviewTest : RobolectricTest() {
         assertNull(memoReviewProposals(""))
     }
 
+    private fun row(id: String, state: String, result: String, reason: String? = null) =
+        JSONObject().put("id", id).put("상태", state).put("결과", result).put("시각", "2026-10-18T02:00:00+09:00").also { o ->
+            reason?.let { o.put("사유", it) }
+        }
+
+    private fun statesOf(vararg rows: JSONObject) = JSONObject().put("op", MEMO_OP_REVIEW_STATUS).put("상태", JSONArray(rows.toList()))
+
+    @Test
+    fun `app18 - one note without a proposal tells the server's reason, more notes only count them`() {
+        val one = memoReviewStates(statesOf(row("n1", "완료", "제안 없음", "이미 제목·태그·폴더가 알맞아요")))
+        assertEquals("이미 제목·태그·폴더가 알맞아요", one.single().reason)
+        assertEquals("검토 완료: 제안 없음 — 이미 제목·태그·폴더가 알맞아요", memoReviewDoneText(listOf("n1"), one))
+        // 서버 13차 (no 사유) and an empty 사유: as before.
+        val old = memoReviewStates(statesOf(row("n1", "완료", "제안 없음")))
+        assertEquals("", old.single().reason)
+        assertEquals("검토 완료: 제안 없음", memoReviewDoneText(listOf("n1"), old))
+        assertEquals("검토 완료: 제안 없음", memoReviewDoneText(listOf("n1"), memoReviewStates(statesOf(row("n1", "완료", "제안 없음", "  ")))))
+        // Two notes without a proposal: the count, no reason.
+        val two = memoReviewStates(statesOf(row("n1", "완료", "제안 없음", "가"), row("n2", "완료", "제안 없음", "나")))
+        assertEquals("검토 완료: 제안 없음 2건", memoReviewDoneText(listOf("n1", "n2"), two))
+        // A proposal somewhere: the proposals, no reason.
+        val mixed = memoReviewStates(statesOf(row("n1", "완료", "제안 1건"), row("n2", "완료", "제안 없음", "나")))
+        assertEquals("검토 완료: 제안 1건", memoReviewDoneText(listOf("n1", "n2"), mixed))
+        // One ok without a proposal and one failed: the reason of the ok one and the failed count.
+        val withFail = memoReviewStates(statesOf(row("n1", "완료", "제안 없음", "짧은 메모예요"), row("n2", "완료", "실패")))
+        assertEquals("검토 완료: 제안 없음 — 짧은 메모예요 (실패 1건)", memoReviewDoneText(listOf("n1", "n2"), withFail))
+        // A long reason with line breaks: one line, cut with "…".
+        val long = "줄바꿈이\n있는   사유 " + "가".repeat(100)
+        val cut = memoReviewReasonText(long)
+        assertEquals(MEMO_REVIEW_REASON_CHARS, cut.length)
+        assertTrue(cut.startsWith("줄바꿈이 있는 사유 가"))
+        assertTrue(cut.endsWith("…"))
+        assertEquals("짧다", memoReviewReasonText(" 짧다 "))
+    }
+
+    @Test
+    fun `app18 - a result notice stays 8 s, the notice of a taken request 4 s`() {
+        assertEquals(4_000L, MEMO_NOTICE_SHOW_MS)
+        assertEquals(8_000L, MEMO_NOTICE_RESULT_SHOW_MS)
+        assertEquals(MEMO_NOTICE_SHOW_MS, memoReviewSentShowMs(MemoReviewSent(listOf("a"))))
+        assertEquals(MEMO_NOTICE_RESULT_SHOW_MS, memoReviewSentShowMs(MemoReviewSent(emptyList(), failure = "보내지 못했습니다")))
+    }
+
     @Test
     fun `the look-ups run every 3 s for at most 2 minutes`() {
         val t0 = 1_000_000L

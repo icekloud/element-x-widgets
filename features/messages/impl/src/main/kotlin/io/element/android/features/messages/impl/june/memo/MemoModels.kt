@@ -69,6 +69,8 @@ internal data class MemoProposal(
     val time: String? = null,
     val folder: String? = null,
     val targetCount: Int = 0,
+    /** 앱18 ②: when the phone first got it (the `suggestion` row), 0 when not known (the server sends no time). */
+    val seenMs: Long = 0,
 ) {
     val isSchedule: Boolean get() = kind == "일정추가" || kind == "일정변경" || kind == "계획반영" || kind == "알림"
     val isFolderCreate: Boolean get() = kind == "폴더생성"

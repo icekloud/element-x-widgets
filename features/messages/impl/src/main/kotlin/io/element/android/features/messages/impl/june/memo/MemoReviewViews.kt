@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.element.android.compound.theme.ElementTheme
@@ -175,14 +176,17 @@ internal fun MemoReviewToggle(button: MemoReviewButton, onClick: () -> Unit) {
 
 private const val MEMO_REVIEW_DISABLED_ALPHA = 0.4f
 
-/** One notice of the review; [stamp] makes a new one with the same words start its time again. */
-internal data class MemoNotice(val text: String, val stamp: Long = System.nanoTime())
+/**
+ * One notice of the review, shown for [showMs] (앱18 ③: [MEMO_NOTICE_RESULT_SHOW_MS] for a result); [stamp] makes a new
+ * one with the same words start its time again.
+ */
+internal data class MemoNotice(val text: String, val showMs: Long = MEMO_NOTICE_SHOW_MS, val stamp: Long = System.nanoTime())
 
-/** 앱17: the small notice of a review ("검토를 요청했습니다 (1건)", "검토 완료: 제안 2건") for [MEMO_NOTICE_SHOW_MS]. */
+/** 앱17: the small notice of a review ("검토를 요청했습니다 (1건)", "검토 완료: 제안 2건") for its [MemoNotice.showMs]; a tap closes it. */
 @Composable
 internal fun MemoNoticeBanner(controller: MemoController, notice: MemoNotice) {
     LaunchedEffect(notice) {
-        delay(MEMO_NOTICE_SHOW_MS)
+        delay(notice.showMs)
         if (controller.notice === notice) controller.notice = null
     }
     Row(
@@ -194,6 +198,6 @@ internal fun MemoNoticeBanner(controller: MemoController, notice: MemoNotice) {
             .testTag(MemoReviewTags.NOTICE),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(notice.text, style = ElementTheme.typography.fontBodySmRegular, maxLines = 2)
+        Text(notice.text, style = ElementTheme.typography.fontBodySmRegular, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

@@ -147,7 +147,7 @@ internal class MemoLocalBackend(
         val sending = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }.map { it.target }.toSet()
         val proposals = db.suggestions().filter { it.status == MEMO_SUGGESTION_WAITING || it.id in sending }.mapNotNull { s ->
             val status = if (s.status == MEMO_SUGGESTION_WAITING) "대기" else MEMO_PROPOSAL_SENDING
-            runCatchingJson(s.payload)?.let(::parseMemoProposal)?.copy(status = status)
+            runCatchingJson(s.payload)?.let(::parseMemoProposal)?.copy(status = status, seenMs = s.createdMs)
         }
         return MemoIndex(folders, proposals)
     }
