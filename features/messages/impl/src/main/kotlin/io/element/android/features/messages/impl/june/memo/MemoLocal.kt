@@ -427,7 +427,8 @@ internal fun memoLocalPreview(kind: String, preview: String, linkJson: String?, 
     val shown = attachments.mapNotNull { it.toScreen() }
     val first = shown.firstOrNull()
     if (first != null && (kind == "사진" || preview.isEmpty())) {
-        return MemoPreview.Photo(first.mxc, attachments.size, first.fileJson, shown.take(MEMO_CARD_PHOTOS))
+        // 앱20: every photo, so a tap on a card opens all of them; the card draws only [memoCardCells].
+        return MemoPreview.Photo(first.mxc, attachments.size, first.fileJson, shown)
     }
     linkJson?.let { tryOrNull { JSONObject(it) } }?.let { o ->
         val url = o.optString("url")

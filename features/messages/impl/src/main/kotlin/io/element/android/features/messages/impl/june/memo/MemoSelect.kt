@@ -122,7 +122,8 @@ internal fun memoCardPhotos(preview: MemoPreview?, attachments: List<MemoLocalAt
     if (preview is MemoPreview.Photo) return null
     val shown = attachments.mapNotNull { it.toScreen() }
     val first = shown.firstOrNull() ?: return null
-    return MemoPreview.Photo(first.mxc, attachments.size, first.fileJson, shown.take(MEMO_CARD_PHOTOS))
+    // 앱20: every photo for the viewer; the card draws only [memoCardCells].
+    return MemoPreview.Photo(first.mxc, attachments.size, first.fileJson, shown)
 }
 
 // ---------------------------------------------------------------- C: the selection mode

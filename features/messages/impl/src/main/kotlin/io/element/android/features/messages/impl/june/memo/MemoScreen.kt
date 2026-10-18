@@ -685,7 +685,7 @@ internal fun memoPhotoModel(mxc: String, fileJson: String?, localPath: String?):
 /** The photos of a record card in one row (앱6 결정기록 3): up to [MEMO_CARD_PHOTOS], the rest as "+N" on the last one. */
 @Composable
 private fun MemoPhotoRow(p: MemoPreview.Photo, modifier: Modifier = Modifier, onOpen: (Int) -> Unit = {}) {
-    val cells = p.cells.take(MEMO_CARD_PHOTOS)
+    val cells = memoCardCells(p)
     val hidden = memoHiddenPhotos(p)
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         cells.forEachIndexed { i, a ->
@@ -788,7 +788,7 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem, modifier:
             )
         }
         when (val p = item.preview) {
-            is MemoPreview.Photo -> MemoPhotoRow(p, Modifier.padding(vertical = 4.dp)) { i -> controller.viewer = MemoViewerRequest(p.cells, i) }
+            is MemoPreview.Photo -> MemoPhotoRow(p, Modifier.padding(vertical = 4.dp)) { i -> controller.viewer = memoCardViewer(p, i) }
             is MemoPreview.Link -> Text(p.url, style = ElementTheme.typography.fontBodySmRegular, maxLines = 1, overflow = TextOverflow.Ellipsis)
             is MemoPreview.Text, null -> Unit
         }

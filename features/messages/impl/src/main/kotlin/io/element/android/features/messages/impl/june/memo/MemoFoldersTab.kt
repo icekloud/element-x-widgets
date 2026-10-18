@@ -403,7 +403,7 @@ internal fun MemoTile(controller: MemoController, item: MemoItem, modifier: Modi
         Box(Modifier.fillMaxWidth().height(72.dp).testTag(MemoTags.TILE_PREVIEW)) {
             when (val p = item.preview) {
                 is MemoPreview.Photo -> {
-                    MemoThumbnail(p.mxc, p.fileJson, Modifier.fillMaxSize().memoOpenPhoto(controller, p.cells, 0), p.cells.first().localPath)
+                    MemoThumbnail(p.mxc, p.fileJson, Modifier.fillMaxSize().memoOpenCardPhoto(controller, p, 0), p.cells.first().localPath)
                     if (p.count > 1) MemoCorner("${p.count}장", Modifier.align(Alignment.TopEnd))
                 }
                 is MemoPreview.Link -> if (p.image != null) {
