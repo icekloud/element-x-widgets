@@ -114,9 +114,10 @@ class MemoSelectTest : RobolectricTest() {
         val p = items.getValue(photo)
         assertTrue(p.preview is MemoPreview.Photo)
         assertNull(p.photos)
-        assertEquals(MEMO_CARD_PHOTOS, memoCardCells(p.preview as MemoPreview.Photo).size)
+        val cards = p.preview as MemoPreview.Photo
+        assertEquals(MEMO_CARD_PHOTOS, memoCardCells(cards).size)
         // 앱20: all five reach the viewer.
-        assertEquals(5, (p.preview as MemoPreview.Photo).cells.size)
+        assertEquals(5, cards.cells.size)
         // The kind the server gave does not matter: "텍스트" with photos and text still shows both.
         val shown = memoLocalPreview("텍스트", "글", null, listOf(MemoLocalAttachment("a", mxc = "mxc://test/1", state = MEMO_ATTACH_DONE)))
         assertEquals(1, memoCardPhotos(shown, listOf(MemoLocalAttachment("a", mxc = "mxc://test/1", state = MEMO_ATTACH_DONE)))?.count)
