@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -103,7 +104,8 @@ class MemoRecordCardUiTest : RobolectricTest() {
         setContent {
             ElementTheme {
                 val scope = rememberCoroutineScope()
-                val controller = MemoController(MemoStore(backend), scope, mutableStateOf(MemoLocation()))
+                // Kept like the memo screen does (remember), so setting the viewer does not make a new controller.
+                val controller = remember { MemoController(MemoStore(backend), scope, mutableStateOf(MemoLocation())) }
                 val version by MemoLocalChanges.version.collectAsState()
                 MemoRecordTab(controller, version)
                 // The memo screen draws the viewer the same way (MemoScreen).
