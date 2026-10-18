@@ -191,10 +191,13 @@ class MemoPhotoSyncTest : RobolectricTest() {
         val photos = db.list(MEMO_ALL_FOLDERS, emptyList(), null, null).items.map { it.preview as MemoPreview.Photo }
         val six = photos.single { it.count == 6 }
         val three = photos.single { it.count == 3 }
-        assertEquals(MEMO_CARD_PHOTOS, six.cells.size)
+        assertEquals(MEMO_CARD_PHOTOS, memoCardCells(six).size)
         assertEquals(6, six.count)
         assertEquals(2, memoHiddenPhotos(six))
-        assertEquals(listOf("/p/1.jpg", "/p/2.jpg", "/p/3.jpg", "/p/4.jpg"), six.cells.map { it.localPath })
+        assertEquals(listOf("/p/1.jpg", "/p/2.jpg", "/p/3.jpg", "/p/4.jpg"), memoCardCells(six).map { it.localPath })
+        // 앱20: the note keeps all six for the viewer, only the card draws four.
+        assertEquals((1..6).map { "/p/$it.jpg" }, six.cells.map { it.localPath })
+        assertEquals(3, memoCardCells(three).size)
         assertEquals(3, three.cells.size)
         assertEquals(0, memoHiddenPhotos(three))
         // The server list sends only the first photo: one cell and "+2".
