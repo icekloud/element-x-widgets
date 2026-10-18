@@ -37,6 +37,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,8 +74,12 @@ import io.element.android.features.messages.impl.june.JuneComposerStack
 import io.element.android.features.messages.impl.june.JuneEditKind
 import io.element.android.features.messages.impl.june.JuneEditPhotosRow
 import io.element.android.features.messages.impl.june.juneEditingEventId
+import io.element.android.features.messages.impl.june.memo.MemoEditingRooms
+import io.element.android.features.messages.impl.june.memo.MemoPanelButton
+import io.element.android.features.messages.impl.june.memo.MemoSelectButton
 import io.element.android.features.messages.impl.june.memo.MemoScreen
 import io.element.android.features.messages.impl.june.memo.MemoSyncButton
+import io.element.android.features.messages.impl.june.memo.memoPanelRoomIdOf
 import io.element.android.features.messages.impl.june.memo.memoSyncRoomIdOf
 import io.element.android.features.messages.impl.link.LinkEvent
 import io.element.android.features.messages.impl.link.LinkView
@@ -286,6 +291,11 @@ fun MessagesView(
                                     onSendQuickText = { state.eventSink(MessagesEvent.SendQuickText(it)) },
                                     onBotFilesClick = { hidingKeyboard { onBotFilesClick() } },
                                     memoSyncRoomId = memoSyncRoomIdOf(
+                                        LocalContext.current,
+                                        state.roomId.value,
+                                        inThread = state.timelineState.timelineMode is Timeline.Mode.Thread,
+                                    ),
+                                    memoPanelRoomId = memoPanelRoomIdOf(
                                         LocalContext.current,
                                         state.roomId.value,
                                         inThread = state.timelineState.timelineMode is Timeline.Mode.Thread,
@@ -511,6 +521,7 @@ internal fun RowScope.MessagesMenuActions(
     onSendQuickText: (String) -> Unit = {},
     onBotFilesClick: () -> Unit = {},
     memoSyncRoomId: String? = null,
+    memoPanelRoomId: String? = null,
 ) {
     // Element June: stop the bot's current task, and the list of files the bot sent in this room.
     // The memo bot room has the sync button there instead (앱6 항목 2); every other room keeps "중단".
@@ -525,11 +536,19 @@ internal fun RowScope.MessagesMenuActions(
         )
     }
     Spacer(Modifier.width(12.dp))
-    Icon(
-        modifier = Modifier.clickable(onClick = onBotFilesClick),
-        imageVector = CompoundIcons.ListBulleted(),
-        contentDescription = "봇이 보낸 파일",
-    )
+    // 앱9 A: in the memo bot room (its memo screen) the list icon opens the proposal area, with the waiting count.
+    // 앱11 C: the selection mode icon sits left of it.
+    if (memoPanelRoomId != null) {
+        MemoSelectButton(memoPanelRoomId)
+        Spacer(Modifier.width(12.dp))
+        MemoPanelButton(memoPanelRoomId)
+    } else {
+        Icon(
+            modifier = Modifier.clickable(onClick = onBotFilesClick),
+            imageVector = CompoundIcons.ListBulleted(),
+            contentDescription = "봇이 보낸 파일",
+        )
+    }
     Spacer(Modifier.width(12.dp))
     if (showStopConfirm) {
         ConfirmationDialog(
@@ -700,6 +719,10 @@ private fun MessagesViewComposerBottomSheetContents(
     onRoomSuccessorClick: (RoomId) -> Unit,
     onLinkClick: (String, Boolean) -> Unit,
 ) {
+    // Element June memo bot (앱13 C): while a note is edited on the memo screen the room composer gives its place to the
+    // editor (the keyboard then sits right under the note body). It comes back when the editing ends.
+    val memoEditingRooms by MemoEditingRooms.rooms.collectAsState()
+    if (state.roomId.value in memoEditingRooms) return
     val contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues()
     when {
         state.successorRoom != null -> {
