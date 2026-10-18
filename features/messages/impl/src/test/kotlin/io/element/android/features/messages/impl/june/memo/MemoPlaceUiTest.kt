@@ -69,8 +69,13 @@ class MemoPlaceUiTest : RobolectricTest() {
 
     private fun AndroidComposeUiTest<ComponentActivity>.bounds(tag: String): Rect = onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
 
-    private val food = JSONObject().put("이름", "가짜 꼬치집").put("종류", "음식점").put("소개", "꼬치튀김 전문점")
-        .put("주소", "가짜시 가짜구 1-2-3").put("지도", "https://www.google.com/maps/search/?api=1&query=test").put("출처", "사진GPS")
+    private val food = JSONObject()
+        .put("이름", "가짜 꼬치집")
+        .put("종류", "음식점")
+        .put("소개", "꼬치튀김 전문점")
+        .put("주소", "가짜시 가짜구 1-2-3")
+        .put("지도", "https://www.google.com/maps/search/?api=1&query=test")
+        .put("출처", "사진GPS")
 
     @Test
     fun `without a place the edit box is alone, where and as big as before`() = runAndroidComposeUiTest<ComponentActivity> {

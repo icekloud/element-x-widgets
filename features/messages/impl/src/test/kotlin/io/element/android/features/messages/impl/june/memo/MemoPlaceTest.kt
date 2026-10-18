@@ -28,8 +28,15 @@ class MemoPlaceTest {
         near: String? = null,
         approx: Boolean? = null,
         link: String? = map,
-    ) = JSONObject().put("이름", name).put("종류", kind).put("소개", intro).put("주소", address)
-        .put("위도", 10.5).put("경도", 20.5).put("출처", "사진GPS").put("탐색", "2026-10-18T15:04:21+09:00")
+    ) = JSONObject()
+        .put("이름", name)
+        .put("종류", kind)
+        .put("소개", intro)
+        .put("주소", address)
+        .put("위도", 10.5)
+        .put("경도", 20.5)
+        .put("출처", "사진GPS")
+        .put("탐색", "2026-10-18T15:04:21+09:00")
         .apply {
             near?.let { put("근처", it) }
             approx?.let { put("근사", it) }
@@ -91,7 +98,12 @@ class MemoPlaceTest {
         assertTrue(memoFirstThatStarts(listOf(1, 2)) { tried += it })
         assertEquals(listOf(1), tried)
         tried.clear()
-        assertTrue(memoFirstThatStarts(listOf(1, 2)) { tried += it; if (it == 1) throw IllegalStateException("no maps") })
+        assertTrue(
+            memoFirstThatStarts(listOf(1, 2)) {
+                tried += it
+                if (it == 1) error("no maps")
+            }
+        )
         assertEquals(listOf(1, 2), tried)
         assertFalse(memoFirstThatStarts(listOf(1, 2)) { throw SecurityException("none") })
         assertEquals("지도를 열 앱이 없습니다", MEMO_PLACE_OPEN_FAILED)

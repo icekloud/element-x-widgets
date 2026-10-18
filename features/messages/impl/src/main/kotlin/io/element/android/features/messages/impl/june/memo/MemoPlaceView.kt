@@ -45,11 +45,11 @@ internal fun memoOpenPlace(map: String, start: (Intent) -> Unit): Boolean = memo
  * small grey text; both end in "…" when long.
  */
 @Composable
-internal fun MemoPlaceBox(place: MemoPlaceLine, onFailed: () -> Unit, modifier: Modifier = Modifier) {
+internal fun MemoPlaceBox(place: MemoPlaceLine, onOpenFail: () -> Unit, modifier: Modifier = Modifier) {
     val context: Context = LocalContext.current
     val shape = RoundedCornerShape(MEMO_PLACE_BOX_CORNER_DP.dp)
     val press = place.map?.let { map ->
-        Modifier.clickable(role = Role.Button) { if (!memoOpenPlace(map, context::startActivity)) onFailed() }
+        Modifier.clickable(role = Role.Button) { if (!memoOpenPlace(map, context::startActivity)) onOpenFail() }
     } ?: Modifier
     Column(
         verticalArrangement = Arrangement.Center,

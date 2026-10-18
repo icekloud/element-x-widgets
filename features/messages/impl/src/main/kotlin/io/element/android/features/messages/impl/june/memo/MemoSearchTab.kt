@@ -476,7 +476,7 @@ internal fun MemoNoteScreen(
                     ) {
                         MemoPlaceBox(
                             place,
-                            onFailed = { controller.notice = MemoNotice(MEMO_PLACE_OPEN_FAILED) },
+                            onOpenFail = { controller.notice = MemoNotice(MEMO_PLACE_OPEN_FAILED) },
                             modifier = Modifier.weight(1f),
                         )
                         if (edit != null) {
