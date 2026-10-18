@@ -36,7 +36,8 @@ data class JuneMemoButtonSpot(val x: Float, val y: Float) {
             if (parts.size != 2) return null
             val x = parts[0].trim().toFloatOrNull() ?: return null
             val y = parts[1].trim().toFloatOrNull() ?: return null
-            if (!x.isFinite() || !y.isFinite() || x !in 0f..1f || y !in 0f..1f) return null
+            // NaN and the infinities are never in 0..1
+            if (x !in 0f..1f || y !in 0f..1f) return null
             return JuneMemoButtonSpot(x, y)
         }
 
