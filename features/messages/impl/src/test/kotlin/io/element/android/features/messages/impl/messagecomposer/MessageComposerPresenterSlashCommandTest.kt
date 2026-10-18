@@ -9,6 +9,10 @@
 
 package io.element.android.features.messages.impl.messagecomposer
 
+import io.element.android.libraries.mediaviewer.api.local.LocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.EditedLocalMedia
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEdits
+import io.element.android.features.messages.impl.attachments.preview.imageeditor.AttachmentImageEditor
 import android.net.Uri
 import app.cash.turbine.ReceiveTurbine
 import com.google.common.truth.Truth.assertThat
@@ -323,6 +327,11 @@ class MessageComposerPresenterSlashCommandTest {
         slashCommandService = slashCommandService,
         featureFlagService = featureFlagService,
         contentScannerService = { _, _ -> },
+        attachmentImageEditor = object : AttachmentImageEditor {
+            override suspend fun canEdit(localMedia: LocalMedia) = false
+            override suspend fun exportEdits(localMedia: LocalMedia, edits: AttachmentImageEdits) =
+                Result.failure<EditedLocalMedia>(IllegalStateException("not used"))
+        },
         contentValidationCache = InMemoryEventContentValidationCache(),
     ).apply {
         isTesting = true
