@@ -16,9 +16,13 @@ import androidx.compose.foundation.gestures.DraggableState
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,6 +52,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.designsystem.theme.components.Text
+import io.element.android.libraries.designsystem.theme.components.TextField
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -59,6 +64,10 @@ internal object MemoReviewTags {
     const val BUTTON = "memo_review_button"
     const val NOTICE = "memo_review_notice"
     const val BULK = "memo_review_bulk"
+    const val DIRECTIVE_INPUT = "memo_review_directive_input"
+    const val DIRECTIVE_COUNT = "memo_review_directive_count"
+    const val DIRECTIVE_SEND = "memo_review_directive_send"
+    const val DIRECTIVE_CANCEL = "memo_review_directive_cancel"
 }
 
 /**
@@ -175,6 +184,52 @@ internal fun MemoReviewToggle(button: MemoReviewButton, onClick: () -> Unit) {
 }
 
 private const val MEMO_REVIEW_DISABLED_ALPHA = 0.4f
+
+/**
+ * 앱21 ① (관리자: "입력창을 통해 메모봇에게 재검토 시 추가로 지시할 내용", "아무것도 지시안하고 보내면 기존 재검토 기능 그대로"):
+ * the sheet the review button of an open note opens. A field of a few lines (at most [MEMO_REVIEW_DIRECTIVE_MAX]
+ * characters, the count under it), 취소 and 검토. 검토 with an empty field is the review of before. What was typed is
+ * given to [onReview] once and kept nowhere: the sheet opens empty every time.
+ */
+@Composable
+internal fun MemoReviewDirectiveSheet(onReview: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+    var text by remember { mutableStateOf("") }
+    Column(modifier.padding(16.dp)) {
+        Text("$MEMO_REVIEW_MARK AI 검토", style = ElementTheme.typography.fontHeadingSmMedium)
+        Text(
+            "이번 검토에서 메모봇에게 더 알려 줄 것이 있으면 적으세요. 비워 두면 평소처럼 검토합니다.",
+            style = ElementTheme.typography.fontBodySmRegular,
+            color = ElementTheme.colors.textSecondary,
+        )
+        TextField(
+            value = text,
+            onValueChange = { text = memoReviewDirectiveInput(it) },
+            placeholder = "예: 음식점 이름과 메뉴를 꼭 찾아줘",
+            minLines = MEMO_REVIEW_DIRECTIVE_LINES,
+            maxLines = MEMO_REVIEW_DIRECTIVE_MAX_LINES,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag(MemoReviewTags.DIRECTIVE_INPUT),
+        )
+        Text(
+            memoReviewDirectiveCount(text),
+            style = ElementTheme.typography.fontBodyXsRegular,
+            color = ElementTheme.colors.textSecondary,
+            modifier = Modifier.align(Alignment.End).padding(top = 2.dp).testTag(MemoReviewTags.DIRECTIVE_COUNT),
+        )
+        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+            Text("취소", modifier = Modifier.clickable(onClick = onCancel).padding(12.dp).testTag(MemoReviewTags.DIRECTIVE_CANCEL))
+            Text(
+                "검토",
+                color = ElementTheme.colors.textActionAccent,
+                modifier = Modifier.clickable { onReview(text) }.padding(12.dp).testTag(MemoReviewTags.DIRECTIVE_SEND),
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** 앱21 ①: the field of the directive sheet shows this many lines at first and grows up to the second number. */
+private const val MEMO_REVIEW_DIRECTIVE_LINES = 2
+private const val MEMO_REVIEW_DIRECTIVE_MAX_LINES = 6
 
 /**
  * One notice of the review, shown for [showMs] (앱18 ③: [MEMO_NOTICE_RESULT_SHOW_MS] for a result); [stamp] makes a new

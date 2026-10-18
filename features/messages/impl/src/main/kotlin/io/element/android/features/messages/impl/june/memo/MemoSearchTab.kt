@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -453,13 +454,36 @@ internal fun MemoNoteScreen(
             else -> Box(Modifier.fillMaxSize()) {
                 MemoNoteReading(controller, n, index, id)
                 val edit = memoReadingLongPress(nav, controller.select.active)
-                if (edit != null) {
-                    MemoEditBox(
-                        onClick = { controller.go { edit } },
+                // 앱21 ②: the `장소` of the header left of the 편집 box, in the same fixed line. Without one nothing
+                // changes: the 편집 box alone, where and as big as before.
+                val place = memoPlaceLine(n.header)
+                if (place == null) {
+                    if (edit != null) {
+                        MemoEditBox(
+                            onClick = { controller.go { edit } },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(MEMO_EDIT_BOX_MARGIN_DP.dp),
+                        )
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
+                            .fillMaxWidth()
                             .padding(MEMO_EDIT_BOX_MARGIN_DP.dp),
-                    )
+                    ) {
+                        MemoPlaceBox(
+                            place,
+                            onFailed = { controller.notice = MemoNotice(MEMO_PLACE_OPEN_FAILED) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (edit != null) {
+                            Spacer(Modifier.width(MEMO_PLACE_BOX_GAP_DP.dp))
+                            MemoEditBox(onClick = { controller.go { edit } })
+                        }
+                    }
                 }
             }
         }
@@ -494,14 +518,27 @@ private fun MemoNoteReading(
             )
             if (controller.reviewer != null) {
                 memoReviewButton(n.trashed, controller.nav.value.editing, controller.select.active)?.let { button ->
-                    MemoReviewToggle(button, onClick = { controller.reviewNote(id) })
+                    // 앱21 ①: the directive sheet first; empty, it is the review of before.
+                    MemoReviewToggle(button, onClick = { controller.askReviewNote(id) })
                 }
             }
             memoPinButton(n.pinned, n.trashed, controller.nav.value.editing, controller.select.active)?.let { button ->
                 MemoPinToggle(button, onClick = { controller.setPinWithUndo(id, pin = !button.pinned) })
             }
         }
-        MemoTagLine(n.tags.toImmutableList(), max = 20, modifier = Modifier.padding(vertical = 4.dp))
+        // 앱21 추가요청 4 (관리자: "노트 본문에서도 태그편집기능 동일하게 사용 가능하도록"): a press on the tag line opens
+        // the tag sheet of 앱19 (the whole line, one press); a note without tags shows "# 태그 추가" there.
+        when (val tags = memoReadingTags(n.tags, n.trashed, controller.select.active)) {
+            null -> MemoTagLine(n.tags.toImmutableList(), max = 20, modifier = Modifier.padding(vertical = 4.dp))
+            else -> FlowRow(
+                Modifier
+                    .padding(vertical = 4.dp)
+                    .clickable(role = Role.Button) { controller.editTagsOf(MemoTarget(noteId = id), n.tags) }
+                    .testTag(MemoTags.NOTE_TAGS),
+            ) {
+                tags.forEach { MemoChip(it) }
+            }
+        }
         // 📅 proposal linked to this note (앱9: grouped and locked like the proposal area)
         memoPanelGroups(index).filter { it.first.noteId == id }.forEach { g -> MemoProposalCard(controller, g) }
         MemoMarkdown(n.body)

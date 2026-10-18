@@ -121,6 +121,8 @@ internal object MemoTags {
     const val SYNC_MARK = "memo_sync_mark"
     const val NOTE_EDIT = "memo_note_edit"
     const val NOTE_EDIT_ROOM = "memo_note_edit_room"
+    const val NOTE_PLACE = "memo_note_place"
+    const val NOTE_TAGS = "memo_note_tags"
 
     /** 앱12 A·B·C: the date lines of the head, the reading area (long press) and the editor's body, 취소 and status. */
     const val NOTE_DATE = "memo_note_date"
@@ -173,6 +175,9 @@ internal sealed interface MemoSheet {
 
     /** 앱14 C: the icon grid of one folder ([MEMO_FOLDER_ICON_CHOICES]); a press applies it at once. */
     data class PickIcon(val path: String, val current: String) : MemoSheet
+
+    /** 앱21 ①: the review of the open note [id], with what the user wants the bot to look at this time. */
+    data class ReviewDirective(val id: String) : MemoSheet
 }
 
 /** Everything the memo tabs share: the store, the navigation, the sheets and the error banner. */
@@ -326,13 +331,13 @@ internal class MemoController(
      * `review_status` is asked until the reviews are done ("검토 완료: 제안 N건"); it stops quietly on a failed look-up,
      * after two minutes, or when the screen goes away.
      */
-    fun review(ids: List<String>, before: suspend () -> Unit = {}) {
+    fun review(ids: List<String>, directive: String? = null, before: suspend () -> Unit = {}) {
         val r = reviewer ?: return
         val fresh = r.repeat.admit(ids)
         if (fresh.isEmpty()) return
         scope.launch {
             before()
-            val sent = r.request(fresh)
+            val sent = r.request(fresh, directive)
             notice = MemoNotice(memoReviewSentText(sent), memoReviewSentShowMs(sent))
             if (sent.accepted.isEmpty()) return@launch
             // 앱19 ①: "검토 완료: 제안 N건" brings the new cards at once (one sync); 제안 없음 / 실패 sync nothing.
@@ -344,10 +349,24 @@ internal class MemoController(
         }
     }
 
-    /** 앱17 C: the review of the open note, after the save of its editor (running, or still to come) has ended. */
-    fun reviewNote(id: String) {
+    /**
+     * 앱17 C: the review of the open note, after the save of its editor (running, or still to come) has ended. 앱21 ①:
+     * with the [directive] typed in the review sheet (null or blank: the review of before).
+     */
+    fun reviewNote(id: String, directive: String? = null) {
         if (select.active) return
-        review(listOf(id)) { MemoEditHub.settled(id) }
+        review(listOf(id), directive) { MemoEditHub.settled(id) }
+    }
+
+    /**
+     * 앱21 ①: the review button of the open note opens the directive sheet first. A note asked for a moment ago opens
+     * nothing (the press did nothing before either, 연타).
+     */
+    fun askReviewNote(id: String) {
+        if (select.active) return
+        val r = reviewer ?: return
+        if (r.repeat.recent(id)) return
+        sheet = MemoSheet.ReviewDirective(id)
     }
 
     /** 앱17: leaving the screen or the app stops the look-ups (the proposals still come to the proposal area). */
@@ -919,6 +938,15 @@ private fun MemoSheetHost(controller: MemoController) {
                 close()
                 controller.run(memoFolderIconOp(sheet.path, icon))
             }
+        }
+        is MemoSheet.ReviewDirective -> ModalBottomSheet(onDismissRequest = close, scrollable = false) {
+            MemoReviewDirectiveSheet(
+                onReview = { text ->
+                    close()
+                    controller.reviewNote(sheet.id, text)
+                },
+                onCancel = close,
+            )
         }
     }
 }

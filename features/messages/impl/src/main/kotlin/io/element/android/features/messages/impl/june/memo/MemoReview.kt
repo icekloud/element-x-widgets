@@ -54,7 +54,31 @@ internal const val MEMO_REVIEW_REASON_CHARS = 60
 internal const val MEMO_REVIEW_ACTION = "AI 검토 요청"
 internal const val MEMO_REVIEW_MARK = "✨"
 
-internal fun memoReviewOp(ids: List<String>) = MemoOp(MEMO_OP_REVIEW, linkedMapOf("v" to 1, "ids" to ids))
+/**
+ * 앱21 ① (관리자: "노트 내에서 검토 버튼 클릭할때 입력창을 통해 메모봇에게 재검토 시 추가로 지시할 내용"): the optional `지시` of
+ * a `review` (서버 15차 규약 §1). Without a usable [directive] the op is exactly the one of before (no `지시` key at all).
+ */
+internal fun memoReviewOp(ids: List<String>, directive: String? = null): MemoOp {
+    val args = linkedMapOf<String, Any?>("v" to 1, "ids" to ids)
+    memoReviewDirective(directive)?.let { args[MEMO_ARG_DIRECTIVE] = it }
+    return MemoOp(MEMO_OP_REVIEW, args)
+}
+
+/** 앱21 ①: the argument name of the directive and its longest length (규약: the server keeps the first 500 too). */
+internal const val MEMO_ARG_DIRECTIVE = "지시"
+internal const val MEMO_REVIEW_DIRECTIVE_MAX = 500
+
+/**
+ * 앱21 ①: the directive as it is sent: spaces and empty lines around it taken away, at most [MEMO_REVIEW_DIRECTIVE_MAX]
+ * characters, null when nothing is left (then the review goes without it, as before). The lines inside stay.
+ */
+internal fun memoReviewDirective(text: String?): String? = text?.trim()?.take(MEMO_REVIEW_DIRECTIVE_MAX)?.trimEnd()?.takeIf { it.isNotEmpty() }
+
+/** 앱21 ①: what the input field keeps of a new value: never more than [MEMO_REVIEW_DIRECTIVE_MAX] characters. */
+internal fun memoReviewDirectiveInput(value: String): String = value.take(MEMO_REVIEW_DIRECTIVE_MAX)
+
+/** 앱21 ①: the counter under the field, "12/500". */
+internal fun memoReviewDirectiveCount(value: String): String = "${value.length}/$MEMO_REVIEW_DIRECTIVE_MAX"
 
 internal fun memoReviewStatusOp(ids: List<String>) = MemoOp(MEMO_OP_REVIEW_STATUS, linkedMapOf("v" to 1, "ids" to ids))
 
@@ -112,6 +136,10 @@ internal class MemoReviewRepeat(private val clock: () -> Long = System::currentT
         last.entries.removeAll { now - it.value >= MEMO_REVIEW_REPEAT_MS && it.key !in fresh }
         return fresh
     }
+
+    /** 앱21 ①: true while [id] was sent less than [MEMO_REVIEW_REPEAT_MS] ago (its button does nothing then, as before). */
+    @Synchronized
+    fun recent(id: String): Boolean = last[id]?.let { clock() - it < MEMO_REVIEW_REPEAT_MS } ?: false
 }
 
 // ---------------------------------------------------------------- the answers
@@ -124,16 +152,37 @@ internal data class MemoReviewSent(
     val accepted: List<String>,
     val skipped: List<MemoReviewSkip> = emptyList(),
     val failure: String? = null,
+    /** 앱21 ①: what became of a directive sent with the press (null: none was sent). */
+    val directive: MemoDirectiveAnswer? = null,
 )
 
+/**
+ * 앱21 ①: the `지시` object of a `review` answer (규약 §1): [cut] when the server kept only the first 500 characters.
+ * [taken] false when a directive was sent and the answer had no `지시` object (서버 14차: it ignored the argument).
+ */
+internal data class MemoDirectiveAnswer(val taken: Boolean, val cut: Boolean = false, val applied: Int = 0)
+
 /** The `review` answer of [sent]: the ids taken are those sent and not skipped (`접수` is their count). */
-internal fun memoReviewAnswer(sent: List<String>, content: JSONObject): MemoReviewSent {
+internal fun memoReviewAnswer(sent: List<String>, content: JSONObject, directiveSent: Boolean = false): MemoReviewSent {
     val rows = content.optJSONArray("건너뜀") ?: JSONArray()
     val skipped = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull { o ->
         o.optString("id").takeIf { it.isNotEmpty() }?.let { MemoReviewSkip(it, o.optString("사유")) }
     }
     val out = skipped.map { it.id }.toSet()
-    return MemoReviewSent(sent.filter { it !in out }, skipped)
+    val directive = if (directiveSent) {
+        content.optJSONObject(MEMO_ARG_DIRECTIVE)?.let { MemoDirectiveAnswer(true, it.optBoolean("잘림"), it.optInt("반영")) } ?: MemoDirectiveAnswer(false)
+    } else {
+        null
+    }
+    return MemoReviewSent(sent.filter { it !in out }, skipped, directive = directive)
+}
+
+/** 앱21 ①: the words a directive adds to the notice after a press (empty: nothing to say). */
+internal fun memoReviewDirectiveText(d: MemoDirectiveAnswer?): String = when {
+    d == null -> ""
+    !d.taken -> " · 지시는 반영되지 않았습니다(서버가 지시를 모릅니다)"
+    d.cut -> " · 지시문이 ${MEMO_REVIEW_DIRECTIVE_MAX}자로 잘렸습니다"
+    else -> " · 지시 포함"
 }
 
 /** "휴지통 1건, 이미 대기 중 2건": the reasons of [skipped] in the order they first came. */
@@ -147,7 +196,7 @@ internal fun memoReviewSentText(r: MemoReviewSent): String {
         r.failure != null && r.accepted.isEmpty() -> "검토 요청 실패: ${r.failure}$skips"
         r.failure != null -> "검토를 요청했습니다 (${r.accepted.size}건) · 나머지는 보내지 못했습니다$skips"
         r.accepted.isEmpty() -> "검토를 요청하지 않았습니다$skips"
-        else -> "검토를 요청했습니다 (${r.accepted.size}건)$skips"
+        else -> "검토를 요청했습니다 (${r.accepted.size}건)${memoReviewDirectiveText(r.directive)}$skips"
     }
 }
 
@@ -281,20 +330,26 @@ internal class MemoReviewer(
 ) {
     val repeat = MemoReviewRepeat(clock)
 
-    /** Sends [ids] (already let through by [repeat]) in turns of [MEMO_REVIEW_MAX], one after the other. */
-    suspend fun request(ids: List<String>): MemoReviewSent {
+    /**
+     * Sends [ids] (already let through by [repeat]) in turns of [MEMO_REVIEW_MAX], one after the other. 앱21 ①: a
+     * [directive] goes with every turn ([memoReviewOp]); it is kept nowhere. The log tells only its length.
+     */
+    suspend fun request(ids: List<String>, directive: String? = null): MemoReviewSent {
         val batches = memoReviewBatches(ids)
         if (batches.isEmpty()) return MemoReviewSent(emptyList())
         withContext(dispatcher) { prepare() }
         val accepted = mutableListOf<String>()
         val skipped = mutableListOf<MemoReviewSkip>()
+        val sentDirective = memoReviewDirective(directive)
+        var answer: MemoDirectiveAnswer? = null
         for (batch in batches) {
-            log("검토 요청 ${batch.size}건")
-            val failure = when (val r = callOrNull(memoReviewOp(batch))) {
+            log("검토 요청 ${batch.size}건" + (sentDirective?.let { " · 지시 있음(${it.length}자)" } ?: ""))
+            val failure = when (val r = callOrNull(memoReviewOp(batch, sentDirective))) {
                 is MemoResponse.Ok -> {
-                    val a = memoReviewAnswer(batch, r.content)
+                    val a = memoReviewAnswer(batch, r.content, directiveSent = sentDirective != null)
                     accepted += a.accepted
                     skipped += a.skipped
+                    answer = a.directive?.let { d -> answer?.let { MemoDirectiveAnswer(it.taken && d.taken, it.cut || d.cut, it.applied + d.applied) } ?: d }
                     null
                 }
                 is MemoResponse.Error -> r.reason
@@ -302,11 +357,11 @@ internal class MemoReviewer(
             }
             if (failure != null) {
                 log("검토 요청 실패")
-                return MemoReviewSent(accepted, skipped, failure)
+                return MemoReviewSent(accepted, skipped, failure, answer)
             }
         }
         log("검토 접수 ${accepted.size}건 · 건너뜀 ${skipped.size}건")
-        return MemoReviewSent(accepted, skipped)
+        return MemoReviewSent(accepted, skipped, directive = answer)
     }
 
     /**
