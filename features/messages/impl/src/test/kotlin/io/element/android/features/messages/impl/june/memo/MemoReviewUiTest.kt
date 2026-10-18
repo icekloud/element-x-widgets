@@ -226,14 +226,38 @@ class MemoReviewUiTest : RobolectricTest() {
         assertEquals(review.boundsInRoot.center.y, pin.boundsInRoot.center.y, 1f)
         assertTrue("pin ${pin.boundsInRoot} in $read", pin.boundsInRoot.right <= read.right + 1f)
         assertEquals(listOf(MEMO_REVIEW_ACTION), review.config.getOrNull(SemanticsProperties.ContentDescription))
-        onNodeWithTag(MemoReviewTags.BUTTON).performClick()
-        waitUntil(timeoutMillis = 5_000) { room.reviewed().isNotEmpty() }
-        assertEquals(listOf(listOf(id)), room.reviewed())
-        waitUntil(timeoutMillis = 10_000) { controller.notice != null }
-        // A fast second press: not sent again.
+        // 앱21 ①: the press opens the directive sheet first, nothing is sent yet.
         onNodeWithTag(MemoReviewTags.BUTTON).performClick()
         waitForIdle()
+        assertEquals(MemoSheet.ReviewDirective(id), controller.sheet)
+        assertTrue(room.reviewed().isEmpty())
+        // 검토 with the field left empty (what the sheet hands over): the review of before, without 지시.
+        controller.sheet = null
+        controller.reviewNote(id, "")
+        waitUntil(timeoutMillis = 5_000) { room.reviewed().isNotEmpty() }
+        assertEquals(listOf(listOf(id)), room.reviewed())
+        assertFalse(room.ops.first { it.op == MEMO_OP_REVIEW }.args.containsKey(MEMO_ARG_DIRECTIVE))
+        waitUntil(timeoutMillis = 10_000) { controller.notice != null }
+        // A fast second press: no sheet, not sent again.
+        onNodeWithTag(MemoReviewTags.BUTTON).performClick()
+        waitForIdle()
+        assertEquals(null, controller.sheet)
         assertEquals(1, room.reviewed().size)
+    }
+
+    @Test
+    fun `a directive typed in the sheet goes with the review of the open note`() = runAndroidComposeUiTest<ComponentActivity> {
+        val backend = backend()
+        val id = runBlocking { backend.create("오사카 여행 사진") }
+        val room = Room()
+        val controller = open(backend, id, room)
+        onNodeWithTag(MemoReviewTags.BUTTON).performClick()
+        waitForIdle()
+        assertEquals(MemoSheet.ReviewDirective(id), controller.sheet)
+        controller.sheet = null
+        controller.reviewNote(id, "  간판 글자를 읽어줘 ")
+        waitUntil(timeoutMillis = 5_000) { room.reviewed().isNotEmpty() }
+        assertEquals("간판 글자를 읽어줘", room.ops.first { it.op == MEMO_OP_REVIEW }.args[MEMO_ARG_DIRECTIVE])
     }
 
     @Test
