@@ -154,12 +154,12 @@ internal fun memoPinnedOfAll(controller: MemoController, localVersion: Long): Li
 /** 앱11 D: the photos of a text note, small, under its text on a card ("+N" on the last when there are more). */
 @Composable
 internal fun MemoCardPhotos(controller: MemoController, p: MemoPreview.Photo, modifier: Modifier = Modifier, size: Int = 40) {
-    val cells = p.cells.take(MEMO_CARD_PHOTOS)
+    val cells = memoCardCells(p)
     val hidden = memoHiddenPhotos(p)
     Row(modifier.testTag(MemoA11Tags.CARD_PHOTOS), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         cells.forEachIndexed { i, a ->
             // In the selection mode a tap on a photo selects the card (no viewer).
-            val open = if (controller.select.active) Modifier else Modifier.memoOpenPhoto(controller, p.cells, i)
+            val open = if (controller.select.active) Modifier else Modifier.memoOpenCardPhoto(controller, p, i)
             Box(Modifier.size(size.dp).clip(RoundedCornerShape(4.dp)).then(open)) {
                 MemoThumbnail(a.mxc, a.fileJson, Modifier.fillMaxSize(), a.localPath)
                 if (i == cells.lastIndex && hidden > 0) {

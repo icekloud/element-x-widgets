@@ -40,6 +40,9 @@ import java.io.File
 /** 앱7 항목 2: the photos of one note opened full screen, starting at [start]. */
 internal data class MemoViewerRequest(val photos: List<MemoAttachment>, val start: Int = 0)
 
+/** 앱20: a tap on the [index]th cell of a card opens every photo of the note there, not only the cells it draws. */
+internal fun memoCardViewer(p: MemoPreview.Photo, index: Int): MemoViewerRequest = MemoViewerRequest(p.cells, index)
+
 /**
  * What one photo can be drawn from, in order (앱7 결정기록 2): the phone original while the file is there, then the
  * server copy asked as the whole file ([MediaRequestData.Kind.Content], not a thumbnail) and read through the
@@ -137,3 +140,7 @@ private fun MemoViewerPhoto(a: MemoAttachment, isFile: (String) -> Boolean) {
 /** Where a photo tap opens the viewer: the whole row of photos of the note, at the tapped one. */
 internal fun Modifier.memoOpenPhoto(controller: MemoController, photos: List<MemoAttachment>, index: Int): Modifier =
     clickable { controller.viewer = MemoViewerRequest(photos, index) }
+
+/** The same for a cell of a card (앱20): the viewer gets every photo of the note ([memoCardViewer]). */
+internal fun Modifier.memoOpenCardPhoto(controller: MemoController, p: MemoPreview.Photo, index: Int): Modifier =
+    clickable { controller.viewer = memoCardViewer(p, index) }

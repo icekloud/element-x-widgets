@@ -100,11 +100,12 @@ internal sealed interface MemoPreview {
     data class Link(val url: String, val title: String?, val image: String?, val site: String?) : MemoPreview
 
     /**
-     * [mxc] / [fileJson]: the first photo (the server list sends only that one). [photos]: the first ones of a local
-     * note (앱6, at most [MEMO_CARD_PHOTOS]), each with its phone original when it is still there.
+     * [mxc] / [fileJson]: the first photo (the server list sends only that one). [photos]: all the photos of a local
+     * note (앱20: all of them for the viewer, the card draws [memoCardCells]), each with its phone original when it is
+     * still there.
      */
     data class Photo(val mxc: String, val count: Int, val fileJson: String? = null, val photos: List<MemoAttachment> = emptyList()) : MemoPreview {
-        /** The photos the record card draws in one row. */
+        /** Every photo of the note (the viewer's list); the card draws only the first ones ([memoCardCells]). */
         val cells: List<MemoAttachment> get() = photos.ifEmpty { listOf(MemoAttachment(mxc, fileJson)) }
     }
 }
@@ -112,8 +113,11 @@ internal sealed interface MemoPreview {
 /** Photos drawn in one row of a record card (앱6 결정기록 3); more show as "+N" on the last one. */
 internal const val MEMO_CARD_PHOTOS = 4
 
+/** The photos a card draws in its row (앱20): the first [MEMO_CARD_PHOTOS] of the note, the rest only counted ("+N"). */
+internal fun memoCardCells(p: MemoPreview.Photo): List<MemoAttachment> = p.cells.take(MEMO_CARD_PHOTOS)
+
 /** Photos of [p] that do not get their own cell on the record card (the "+N" of the last cell). */
-internal fun memoHiddenPhotos(p: MemoPreview.Photo): Int = (p.count - p.cells.take(MEMO_CARD_PHOTOS).size).coerceAtLeast(0)
+internal fun memoHiddenPhotos(p: MemoPreview.Photo): Int = (p.count - memoCardCells(p).size).coerceAtLeast(0)
 
 /** Lines of body text on a record card (앱6 항목 5); longer text ends with "…". */
 internal const val MEMO_CARD_LINES = 7
