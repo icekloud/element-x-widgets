@@ -212,6 +212,43 @@ internal fun memoReviewDoneText(ids: List<String>, states: List<MemoReviewProgre
     }
 }
 
+private val DONE_WITH_PROPOSALS = Regex("""^검토 완료: 제안 (\d+)건""")
+
+/**
+ * 앱19 ① (관리자: "제안 생겼다는 알림오는 경우 바로 제안탭 새로고침"): true when the notice of [memoReviewDoneText] tells
+ * one proposal or more ("검토 완료: 제안 2건", also with "(실패 K건)"). "제안 없음", "검토 실패" and no notice: false.
+ */
+internal fun memoReviewSyncWanted(notice: String?): Boolean =
+    notice?.let { DONE_WITH_PROPOSALS.find(it) }?.groupValues?.get(1)?.toIntOrNull()?.let { it > 0 } ?: false
+
+/**
+ * 앱19 ①: the end of one review follow-up. The notice is shown first; then, only when it tells proposals, [sync] runs
+ * once for the reviewed [ids] (the screen: one sync that brings the new cards to the local table). A sync that fails or
+ * throws changes nothing of the notice or the screen; a cancel (the screen went away) still ends the follow-up.
+ */
+internal suspend fun memoReviewFinish(notice: String?, ids: List<String>, show: (String) -> Unit, sync: (suspend (List<String>) -> Unit)?) {
+    notice ?: return
+    show(notice)
+    if (sync == null || !memoReviewSyncWanted(notice)) return
+    try {
+        sync(ids)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // Nothing to show: the cards still come with the next sync (screen shown, 새로고침).
+    }
+}
+
+/**
+ * 앱19 ①: true when a proposal of one of the reviewed notes [noteIds] is new or changed in [after] (id and content) since
+ * [before]. A proposal id is the note id, or the note id and a tail (`<id>.cls`, `<id>.t2.cls`, `<id>.ttl`: 서버 플랜검토
+ * `SUGGEST_SUFFIX`); an older card of the same note still waiting is not a new one.
+ */
+internal fun memoReviewCardsArrived(noteIds: List<String>, before: Collection<Pair<String, String>>, after: Collection<Pair<String, String>>): Boolean {
+    val old = before.toSet()
+    return after.any { p -> p !in old && noteIds.any { n -> n.isNotEmpty() && (p.first == n || p.first.startsWith("$n.")) } }
+}
+
 /** The reason on one line, at most [MEMO_REVIEW_REASON_CHARS] (a longer one ends with "…"). */
 internal fun memoReviewReasonText(reason: String): String {
     val line = reason.split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")

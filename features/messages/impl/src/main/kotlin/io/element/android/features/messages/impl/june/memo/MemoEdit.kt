@@ -152,6 +152,30 @@ internal fun memoReadingLongPress(location: MemoLocation, selecting: Boolean): M
 internal fun memoParseTagInput(text: String): List<String> =
     text.split(' ', ',', '\n').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }.distinct()
 
+/** 앱19 ②: what one change of the tag input makes: [tags] become chips, the input keeps [rest] (the first [cut] chars go). */
+internal data class MemoTagChipSplit(val tags: List<String>, val rest: String, val cut: Int)
+
+/**
+ * 앱19 ② (관리자: "띄어쓰기 후 다음글자로 #이 오면 이전 1개태그의 내용을 태그처리하여 하나의 묶음형태로"): a `#` typed right
+ * after a space turns what was typed before it into chips ("#지도 #" → [지도] and "#" stays in the input). Nothing changes
+ * while the text before that `#` is still being composed by the keyboard ([composingStart] before it: a Hangul
+ * syllable not finished yet), or when there is no such `#` ("#" alone, "#지도", "지도 카페").
+ */
+internal fun memoTagChipSplit(text: String, composingStart: Int? = null): MemoTagChipSplit {
+    val hash = (text.length - 1 downTo 1).firstOrNull { text[it] == '#' && text[it - 1].isWhitespace() } ?: return MemoTagChipSplit(emptyList(), text, 0)
+    if (composingStart != null && composingStart < hash) return MemoTagChipSplit(emptyList(), text, 0)
+    return MemoTagChipSplit(memoParseTagInput(text.substring(0, hash)), text.substring(hash), hash)
+}
+
+/** The chips with [added] at the end; a name already there stays one chip (in its first place). */
+internal fun memoTagChipsAdd(chips: List<String>, added: List<String>): List<String> = (chips + added).filter { it.isNotEmpty() }.distinct()
+
+/** The tags the sheet saves: the chips, then what is left in the input (split as before, [memoParseTagInput]). */
+internal fun memoTagSheetTags(chips: List<String>, rest: String): List<String> = memoTagChipsAdd(chips, memoParseTagInput(rest))
+
+/** What the screen reader says of the small ✕ of a chip. */
+internal fun memoTagRemoveLabel(tag: String): String = "$tag 태그 제거"
+
 /**
  * The editing sessions, one per note, outside the screen (앱12 D): the typed text survives a tab switch, the note
  * closing and the app going to the background. Saves are serialised by one lock, and the save that leaves the screen

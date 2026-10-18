@@ -323,6 +323,70 @@ class MemoReviewTest : RobolectricTest() {
         MemoEditHub.drop(id)
     }
 
+    // ---------------------------------------------------------------- 앱19 ①: the proposals come right after the notice
+
+    @Test
+    fun `app19 - only a notice with one proposal or more wants the proposals synced`() {
+        assertTrue(memoReviewSyncWanted("검토 완료: 제안 2건"))
+        assertTrue(memoReviewSyncWanted("검토 완료: 제안 1건 (실패 1건)"))
+        assertFalse(memoReviewSyncWanted("검토 완료: 제안 없음"))
+        assertFalse(memoReviewSyncWanted("검토 완료: 제안 없음 — 이미 제목·태그·폴더가 알맞아요"))
+        assertFalse(memoReviewSyncWanted("검토 완료: 제안 없음 3건"))
+        assertFalse(memoReviewSyncWanted("검토 완료: 제안 0건"))
+        assertFalse(memoReviewSyncWanted("검토 실패"))
+        assertFalse(memoReviewSyncWanted("검토 요청 실패: 보내지 못했습니다. 연결을 확인해 주세요"))
+        assertFalse(memoReviewSyncWanted(null))
+        // The texts of memoReviewDoneText itself.
+        val two = memoReviewStates(states(Triple("n1", "완료", "제안 2건")))
+        assertTrue(memoReviewSyncWanted(memoReviewDoneText(listOf("n1"), two)))
+        val none = memoReviewStates(states(Triple("n1", "완료", "제안 없음")))
+        assertFalse(memoReviewSyncWanted(memoReviewDoneText(listOf("n1"), none)))
+    }
+
+    @Test
+    fun `app19 - a review end with proposals syncs once, none or a failure syncs nothing`() = runBlocking {
+        val shown = mutableListOf<String>()
+        val synced = mutableListOf<List<String>>()
+        val sync: suspend (List<String>) -> Unit = { synced += it }
+        memoReviewFinish("검토 완료: 제안 2건", listOf("n1", "n2"), show = { shown += it }, sync = sync)
+        assertEquals(listOf("검토 완료: 제안 2건"), shown)
+        assertEquals(listOf(listOf("n1", "n2")), synced)
+        memoReviewFinish("검토 완료: 제안 없음", listOf("n3"), show = { shown += it }, sync = sync)
+        memoReviewFinish("검토 실패", listOf("n4"), show = { shown += it }, sync = sync)
+        // No notice (a failed look-up, two minutes without an end): nothing shown, nothing synced.
+        memoReviewFinish(null, listOf("n5"), show = { shown += it }, sync = sync)
+        assertEquals(listOf("검토 완료: 제안 2건", "검토 완료: 제안 없음", "검토 실패"), shown)
+        assertEquals(1, synced.size)
+        // The fake data (no sync): the notice still shows.
+        memoReviewFinish("검토 완료: 제안 1건", listOf("n6"), show = { shown += it }, sync = null)
+        assertEquals("검토 완료: 제안 1건", shown.last())
+        assertEquals(1, synced.size)
+    }
+
+    @Test
+    fun `app19 - a sync that fails leaves the notice as it is and throws nothing`() = runBlocking {
+        val shown = mutableListOf<String>()
+        var calls = 0
+        memoReviewFinish("검토 완료: 제안 3건", listOf("n1"), show = { shown += it }) {
+            calls++
+            throw MemoSendException("off")
+        }
+        assertEquals(1, calls)
+        assertEquals(listOf("검토 완료: 제안 3건"), shown)
+    }
+
+    @Test
+    fun `app19 - a new or changed card of a reviewed note counts, an old card or another note does not`() {
+        val before = listOf("n1.cls" to "{a}", "x9.cls" to "{b}")
+        assertFalse(memoReviewCardsArrived(listOf("n1"), before, before))
+        assertTrue(memoReviewCardsArrived(listOf("n1"), before, before + ("n1.ttl" to "{c}")))
+        assertTrue(memoReviewCardsArrived(listOf("n1"), before, listOf("n1.cls" to "{a2}")))
+        assertTrue(memoReviewCardsArrived(listOf("n2", "n1"), emptyList(), listOf("n1" to "{}")))
+        assertFalse(memoReviewCardsArrived(listOf("n1"), before, before + ("n10.cls" to "{d}")))
+        assertFalse(memoReviewCardsArrived(listOf("n1"), before, before + ("x9.ttl" to "{e}")))
+        assertFalse(memoReviewCardsArrived(listOf(""), emptyList(), listOf(".cls" to "{}")))
+    }
+
     private companion object {
         fun ok(op: MemoOp, content: JSONObject) = MemoResponse.Ok("r", op.op, null, null, content)
     }
