@@ -11,6 +11,7 @@ import io.element.android.libraries.core.data.tryOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -128,6 +129,27 @@ internal class MemoSyncRunner(
             pulled && (pushed || !push)
         }
     } ?: false.also { log("화면 동기화 시간 초과") }
+
+    /**
+     * 앱19 ①: a review of [noteIds] ended with proposals ("검토 완료: 제안 N건"), so the cards go to the local table now:
+     * one pull (no push: the editor may be open again, 추가요청 2), which also copies the waiting proposals. The server
+     * publishes the index only after it answers `sync_pull` (june_memo.py `handle`: answer, then `publish`; the review
+     * process itself does not wake it), so the copy can still read the index of before the review. When no new card of
+     * [noteIds] came, the proposals are read once more after [REVIEW_INDEX_WAIT_MS] (one state read, no second pull,
+     * nothing repeated). Returns false when the server could not be reached.
+     */
+    suspend fun syncAfterReview(noteIds: List<String>): Boolean {
+        log("검토 제안 받기 ${noteIds.size}건")
+        val before = suggestionKeys()
+        if (!syncNow(push = false)) return false
+        if (memoReviewCardsArrived(noteIds, before, suggestionKeys())) return true
+        delay(REVIEW_INDEX_WAIT_MS)
+        withTimeoutOrNull(AUTO_TIMEOUT_MS) { mutex.withLock { syncSuggestions() } }
+        log("검토 제안 다시 읽음 ${if (memoReviewCardsArrived(noteIds, before, suggestionKeys())) "받음" else "아직 없음"}")
+        return true
+    }
+
+    private fun suggestionKeys(): List<Pair<String, String>> = db.suggestions().map { it.id to it.payload }
 
     /**
      * The sync button of the memo room top bar (앱6 항목 2): `sync_pull`, the waiting notes at once, then the
@@ -500,6 +522,9 @@ internal class MemoSyncRunner(
 
         /** 앱8: a press within this time after a good pull (the screen's own) does not pull again. */
         const val RECENT_PULL_MS = 10_000L
+
+        /** 앱19 ①: the wait before the one second read of the proposals after a review (the server publishes after its answer). */
+        const val REVIEW_INDEX_WAIT_MS = 3_000L
     }
 }
 

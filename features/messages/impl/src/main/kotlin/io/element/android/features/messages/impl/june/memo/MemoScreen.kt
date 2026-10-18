@@ -72,7 +72,6 @@ import io.element.android.libraries.designsystem.components.dialogs.Confirmation
 import io.element.android.libraries.designsystem.components.dialogs.TextFieldDialog
 import io.element.android.libraries.designsystem.theme.components.ModalBottomSheet
 import io.element.android.libraries.designsystem.theme.components.Text
-import io.element.android.libraries.designsystem.theme.components.TextField
 import io.element.android.libraries.matrix.api.media.MediaSource
 import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.sessionstorage.api.SessionStore
@@ -151,6 +150,11 @@ internal object MemoTags {
     const val VIEWER_CLOSE = "memo_viewer_close"
     const val VIEWER_RETRY = "memo_viewer_retry"
     const val VIEWER_LOADING = "memo_viewer_loading"
+
+    /** 앱19 ②: the chips of the tag sheet, the small ✕ of each, and the input beside them. */
+    const val TAG_CHIP = "memo_tag_chip"
+    const val TAG_CHIP_REMOVE = "memo_tag_chip_remove"
+    const val TAG_INPUT = "memo_tag_input"
 }
 
 @ContributesTo(AppScope::class)
@@ -308,6 +312,12 @@ internal class MemoController(
     /** 앱17: the small notice of a review request and of its end. */
     var notice by mutableStateOf<MemoNotice?>(null)
 
+    /**
+     * 앱19 ①: brings the cards of the reviewed notes to the local table (the screen: [MemoSyncRunner.syncAfterReview], then
+     * the index). Null: nothing to sync (the fake data). Called at most once per review end, only with proposals.
+     */
+    var reviewSync: (suspend (List<String>) -> Unit)? = null
+
     private val following = mutableListOf<Job>()
 
     /**
@@ -325,7 +335,10 @@ internal class MemoController(
             val sent = r.request(fresh)
             notice = MemoNotice(memoReviewSentText(sent), memoReviewSentShowMs(sent))
             if (sent.accepted.isEmpty()) return@launch
-            val job = scope.launch { r.follow(sent.accepted)?.let { notice = MemoNotice(it, MEMO_NOTICE_RESULT_SHOW_MS) } }
+            // 앱19 ①: "검토 완료: 제안 N건" brings the new cards at once (one sync); 제안 없음 / 실패 sync nothing.
+            val job = scope.launch {
+                memoReviewFinish(r.follow(sent.accepted), sent.accepted, show = { notice = MemoNotice(it, MEMO_NOTICE_RESULT_SHOW_MS) }, sync = reviewSync)
+            }
             following += job
             job.invokeOnCompletion { following -= job }
         }
@@ -377,6 +390,16 @@ internal fun MemoScreen(
             MemoSyncHub.reviewer(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
         }
         LaunchedEffect(controller, reviewer) { controller.reviewer = reviewer }
+        // 앱19 ①: the cards a review made come to the local table (and the open proposal area) right after its notice.
+        val reviewRunner = remember(roomId) {
+            MemoSyncHub.runner(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+        }
+        LaunchedEffect(controller, reviewRunner) {
+            controller.reviewSync = { ids ->
+                reviewRunner.syncAfterReview(ids)
+                store.refreshIndex()
+            }
+        }
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, controller) {
@@ -836,34 +859,20 @@ private fun MemoSheetHost(controller: MemoController) {
             }
         }
         is MemoSheet.EditTags -> {
-            var text by remember(sheet) { mutableStateOf(sheet.tags.joinToString(" ") { "#$it" }) }
+            // 앱19 ②: the tags as chips with a small ✕, the input beside them (MemoTagEditor), for every use of this sheet.
+            val known by controller.store.tags.collectAsState()
+            LaunchedEffect(Unit) { controller.store.loadTags() }
             ModalBottomSheet(onDismissRequest = close, scrollable = false) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(sheet.title, style = ElementTheme.typography.fontHeadingSmMedium)
-                    Text("띄어쓰기로 구분합니다. #은 없어도 됩니다.", style = ElementTheme.typography.fontBodySmRegular, color = ElementTheme.colors.textSecondary)
-                    TextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
-                    // 앱11 C: the tags there are, to pick (more than one); a tap adds it to the text.
-                    val known by controller.store.tags.collectAsState()
-                    LaunchedEffect(Unit) { controller.store.loadTags() }
-                    val typed = memoParseTagInput(text)
-                    FlowRow {
-                        known.filter { it.name !in typed }.take(MEMO_PICK_TAGS).forEach { t ->
-                            MemoChip("#${t.name}", onClick = { text = (text.trimEnd() + " #" + t.name).trimStart() })
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        Text("취소", modifier = Modifier.clickable(onClick = close).padding(12.dp))
-                        Text(
-                            "저장",
-                            color = ElementTheme.colors.textActionAccent,
-                            modifier = Modifier.clickable {
-                                close()
-                                sheet.onSave(memoParseTagInput(text))
-                            }.padding(12.dp),
-                        )
-                    }
-                    Spacer(Modifier.height(24.dp))
-                }
+                MemoTagEditor(
+                    title = sheet.title,
+                    tags = sheet.tags.toImmutableList(),
+                    known = known.map { it.name }.toImmutableList(),
+                    onSave = { tags ->
+                        close()
+                        sheet.onSave(tags)
+                    },
+                    onCancel = close,
+                )
             }
         }
         is MemoSheet.Actions -> ModalBottomSheet(onDismissRequest = close, scrollable = false) {
@@ -943,9 +952,6 @@ private fun MemoIconPicker(path: String, current: String, onPick: (String) -> Un
         Spacer(Modifier.height(24.dp))
     }
 }
-
-/** Known tags the tag sheet offers to pick (앱11 C). */
-private const val MEMO_PICK_TAGS = 30
 
 @Composable
 private fun MemoDatePicker(onPick: (String) -> Unit, onDismiss: () -> Unit) {

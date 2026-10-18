@@ -373,4 +373,52 @@ class MemoEditTest : RobolectricTest() {
         assertEquals("폰에서 치는 중", db.note(id)!!.body)
         assertNull(MemoEditHub.state(id))
     }
+
+    // ---------------------------------------------------------------- 앱19 ②: the tag chips of the tag sheet
+
+    @Test
+    fun `app19 - a hash typed after a space turns the tag before it into a chip`() {
+        assertEquals(MemoTagChipSplit(listOf("지도"), "#", 4), memoTagChipSplit("#지도 #"))
+        // Without its own # (the old rule: a space splits) the word before is a tag too.
+        assertEquals(MemoTagChipSplit(listOf("지도"), "#카", 3), memoTagChipSplit("지도 #카"))
+        assertEquals(MemoTagChipSplit(listOf("일상", "지도"), "#", 8), memoTagChipSplit("#일상 #지도 #"))
+        // Two spaces, a comma: the same split as memoParseTagInput.
+        assertEquals(listOf("일상"), memoTagChipSplit("#일상,  #").tags)
+    }
+
+    @Test
+    fun `app19 - nothing becomes a chip without a hash after a space`() {
+        val none = { s: String -> MemoTagChipSplit(emptyList(), s, 0) }
+        assertEquals(none(""), memoTagChipSplit(""))
+        assertEquals(none("#"), memoTagChipSplit("#"))
+        assertEquals(none("#지도"), memoTagChipSplit("#지도"))
+        assertEquals(none("#지도 "), memoTagChipSplit("#지도 "))
+        assertEquals(none("지도 카페"), memoTagChipSplit("지도 카페"))
+        assertEquals(none("#지도#카페"), memoTagChipSplit("#지도#카페"))
+        // Only spaces or hashes before: no chip, the input is just the last #.
+        assertEquals(MemoTagChipSplit(emptyList(), "#", 1), memoTagChipSplit(" #"))
+        assertEquals(MemoTagChipSplit(emptyList(), "#", 2), memoTagChipSplit("# #"))
+    }
+
+    @Test
+    fun `app19 - a syllable still being composed is never cut`() {
+        // "#지도 #" with the keyboard still composing 도 (composition from 2): nothing changes yet.
+        assertEquals(MemoTagChipSplit(emptyList(), "#지도 #", 0), memoTagChipSplit("#지도 #", composingStart = 2))
+        // Composing the new tag after the # (from 5): the chip is made, the composing text stays in the input.
+        assertEquals(MemoTagChipSplit(listOf("지도"), "#카", 4), memoTagChipSplit("#지도 #카", composingStart = 5))
+        // Composition finished (null): the split goes on as usual.
+        assertEquals(listOf("지도"), memoTagChipSplit("#지도 #", composingStart = null).tags)
+    }
+
+    @Test
+    fun `app19 - a name already a chip stays one chip, the sheet saves the chips and what is left`() {
+        assertEquals(listOf("일상", "지도"), memoTagChipsAdd(listOf("일상", "지도"), listOf("지도")))
+        assertEquals(listOf("일상", "지도", "카페"), memoTagChipsAdd(listOf("일상"), listOf("지도", "일상", "카페", "")))
+        assertEquals(listOf("일상", "지도"), memoTagChipsAdd(emptyList(), listOf("일상", "지도", "일상")))
+        assertEquals(listOf("일상", "지도", "카페"), memoTagSheetTags(listOf("일상", "지도"), "#카페 지도"))
+        assertEquals(listOf("일상"), memoTagSheetTags(listOf("일상"), "#"))
+        assertEquals(listOf("일상"), memoTagSheetTags(listOf("일상"), "  "))
+        assertEquals(emptyList<String>(), memoTagSheetTags(emptyList(), ""))
+        assertEquals("지도 태그 제거", memoTagRemoveLabel("지도"))
+    }
 }
