@@ -391,6 +391,8 @@ internal class MemoSyncRunner(
         // Asked once per round: a file over the limit is never read (관리자 결정 1-2 (나), no streaming yet).
         val limit = transport.maxUploadSize()?.takeIf { it > 0 } ?: MEMO_ATTACH_DEFAULT_MAX_BYTES
         for ((noteId, a) in due) {
+            // 앱21 추가요청 2: how long each step of one photo takes (read + encrypt, then the upload), in the log only.
+            val sealStart = clock()
             val sealed = when (val s = seal(a, limit)) {
                 is Sealed.Ready -> s.file
                 is Sealed.Refused -> {
@@ -400,7 +402,8 @@ internal class MemoSyncRunner(
                     continue
                 }
             }
-            log("사진 올리기 ${sealed.cipher.size}바이트")
+            val uploadStart = clock()
+            log("사진 올리기 ${sealed.cipher.size}바이트 · 읽기·암호화 ${uploadStart - sealStart}ms")
             // 앱15 F: the note of this photo shows "동기화 중" while the photo goes up.
             MemoSendingNotes.start(listOf(noteId))
             val mxc = try {
@@ -419,8 +422,8 @@ internal class MemoSyncRunner(
             } finally {
                 MemoSendingNotes.end(listOf(noteId))
             }
-            log("사진 올림")
             val now = clock()
+            log("사진 올림 · 업로드 ${now - uploadStart}ms")
             db.transaction {
                 db.updateAttachment(a.id, mxc, sealed.fileJson(mxc, a.mime).toString(), MEMO_ATTACH_DONE, 0)
                 // The attachment bundle changed (its mxc is now known): a new stamp, and the note goes up again.
