@@ -374,6 +374,113 @@ class MemoChatTest : RobolectricTest() {
         assertEquals(listOf(4), c.requests.value.map { it.number })
     }
 
+    @Test
+    fun `app24 - the change requests of v2 are drawn as they come, a skill of the memo bot is not one`() = runTest {
+        // 규약-대화 v2 §6: the memo bot's own skills are done in the chat (작업결과), the skills of others, SOUL.md and
+        // config.yaml still come as requests. The card draws what the server sends, whatever the kind.
+        val db = db()
+        val room = Room()
+        room.requests = JSONArray(
+            listOf(
+                JSONObject().put("번호", 5).put("종류", "스킬").put("대상", "skills/memo-save").put("요약", "저장 순서 바꾸기").put("상태", "관리자승인대기"),
+                JSONObject().put("번호", 4).put("종류", "규칙").put("대상", "메모프로필/SOUL.md").put("요약", "답은 짧게").put("상태", "적용완료"),
+            ),
+        )
+        val c = chat(db, room)
+        val list = c.loadRequests()
+        assertEquals("5번 · 저장 순서 바꾸기", memoRequestCardLine(list[0]))
+        assertEquals("스킬 · skills/memo-save · 관리자승인대기", memoRequestCardDetail(list[0]))
+        assertEquals("규칙 · 메모프로필/SOUL.md · 적용완료", memoRequestCardDetail(list[1]))
+        // A skill the memo bot made itself comes as a work card of a bubble, not as a request.
+        room.pages = listOf(
+            page(
+                listOf(
+                    bubble(1, MemoChatSide.SERVER, "스킬을 만들었어요.")
+                        .put("작업결과", JSONArray(listOf(JSONObject().put("종류", "스킬생성").put("대상", "가짜-스킬").put("결과", "새 스킬을 만들었어요").put("되돌리기", true)))),
+                ),
+            ),
+        )
+        c.load()
+        c.poll()
+        assertEquals(emptyList<Int>(), c.items.value.single().requests)
+        assertEquals("스킬생성 · 가짜-스킬 · 새 스킬을 만들었어요", memoWorkCardLine(c.items.value.single().works.single()))
+        assertEquals(1, room.ops.count { it.op == MEMO_OP_REQUEST_POLL })
+    }
+
+    // ---------------------------------------------------------------- 작업결과 (규약-대화 v2 §3)
+
+    private fun work(kind: String, target: String, result: String, undo: Boolean = true) =
+        JSONObject().put("종류", kind).put("대상", target).put("결과", result).put("되돌리기", undo)
+
+    @Test
+    fun `app24 - the work cards of a server bubble are read, kept and come back after a restart`() = runTest {
+        val db = db()
+        val room = Room()
+        val c = chat(db, room)
+        c.load()
+        room.pages = listOf(
+            page(
+                listOf(
+                    bubble(1, MemoChatSide.USER, "약국 메모 만들고 7번은 지워 줘"),
+                    bubble(2, MemoChatSide.SERVER, "새 노트 만들었어요: #41 가짜 약국. 7번을 휴지통으로 옮겼어요.")
+                        .put("요약", JSONObject().put("노트작성", JSONArray(listOf(JSONObject().put("번호", 41)))))
+                        .put(
+                            "작업결과",
+                            JSONArray(
+                                listOf(
+                                    work("노트작성", "#41", "새 노트 '가짜 약국' 를 받은편지함 에 만들었어요"),
+                                    work("노트삭제", "#7", "휴지통으로 옮겼어요"),
+                                    // A card that says nothing is left out; one without 되돌리기 cannot be taken back.
+                                    JSONObject().put("종류", " ").put("대상", "").put("결과", ""),
+                                    work("스킬보관", "가짜-스킬", "보관했어요", undo = false),
+                                ),
+                            ),
+                        ),
+                    bubble(3, MemoChatSide.SERVER, "태그를 달았어요."),
+                ),
+            ),
+        )
+        c.poll()
+        val server = c.items.value.first { it.seq == 2 }
+        assertEquals(
+            listOf(
+                MemoWorkResult("노트작성", "#41", "새 노트 '가짜 약국' 를 받은편지함 에 만들었어요", true),
+                MemoWorkResult("노트삭제", "#7", "휴지통으로 옮겼어요", true),
+                MemoWorkResult("스킬보관", "가짜-스킬", "보관했어요", false),
+            ),
+            server.works,
+        )
+        assertEquals("노트작성 · #41 · 새 노트 '가짜 약국' 를 받은편지함 에 만들었어요", memoWorkCardLine(server.works[0]))
+        // With cards, the 요약 line is not drawn again under the bubble; without them it is (서버 20차 and before).
+        assertEquals("", memoBubbleStatusText(server))
+        val plain = c.items.value.first { it.seq == 3 }
+        assertEquals(emptyList<MemoWorkResult>(), plain.works)
+        // The phone keeps the cards: a new chat of the same database has them.
+        val again = chat(db, room)
+        again.load()
+        assertEquals(server.works, again.items.value.first { it.seq == 2 }.works)
+        // A bubble kept by 앱22/23 (no 작업결과 in the json) still reads, without cards.
+        val old = MemoBubble.fromJson(JSONObject().put("순번", 9).put("쪽", MemoChatSide.SERVER).put("글", "옛 말풍선").put("상태", "완료"))!!
+        assertEquals(emptyList<MemoWorkResult>(), old.works)
+        assertFalse(keys(MemoBubble(1, MemoChatSide.SERVER, "글", "완료").toJson()).contains("작업결과"))
+    }
+
+    @Test
+    fun `app24 - five work cards are shown, the rest wait behind one press`() {
+        val works = (1..8).map { MemoWorkResult("노트작성", "#$it", "만들었어요", true) }
+        val (first, hidden) = memoWorkShown(works, expanded = false)
+        assertEquals(MEMO_WORK_CARDS, first.size)
+        assertEquals(5, MEMO_WORK_CARDS)
+        assertEquals(listOf("#1", "#2", "#3", "#4", "#5"), first.map { it.target })
+        assertEquals(3, hidden)
+        assertEquals("외 3건 더 보기", memoWorkMoreText(hidden))
+        assertEquals(works to 0, memoWorkShown(works, expanded = true))
+        // Five or fewer: all of them, nothing to open.
+        assertEquals(works.take(5) to 0, memoWorkShown(works.take(5), expanded = false))
+        // Empty parts are left out of the line.
+        assertEquals("되돌리기 · 직전 작업을 되돌렸어요", memoWorkCardLine(MemoWorkResult("되돌리기", "", "직전 작업을 되돌렸어요")))
+    }
+
     // ---------------------------------------------------------------- the look-ups and the list
 
     @Test

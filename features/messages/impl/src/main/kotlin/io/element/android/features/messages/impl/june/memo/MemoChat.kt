@@ -87,6 +87,54 @@ internal object MemoChatSide {
 /** 규약-대화 §4: what the server would write over the body, shown before the "네". */
 internal data class MemoCompare(val before: String, val after: String, val truncated: Boolean = false)
 
+/**
+ * 앱24 (규약-대화 v2 §3 `작업결과`): one thing the server did for a word of the chat — its kind (노트작성, 노트삭제,
+ * 스킬생성, …), what it was done to (`#41` or a skill name), one line on the result, and whether "되돌려줘" takes it back.
+ */
+internal data class MemoWorkResult(val kind: String, val target: String, val result: String, val undoable: Boolean = false) {
+    fun toJson(): JSONObject = JSONObject().put("종류", kind).put("대상", target).put("결과", result).put("되돌리기", undoable)
+
+    companion object {
+        /** One card of the answer; null when it says nothing (no kind, no target and no result). */
+        fun fromJson(o: JSONObject): MemoWorkResult? {
+            val kind = o.optString("종류").trim()
+            val target = o.optString("대상").trim()
+            val result = o.optString("결과").trim()
+            if (kind.isEmpty() && target.isEmpty() && result.isEmpty()) return null
+            return MemoWorkResult(kind, target, result, o.optBoolean("되돌리기"))
+        }
+    }
+}
+
+/** The `작업결과` cards of a bubble, in the order the server sent them; empty without the field (서버 20차 and before). */
+internal fun memoWorkResults(rows: JSONArray?): List<MemoWorkResult> =
+    rows?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(MemoWorkResult::fromJson) } }.orEmpty()
+
+/** How many `작업결과` cards a bubble shows before "외 N건 더 보기". */
+internal const val MEMO_WORK_CARDS = 5
+
+/** The one line of a card: "노트작성 · #41 · 새 노트 '약국 영업시간' 를 받은편지함 에 만들었어요" (empty parts left out). */
+internal fun memoWorkCardLine(w: MemoWorkResult): String = listOf(w.kind, w.target, w.result).filter { it.isNotEmpty() }.joinToString(" · ")
+
+/**
+ * Drawn at the right end of a card that "되돌려줘" takes back (규약-대화 v2 §3: the whole call goes back at once); it is
+ * not part of the line, so a long result cut with "…" still shows it.
+ */
+internal const val MEMO_WORK_UNDO_MARK = "↩"
+
+/** What the screen reader says of [MEMO_WORK_UNDO_MARK]. */
+internal const val MEMO_WORK_UNDO_LABEL = "되돌릴 수 있음"
+
+/** The cards drawn: the first [MEMO_WORK_CARDS] (all of them when [expanded]) and how many wait behind "외 N건". */
+internal fun memoWorkShown(works: List<MemoWorkResult>, expanded: Boolean): Pair<List<MemoWorkResult>, Int> =
+    if (expanded || works.size <= MEMO_WORK_CARDS) works to 0 else works.take(MEMO_WORK_CARDS) to works.size - MEMO_WORK_CARDS
+
+/** The press under the first cards. */
+internal fun memoWorkMoreText(hidden: Int): String = "외 ${hidden}건 더 보기"
+
+/** The press that folds the cards again. */
+internal const val MEMO_WORK_LESS = "접기"
+
 /** One bubble of the chat. [localId] is the `메시지id` of a word of the user (a resend keeps it). */
 internal data class MemoBubble(
     val seq: Int,
@@ -99,6 +147,8 @@ internal data class MemoBubble(
     val summary: String = "",
     val requests: List<Int> = emptyList(),
     val compare: MemoCompare? = null,
+    /** 앱24 (규약-대화 v2 `작업결과`): what the server did, one card each; empty for 서버 20차 and before. */
+    val works: List<MemoWorkResult> = emptyList(),
 ) {
     val isUser: Boolean get() = side == MemoChatSide.USER
     val isOpen: Boolean get() = isUser && status in MemoDirectiveStatus.OPEN
@@ -118,6 +168,7 @@ internal data class MemoBubble(
         .put("요약", summary)
         .put("요청", JSONArray(requests))
         .put("비교", compare?.let { JSONObject().put("전", it.before).put("후", it.after).put("잘림", it.truncated) })
+        .put("작업결과", works.takeIf { it.isNotEmpty() }?.let { JSONArray(it.map(MemoWorkResult::toJson)) })
 
     companion object {
         /** A bubble the phone kept. */
@@ -134,6 +185,7 @@ internal data class MemoBubble(
                 summary = o.optString("요약"),
                 requests = o.optJSONArray("요청").intList(),
                 compare = o.optJSONObject("비교")?.let { MemoCompare(it.optString("전"), it.optString("후"), it.optBoolean("잘림")) },
+                works = memoWorkResults(o.optJSONArray("작업결과")),
             )
         }
 
@@ -151,6 +203,7 @@ internal data class MemoBubble(
                 summary = memoSummaryLine(o.optJSONObject("요약")),
                 requests = o.optJSONArray("요청").intList(),
                 compare = compare,
+                works = memoWorkResults(o.optJSONArray("작업결과")),
             )
         }
     }
@@ -220,7 +273,9 @@ private const val CHAT_LAST_MS = 600_000L
 
 /** The line under a bubble: what the phone knows, with the seconds while the memo bot is thinking. */
 internal fun memoBubbleStatusText(b: MemoBubble, nowMs: Long? = null): String {
-    if (!b.isUser) return b.summary
+    // 앱24: with `작업결과` cards (규약-대화 v2) the cards say what was done; the `요약` line would only say it again
+    // (and a 노트작성 summary is a list of objects, not words).
+    if (!b.isUser) return if (b.works.isEmpty()) b.summary else ""
     val waiting = b.status == MemoDirectiveStatus.SENDING || b.isOpen
     val age = if (nowMs != null && b.sentMs > 0) ((nowMs - b.sentMs).coerceAtLeast(0) / 1000).toInt() else -1
     val secs = if (waiting && age >= 0) " (${age}초)" else ""

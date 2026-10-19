@@ -42,6 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -569,6 +572,7 @@ private fun MemoChatRow(bubble: MemoBubble, nowMs: Long, onResend: () -> Unit, o
             )
         }
         bubble.compare?.let { MemoCompareBox(it) }
+        if (bubble.works.isNotEmpty()) MemoWorkCards(bubble)
         val line = memoBubbleStatusText(bubble, nowMs)
         if (line.isNotEmpty() || bubble.canResend || bubble.asksYes) {
             Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -607,6 +611,60 @@ private fun MemoChatRow(bubble: MemoBubble, nowMs: Long, onResend: () -> Unit, o
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 앱24 (규약-대화 v2 §3 `작업결과`): what the server did for the word, one line card each, under its bubble. The first
+ * [MEMO_WORK_CARDS] are drawn; "외 N건 더 보기" opens the rest and "접기" folds them again (kept per bubble number).
+ */
+@Composable
+private fun MemoWorkCards(bubble: MemoBubble) {
+    var expanded by rememberSaveable(bubble.seq) { mutableStateOf(false) }
+    val (shown, hidden) = memoWorkShown(bubble.works, expanded)
+    Column(Modifier.widthIn(max = 300.dp).padding(top = 4.dp)) {
+        shown.forEach { w ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(ElementTheme.colors.bgSubtleSecondary)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .testTag(MemoTags.PANEL_WORK_CARD),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    memoWorkCardLine(w),
+                    modifier = Modifier.weight(1f),
+                    color = ElementTheme.colors.textPrimary,
+                    style = ElementTheme.typography.fontBodyXsRegular,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (w.undoable) {
+                    Text(
+                        MEMO_WORK_UNDO_MARK,
+                        modifier = Modifier.padding(start = 4.dp).semantics { contentDescription = MEMO_WORK_UNDO_LABEL },
+                        color = ElementTheme.colors.textSecondary,
+                        style = ElementTheme.typography.fontBodyXsRegular,
+                    )
+                }
+            }
+        }
+        val toggle = when {
+            hidden > 0 -> memoWorkMoreText(hidden)
+            expanded && bubble.works.size > MEMO_WORK_CARDS -> MEMO_WORK_LESS
+            else -> null
+        }
+        toggle?.let {
+            Text(
+                it,
+                modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 4.dp).testTag(MemoTags.PANEL_WORK_MORE),
+                color = ElementTheme.colors.textActionAccent,
+                style = ElementTheme.typography.fontBodyXsRegular,
+            )
         }
     }
 }
