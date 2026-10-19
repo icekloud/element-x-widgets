@@ -28,7 +28,7 @@ internal data class MemoOp(val op: String, val args: Map<String, Any?> = emptyMa
     }
 
     companion object {
-        private val READ_OPS = setOf("list", "get", "search", "tag_list", "지시조회")
+        private val READ_OPS = setOf("list", "get", "search", "tag_list", "지시조회", MEMO_OP_CHAT_POLL, MEMO_OP_REQUEST_POLL)
 
         fun list(folder: String, tags: List<String>, sort: String?, cursor: String?) =
             MemoOp("list", linkedMapOf("folder" to folder, "tags" to tags.takeIf { it.isNotEmpty() }, "sort" to sort, "cursor" to cursor))
@@ -86,6 +86,18 @@ internal data class MemoOp(val op: String, val args: Map<String, Any?> = emptyMa
         /** 앱9 (규약-지시 v1): an instruction typed in the proposal area, and the look-up of the results. */
         fun directive(id: String, text: String) = MemoOp("지시", linkedMapOf("id" to id, "문장" to text))
         fun directivePoll(ids: List<String>) = MemoOp("지시조회", mapOf("ids" to ids))
+
+        /** 앱22 (규약-대화 v1 §1): one word of the chat with the memo bot, [reset] starts its memory again (§1 `초기화`). */
+        fun chat(chatId: String, text: String?, messageId: String, reset: Boolean = false) = MemoOp(
+            MEMO_OP_CHAT,
+            linkedMapOf("대화id" to chatId, "문장" to text, "메시지id" to messageId, "초기화" to reset.takeIf { it }),
+        )
+
+        /** 앱22 (규약-대화 v1 §2): the bubbles after [lastSeq]. */
+        fun chatPoll(chatId: String, lastSeq: Int) = MemoOp(MEMO_OP_CHAT_POLL, linkedMapOf("대화id" to chatId, "마지막순번" to lastSeq))
+
+        /** 앱22 (규약-대화 v1 §6): the change requests of the memo bot (read only). */
+        fun requestPoll() = MemoOp(MEMO_OP_REQUEST_POLL)
     }
 }
 

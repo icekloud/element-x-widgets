@@ -7,6 +7,7 @@
 
 package io.element.android.features.messages.impl.june.memo
 
+import io.element.android.tests.testutils.robolectric.RobolectricTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,7 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** 앱21 ②: the `장소` of a note header (서버 15차 규약 §2) and 추가요청 4 tag line. Made up places and coordinates. */
-class MemoPlaceTest {
+class MemoPlaceTest : RobolectricTest() {
     private val map = "https://www.google.com/maps/search/?api=1&query=test"
 
     private fun header(place: JSONObject?) = JSONObject().put("제목", "x").apply { place?.let { put(MEMO_FIELD_PLACE, it) } }

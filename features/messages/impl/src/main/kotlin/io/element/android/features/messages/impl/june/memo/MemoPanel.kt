@@ -95,6 +95,12 @@ internal sealed interface MemoPanelEntry {
         override val atMs: Long get() = directive.sentMs
         override val look: String get() = directive.status + directive.message.length
     }
+
+    /** 앱22: one bubble of the chat with the memo bot (규약-대화 §2), placed by [atMs] ([memoBubbleTimes]). */
+    data class Talk(val bubble: MemoBubble, override val atMs: Long) : MemoPanelEntry {
+        override val key: String get() = if (bubble.seq > 0) "c-" + bubble.seq else "c0-" + bubble.localId
+        override val look: String get() = bubble.status + bubble.text.length + bubble.summary.length
+    }
 }
 
 /**
@@ -103,9 +109,18 @@ internal sealed interface MemoPanelEntry {
  * instruction by the time it was sent. A row without a time (a card of the fake data, or one from before 앱18 without
  * its row time) goes on top. Rows of the same time keep their order: the cards in the order of the index, then the
  * instructions in the order they were sent.
+ * 앱22: the bubbles of the chat ([bubbles]) are rows of the same list, each placed by its own time ([memoBubbleTimes]),
+ * so one conversation stays in the order of its numbers.
  */
-internal fun memoPanelTimeline(groups: List<MemoProposalGroup>, directives: List<MemoDirective>): List<MemoPanelEntry> =
-    (groups.map { MemoPanelEntry.Card(it) } + directives.map { MemoPanelEntry.Order(it) }).sortedBy { it.atMs }
+internal fun memoPanelTimeline(
+    groups: List<MemoProposalGroup>,
+    directives: List<MemoDirective>,
+    bubbles: List<MemoBubble> = emptyList(),
+): List<MemoPanelEntry> = (
+    groups.map { MemoPanelEntry.Card(it) } +
+        directives.map { MemoPanelEntry.Order(it) } +
+        memoBubbleTimes(bubbles).map { (bubble, atMs) -> MemoPanelEntry.Talk(bubble, atMs) }
+    ).sortedBy { it.atMs }
 
 /** 앱18 ②: why the rows of the area changed or the area asks to be at the bottom. */
 internal enum class MemoPanelScroll {

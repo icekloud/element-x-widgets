@@ -7,6 +7,7 @@
 
 package io.element.android.features.messages.impl.june.memo
 
+import io.element.android.tests.testutils.robolectric.RobolectricTest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -18,7 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** 앱21 ①: the directive of a review from the open note (서버 15차 규약 §1). Made up notes and words. */
-class MemoReviewDirectiveTest {
+class MemoReviewDirectiveTest : RobolectricTest() {
     @Test
     fun `without a directive the review op is exactly the one of before`() {
         val before = memoReviewOp(listOf("n1")).toJson("r1").toString()
