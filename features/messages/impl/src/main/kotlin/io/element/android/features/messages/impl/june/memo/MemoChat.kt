@@ -474,8 +474,10 @@ internal class MemoChat(
         }
         val ok = answer as? MemoResponse.Ok ?: return _requests.value
         val rows = ok.content.optJSONArray("요청") ?: JSONArray()
-        _requests.value = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }
-            .mapNotNull(MemoChangeRequest::fromJson).toImmutableList()
+        _requests.value = (0 until rows.length())
+            .mapNotNull { rows.optJSONObject(it) }
+            .mapNotNull(MemoChangeRequest::fromJson)
+            .toImmutableList()
         return _requests.value
     }
 
