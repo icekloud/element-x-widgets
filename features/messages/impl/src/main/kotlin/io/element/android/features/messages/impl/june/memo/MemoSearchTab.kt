@@ -849,7 +849,6 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote) {
         }
     }
     val title = rememberMemoField(note.id, state.draft.title) { d, v -> d.copy(title = v) }
-    val tags = rememberMemoField(note.id, state.draft.tags) { d, v -> d.copy(tags = v) }
     val body = rememberMemoField(note.id, state.draft.body) { d, v -> d.copy(body = v) }
     // 앱13 B·C (관리자: "수정영역이 너무 작음", 삼성 노트처럼): no head, no number line, no tab bar and no room composer while
     // editing (MemoScreen, MessagesView); title and tags are one small line each, the body takes every pixel that is left
@@ -857,7 +856,16 @@ private fun MemoNoteEditor(controller: MemoController, note: MemoNote) {
     // brings the line with the cursor back into sight when its own height changes (TextFieldState, 결정기록 C).
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 10.dp, vertical = 6.dp)) {
         MemoEditField(title, "제목", Modifier.fillMaxWidth().testTag(MemoTags.EDIT_TITLE))
-        MemoEditField(tags, "태그 (#교토 #빵집)", Modifier.fillMaxWidth().padding(top = 4.dp).testTag(MemoTags.EDIT_TAGS))
+        // 앱23 (관리자: 편집 화면의 태그 칸도 태그 시트와 같은 칩으로): chips with ✕, `#` after a space makes a chip,
+        // and the tags there are can be picked. The draft still keeps one string (결정기록 8).
+        val knownTags by controller.store.tags.collectAsState()
+        MemoEditTagChips(
+            noteId = note.id,
+            tags = state.draft.tags,
+            known = knownTags.map { it.name }.toImmutableList(),
+            onChange = { v -> MemoEditHub.change(note.id) { it.copy(tags = v) } },
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        )
         MemoEditField(
             body,
             "본문",

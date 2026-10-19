@@ -177,6 +177,14 @@ internal fun memoTagSheetTags(chips: List<String>, rest: String): List<String> =
 internal fun memoTagRemoveLabel(tag: String): String = "$tag 태그 제거"
 
 /**
+ * 앱23 (관리자: 편집 화면의 태그 칸도 태그 시트와 같은 칩으로): the chips and what is still being typed, back as the one
+ * line the draft keeps ([MemoEditDraft.tags], 결정기록 8). The draft stays a string, so the auto save, 취소 and
+ * [memoEditOp] work exactly as before.
+ */
+internal fun memoEditTagsText(chips: List<String>, rest: String): String =
+    (chips.map { "#$it" } + rest.trim()).filter { it.isNotEmpty() }.joinToString(" ")
+
+/**
  * The editing sessions, one per note, outside the screen (앱12 D): the typed text survives a tab switch, the note
  * closing and the app going to the background. Saves are serialised by one lock, and the save that leaves the screen
  * runs in this scope because the screen's own one is already gone by then.
