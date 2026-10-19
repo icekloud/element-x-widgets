@@ -31,6 +31,7 @@ internal object MemoSync {
     const val STATE_CURSOR = "sync_cursor"
     const val STATE_SKEW = "clock_skew"
     const val STATE_SERVER_SEQ = "server_seq"
+    const val STATE_PHOTO_REPAIR = "photo_repair_a11"
 
     /** Uploads of one `sync_push` (the server reads at most `sy.PAGE` = 200 of them). */
     const val PUSH_BATCH = 50
@@ -55,6 +56,19 @@ internal object MemoSync {
 
     /** True when a `sync_pull` is worth making right now (설계 §k-4: no polling, this answers "is there anything new"). */
     fun needsPull(db: MemoDb): Boolean = serverSeq(db) > base(db) || cursor(db) != null
+
+    /**
+     * 앱11 E: once per phone, the next pull asks for every note again (기준 0, the server sends its full copies with the
+     * keys). A photo list the 앱10 phone emptied kept the same stamps, so the compare sync cannot see it; the full copy
+     * fills it in again ([mergeMemoNote]). Returns true when it moved 기준 back now.
+     */
+    fun repairPhotosOnce(db: MemoDb): Boolean {
+        if (db.state(STATE_PHOTO_REPAIR) != null) return false
+        db.setState(STATE_PHOTO_REPAIR, "1")
+        db.setState(STATE_BASE, "0")
+        db.setState(STATE_CURSOR, "")
+        return true
+    }
 
     // ---- sync_pull
 
@@ -135,9 +149,12 @@ internal object MemoSync {
      */
     fun applyChange(db: MemoDb, change: JSONObject, withoutBody: Boolean = false): Boolean {
         val sent = memoChangeFromJson(change) ?: return false
-        val mine = db.note(sent.id)
+        // 앱10: the number and the user time are kept apart from the note row (no dirty flag, no upload).
+        val metaChanged = memoApplyNoteMeta(db, change)
+        // A header stored by 앱9 may still hold the server number: compared without it, like the one that comes in.
+        val mine = db.note(sent.id)?.let { it.copy(headerJson = memoHeaderJsonWithoutMeta(it.headerJson)) }
         if (mine == null) {
-            if (withoutBody) return false
+            if (withoutBody) return metaChanged
             db.writeNote(sent.copy(dirty = false))
             return true
         }
@@ -150,7 +167,7 @@ internal object MemoSync {
         val dirty = !memoSameNote(merged, incoming)
         val changedHere = !memoSameNote(merged, mine)
         db.writeNote(merged.copy(dirty = dirty, serverRev = incoming.contentHash))
-        return changedHere
+        return changedHere || metaChanged
     }
 
     /** True when the body-less note of an ack carries a newer body than ours: the full note is fetched with `op:get`. */
@@ -173,15 +190,22 @@ internal object MemoSync {
         revs = revs.with(MemoBundle.Body, mine.revs.body),
     )
 
+    /**
+     * 앱14 A·C: the server's folder list. Its empty icons never wipe what the phone holds (the built-in icons put in
+     * with the database, an icon picked here); an icon picked here and not taken by the server yet stays with its stamp
+     * ([memoMergedFolderIcon]).
+     * 앱15 A: an icon waiting in the outbox wins as well, an empty one (back to the default) included: the screen pulls
+     * before it pushes, and the server's old icon must not come back over it in between.
+     */
     private fun applyFolders(db: MemoDb, folders: JSONArray) {
+        val picked = db.pickedFolderIcons() + waitingFolderIcons(db)
+        val stored = db.folders().associate { it.path to it.icon }
         for (i in 0 until folders.length()) {
             val f = folders.optJSONObject(i) ?: continue
             val path = f.optString("경로").takeIf { it.isNotEmpty() } ?: continue
-            db.putFolder(
-                MemoFolderRow(path, f.optString("아이콘"), f.optString("출처").ifEmpty { "서버" }, i, f.optInt("삭제") == 1),
-                MemoRev.ZERO,
-                dirty = false,
-            )
+            val icon = memoMergedFolderIcon(f.optString("아이콘"), picked[path], stored[path])
+            val row = MemoFolderRow(path, icon, f.optString("출처").ifEmpty { "서버" }, i, f.optInt("삭제") == 1)
+            if (picked[path] != null) db.moveFolderRow(row) else db.putFolder(row, MemoRev.ZERO, dirty = false)
         }
     }
 
@@ -249,19 +273,75 @@ internal object MemoSync {
     fun dueUploads(db: MemoDb, nowMs: Long): List<MemoOutboxRow> =
         db.outboxDue(nowMs).filter { it.kind == MEMO_OUTBOX_NOTE }.take(PUSH_BATCH)
 
-    /** The `sync_push` arguments of [rows]. Returns null when there is nothing to send (no empty request is made). */
-    fun pushArgs(rows: List<MemoOutboxRow>, device: String, proposals: JSONArray? = null): JSONObject? {
-        if (rows.isEmpty() && (proposals == null || proposals.length() == 0)) return null
+    /**
+     * The `sync_push` arguments of [rows]. Returns null when there is nothing to send (no empty request is made).
+     * 앱15 A: [icons] are the folder icons picked here (`폴더아이콘[]`, `{경로, 아이콘}`; an empty icon = back to the
+     * default). A server that does not know the key ignores it (규약 §0).
+     */
+    fun pushArgs(rows: List<MemoOutboxRow>, device: String, proposals: JSONArray? = null, icons: JSONArray? = null): JSONObject? {
+        val noProposals = proposals == null || proposals.length() == 0
+        val noIcons = icons == null || icons.length() == 0
+        if (rows.isEmpty() && noProposals && noIcons) return null
         val changes = JSONArray()
         rows.forEach { row -> tryOrNull { JSONObject(row.payload) }?.let { changes.put(it) } }
         val args = JSONObject().put("변경", changes).put("기기", device)
-        if (proposals != null && proposals.length() > 0) args.put("제안응답", proposals)
+        if (!noProposals) args.put("제안응답", proposals)
+        if (!noIcons) args.put("폴더아이콘", icons)
         return args
     }
 
-    /** Queues [note] for the next upload (one row per note: a newer change replaces the waiting one, 설계 §k-4 ②). */
-    fun enqueueNote(db: MemoDb, note: MemoNoteRecord, nowMs: Long) =
-        db.enqueue(MEMO_OUTBOX_NOTE, note.id, note.toChangeJson().toString(), nowMs)
+    /**
+     * 앱15 A: the folder icons of [due] that may go now. A row whose folder was renamed or removed since is dropped
+     * without being sent (the server keeps icons of the folders it has only).
+     */
+    fun dueFolderIcons(db: MemoDb, due: List<MemoOutboxRow>): List<MemoOutboxRow> {
+        val rows = due.filter { it.kind == MEMO_OUTBOX_FOLDER_ICON }
+        if (rows.isEmpty()) return rows
+        val live = db.folders().filter { !it.deleted }.mapTo(mutableSetOf()) { it.path }
+        val (keep, gone) = rows.partition { it.target in live }
+        gone.forEach { db.dropOutbox(it.seq) }
+        return keep
+    }
+
+    /** 앱15 A: the `폴더아이콘[]` items of [rows] (their payload is `{경로, 아이콘}` already). */
+    fun folderIconsJson(rows: List<MemoOutboxRow>): JSONArray {
+        val out = JSONArray()
+        rows.forEach { row -> tryOrNull { JSONObject(row.payload) }?.let { out.put(it) } }
+        return out
+    }
+
+    /**
+     * 앱15 A: a `sync_ack` came for a push that carried [sent]: those icons are the server's now (the answer has no line
+     * for them, its shape did not change). An icon picked again while the push was on its way stays for the next one.
+     */
+    fun applyFolderIconAck(db: MemoDb, sent: List<MemoOutboxRow>) {
+        if (sent.isEmpty()) return
+        db.transaction {
+            val waiting = db.outbox().filter { it.kind == MEMO_OUTBOX_FOLDER_ICON }.associateBy { it.target }
+            sent.forEach { row ->
+                val current = waiting[row.target]
+                if (current == null || current.payload != row.payload) return@forEach
+                db.dropOutbox(current.seq)
+                db.cleanFolderIcon(row.target, tryOrNull { JSONObject(row.payload).optString("아이콘") }.orEmpty())
+            }
+        }
+    }
+
+    /** 앱15 A: the icons picked here and not taken by the server yet, by path (`""` = back to the default). */
+    fun waitingFolderIcons(db: MemoDb): Map<String, String> = db.outbox()
+        .filter { it.kind == MEMO_OUTBOX_FOLDER_ICON }
+        .mapNotNull { row -> tryOrNull { JSONObject(row.payload) }?.let { row.target to it.optString("아이콘").trim() } }
+        .toMap()
+
+    /**
+     * Queues [note] for the next upload (one row per note: a newer change replaces the waiting one, 설계 §k-4 ②). 앱10:
+     * the time of the user's last change goes with it (`사용자수정`, 규약 추가 결정 2); the number never goes up.
+     */
+    fun enqueueNote(db: MemoDb, note: MemoNoteRecord, nowMs: Long) {
+        val change = note.toChangeJson()
+        memoNoteMeta(db, note.id).userModifiedMs.takeIf { it > 0 }?.let { change.put(MEMO_FIELD_USER_MODIFIED, memoIso(it)) }
+        db.enqueue(MEMO_OUTBOX_NOTE, note.id, change.toString(), nowMs)
+    }
 
     /**
      * Applies one `app.june.memo.sync_ack`: removes what went through, holds back what failed, stores the merged notes
@@ -285,6 +365,8 @@ internal object MemoSync {
                         accepted++
                         outbox?.let { db.dropOutbox(it.seq) }
                         db.note(id)?.let { db.writeNote(it.copy(dirty = false, serverRev = it.contentHash)) }
+                        // 앱10: a new note gets its number in this answer (규약-번호사진 1).
+                        row.optJSONObject("노트")?.let { memoApplyNoteMeta(db, it) }
                     }
                     "병합" -> {
                         mergedBack++
@@ -369,13 +451,18 @@ internal fun memoChangeFromJson(o: JSONObject): MemoNoteRecord? {
     val files = o.optJSONArray("첨부")
     val attachments = buildList {
         for (i in 0 until (files?.length() ?: 0)) {
-            val f = files?.optJSONObject(i) ?: continue
+            // 앱11 E: the server writes an item without its key as the plain mxc (every `sync_push` answer). It was
+            // skipped here, so the list came in empty and the photo went off the phone.
+            val f = files?.optJSONObject(i) ?: files?.optString(i)?.takeIf { it.startsWith("mxc://") }?.let { JSONObject().put("mxc", it) } ?: continue
             val mxc = f.optString("mxc").takeIf { it.isNotEmpty() } ?: continue
+            // 앱23: a photo's location comes down beside its file (규약-사진위치 3절) and is kept with the file
+            // information, so this phone can send it back unchanged and the merge below does not lose it.
+            val location = memoPhotoLocationFromJson(f.optJSONObject(MEMO_PHOTO_LOCATION_KEY))
             add(
                 MemoLocalAttachment(
                     id = mxc,
                     mxc = mxc,
-                    fileJson = f.optJSONObject("file")?.toString(),
+                    fileJson = memoFileJsonWithLocation(f.optJSONObject("file")?.toString(), location),
                     mime = f.optString("mimetype").takeIf { it.isNotEmpty() },
                     state = MEMO_ATTACH_DONE,
                 )
@@ -403,7 +490,7 @@ internal fun memoChangeFromJson(o: JSONObject): MemoNoteRecord? {
         tags = tags,
         attachments = attachments,
         linkJson = o.optJSONObject("링크")?.toString(),
-        headerJson = header?.toString(),
+        headerJson = memoHeaderWithoutMeta(header)?.toString(),
         serverRev = serverHash,
     )
 }

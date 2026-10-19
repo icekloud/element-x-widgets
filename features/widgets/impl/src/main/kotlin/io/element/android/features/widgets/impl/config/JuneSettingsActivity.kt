@@ -281,6 +281,35 @@ private fun MemoRoomSection() {
             Checkbox(checked = JuneSettings.memoFakeData(context), onCheckedChange = { JuneSettings.setMemoFakeData(context, it) })
             Text("가짜 데이터로 미리 보기 (서버 없이 화면만 확인, 조작은 저장되지 않음)", style = MaterialTheme.typography.bodySmall)
         }
+        MemoButtonSpotRow()
+    }
+}
+
+/**
+ * 앱19 추가요청 2: "메모 버튼 위치 초기화": the memo button of the home screen goes back to the bottom centre (no
+ * confirmation, one short line after). When it is already there the button is off and says so.
+ */
+@Composable
+private fun MemoButtonSpotRow() {
+    val context = LocalContext.current
+    val moved = JuneSettings.memoButtonSpot(context) != null
+    var done by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(
+            enabled = moved,
+            onClick = {
+                JuneSettings.resetMemoButtonSpot(context)
+                done = true
+            },
+        ) { Text("메모 버튼 위치 초기화") }
+        Text(
+            when {
+                done && !moved -> "초기화했습니다"
+                moved -> "홈 화면 메모 버튼을 아래 가운데로 되돌립니다"
+                else -> "기본 위치입니다"
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 

@@ -7,4 +7,7 @@
   -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Element June memo bot 앱23: lets the memo screen read the location a picked picture was taken at, so the bot
+         can name the place. Refusing it only means the photo goes up without a location. -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 </manifest>
