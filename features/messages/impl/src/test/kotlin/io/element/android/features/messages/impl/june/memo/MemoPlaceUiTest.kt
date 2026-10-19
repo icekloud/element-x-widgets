@@ -117,7 +117,9 @@ class MemoPlaceUiTest : RobolectricTest() {
         assertTrue("place $place box $box", place.right <= box.left)
         assertEquals(box.center.y, place.center.y, 1f)
         assertEquals(box.height, place.height, 1f)
-        onNodeWithText("🍴 가짜 꼬치집 · 꼬치튀김 전문점", useUnmergedTree = true).assertExists()
+        // 앱23 추가요청 4 (소개는 칸에서 뺀다): the first line is the name only; 앱24 brings this test to it (결정기록 5).
+        onNodeWithText("🍴 가짜 꼬치집", useUnmergedTree = true).assertExists()
+        assertTrue(onAllNodesWithText("꼬치튀김 전문점", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
         onNodeWithText("가짜시 가짜구 1-2-3", useUnmergedTree = true).assertExists()
     }
 
