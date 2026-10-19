@@ -37,7 +37,7 @@ import io.element.android.libraries.designsystem.components.dialogs.Confirmation
  */
 
 /** The gallery picker of the memo screen, asking for the pictures' location to be kept (결정기록 1). */
-internal class MemoPickPhotosWithLocation : ActivityResultContracts.PickMultipleVisualMedia() {
+internal class MemoPhotoLocationPicker : ActivityResultContracts.PickMultipleVisualMedia() {
     override fun createIntent(context: Context, input: PickVisualMediaRequest): Intent =
         super.createIntent(context, input).putExtra(MEMO_EXTRA_REQUEST_LOCATION_METADATA, true)
 }

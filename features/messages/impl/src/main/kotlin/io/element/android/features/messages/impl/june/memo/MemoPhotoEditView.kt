@@ -41,9 +41,9 @@ import io.element.android.libraries.designsystem.theme.components.Text
  */
 @Composable
 internal fun MemoEditorPhotos(edit: MemoPhotoEdit, onChange: (MemoPhotoEdit) -> Unit, modifier: Modifier = Modifier) {
-    // 앱23: the picker is asked to keep the location in the pictures it hands over (MemoPhotoLocationPicker); the
+    // 앱23: the picker is asked to keep the location in the pictures it hands over (MemoPhotoLocationPicker.kt); the
     // user allows or refuses that in the picker itself, and a refusal only means the photo goes up without one.
-    val gallery = rememberLauncherForActivityResult(MemoPickPhotosWithLocation()) { uris ->
+    val gallery = rememberLauncherForActivityResult(MemoPhotoLocationPicker()) { uris ->
         if (uris.isNotEmpty()) onChange(edit.pick(uris.map { it.toString() }))
     }
     val askMediaLocation = rememberMemoMediaLocationAsk()

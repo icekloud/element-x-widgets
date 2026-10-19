@@ -98,7 +98,7 @@ private fun memoLooksLikeTime(s: String): Boolean =
 
 /** "+09:00", "-03:30" or "Z". */
 private fun memoLooksLikeOffset(s: String): Boolean =
-    s == "Z" || (s.length == 6 && (s[0] == '+' || s[0] == '-') && s[3] == ':' && s.drop(1).filter { it != ':' }.all { it.isDigit() })
+    s == "Z" || s.length == 6 && (s[0] == '+' || s[0] == '-') && s[3] == ':' && s.drop(1).filter { it != ':' }.all { it.isDigit() }
 
 /** The device's current UTC offset as "+09:00" (the zone the rest of the app writes its times in). */
 internal fun memoDeviceOffset(nowMs: Long = System.currentTimeMillis()): String {
@@ -164,13 +164,14 @@ internal val MemoLocalAttachment.location: MemoPhotoLocation? get() = memoAttach
 /** The locations of the `첨부[]` items of a `노트변경` payload: the photo's mxc to the location it carried. */
 internal fun memoLocationsOfChange(change: JSONObject): Map<String, MemoPhotoLocation> {
     val files = change.optJSONArray("첨부") ?: return emptyMap()
-    val out = mutableMapOf<String, MemoPhotoLocation>()
-    for (i in 0 until files.length()) {
-        val f = files.optJSONObject(i) ?: continue
-        val mxc = f.optString("mxc").takeIf { it.isNotEmpty() } ?: continue
-        memoPhotoLocationFromJson(f.optJSONObject(MEMO_PHOTO_LOCATION_KEY))?.let { out[mxc] = it }
-    }
-    return out
+    return (0 until files.length())
+        .mapNotNull { files.optJSONObject(it) }
+        .mapNotNull { f ->
+            val mxc = f.optString("mxc").takeIf { it.isNotEmpty() }
+            val location = memoPhotoLocationFromJson(f.optJSONObject(MEMO_PHOTO_LOCATION_KEY))
+            if (mxc != null && location != null) mxc to location else null
+        }
+        .toMap()
 }
 
 /**
