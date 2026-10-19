@@ -7,6 +7,9 @@
 
 package io.element.android.features.messages.impl.june.memo
 
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -163,8 +166,7 @@ internal fun memoSummaryLine(summary: JSONObject?): String {
     summary ?: return ""
     val keys = summary.keys().asSequence().sorted().toList()
     return keys.mapNotNull { key ->
-        val value = summary.opt(key)
-        val text = when (value) {
+        val text = when (val value = summary.opt(key)) {
             null, JSONObject.NULL -> null
             is JSONArray -> (0 until value.length()).joinToString(", ") { value.optString(it) }.takeIf { it.isNotEmpty() }
             else -> value.toString().takeIf { it.isNotEmpty() }
@@ -188,7 +190,7 @@ internal fun memoBubblesMerge(kept: List<MemoBubble>, incoming: List<MemoBubble>
         numbered[new.seq] = if (old == null) new else new.copy(localId = new.localId.ifEmpty { old.localId }, sentMs = old.sentMs)
     }
     val stillSending = sending.filter { it.localId.isEmpty() || it.localId !in byLocalId }
-    val rows = (numbered.values.filter { it.seq !in cleared }.sortedBy { it.seq } + stillSending)
+    val rows = numbered.values.filter { it.seq !in cleared }.sortedBy { it.seq } + stillSending
     return rows.takeLast(MEMO_CHAT_KEEP)
 }
 
@@ -332,7 +334,7 @@ internal class MemoChat(
     private val mutex = Mutex()
     private val _items = MutableStateFlow<List<MemoBubble>>(emptyList())
     private val _mode = MutableStateFlow(MemoInputMode.Directive)
-    private val _requests = MutableStateFlow<List<MemoChangeRequest>>(emptyList())
+    private val _requests = MutableStateFlow<ImmutableList<MemoChangeRequest>>(persistentListOf())
     private val _off = MutableStateFlow<String?>(null)
 
     /** Oldest first, at most [MEMO_CHAT_KEEP]. */
@@ -341,7 +343,7 @@ internal class MemoChat(
     /** What the input sends; kept in the database, so it is the same after a restart. */
     val mode: StateFlow<MemoInputMode> = _mode.asStateFlow()
 
-    val requests: StateFlow<List<MemoChangeRequest>> = _requests.asStateFlow()
+    val requests: StateFlow<ImmutableList<MemoChangeRequest>> = _requests.asStateFlow()
 
     /** Not null when the server answered "기능 꺼짐" (규약-대화 §0). */
     val off: StateFlow<String?> = _off.asStateFlow()
@@ -464,7 +466,7 @@ internal class MemoChat(
     }
 
     /** 규약-대화 §6: the change requests of the memo bot (read only; the phone cannot change their state). */
-    suspend fun loadRequests(): List<MemoChangeRequest> {
+    suspend fun loadRequests(): ImmutableList<MemoChangeRequest> {
         val answer = callOrNull(MemoOp.requestPoll())
         if (answer is MemoResponse.Error) {
             noteError(answer.reason)
@@ -472,7 +474,8 @@ internal class MemoChat(
         }
         val ok = answer as? MemoResponse.Ok ?: return _requests.value
         val rows = ok.content.optJSONArray("요청") ?: JSONArray()
-        _requests.value = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull(MemoChangeRequest::fromJson)
+        _requests.value = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }
+            .mapNotNull(MemoChangeRequest::fromJson).toImmutableList()
         return _requests.value
     }
 
@@ -568,10 +571,10 @@ private val MEMO_ISO = Regex("^(\\d{4})-(\\d{2})-(\\d{2})[Tt ](\\d{2}):(\\d{2}):
 /** The `시각` of a bubble as milliseconds (the other way round of [memoIso]); null when it is not a time. */
 internal fun memoIsoMs(iso: String): Long? {
     val m = MEMO_ISO.matchEntire(iso.trim()) ?: return null
-    val (y, mo, d, h, mi, s) = m.destructured
-    val year = y.toInt()
-    val month = mo.toInt()
-    val day = d.toInt()
+    val parts = m.groupValues
+    val year = parts[1].toInt()
+    val month = parts[2].toInt()
+    val day = parts[3].toInt()
     if (month !in 1..12 || day !in 1..31) return null
     // days from civil (H. Hinnant), the other way round of memoIso
     val shifted = if (month <= 2) year - 1 else year
@@ -580,7 +583,7 @@ internal fun memoIsoMs(iso: String): Long? {
     val doy = (153 * (if (month > 2) month - 3 else month + 9) + 2) / 5 + day - 1
     val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
     val days = era * 146_097 + doe - 719_468
-    val secs = days * 86_400L + h.toInt() * 3_600L + mi.toInt() * 60L + s.toInt()
+    val secs = days * 86_400L + parts[4].toInt() * 3_600L + parts[5].toInt() * 60L + parts[6].toInt()
     val zone = m.groupValues[7]
     val offset = when {
         zone.isEmpty() || zone == "Z" -> 0L

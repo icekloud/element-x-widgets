@@ -51,6 +51,8 @@ import io.element.android.libraries.designsystem.theme.components.DropdownMenu
 import io.element.android.libraries.designsystem.theme.components.DropdownMenuItem
 import io.element.android.libraries.designsystem.theme.components.Text
 import io.element.android.libraries.designsystem.theme.components.TextField
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -92,7 +94,7 @@ internal fun MemoPanelContent(
     val bubbles by (chat?.items ?: noBubbles).collectAsState()
     val noMode = remember { MutableStateFlow(MemoInputMode.Directive) }
     val mode by (chat?.mode ?: noMode).collectAsState()
-    val noRequests = remember { MutableStateFlow(emptyList<MemoChangeRequest>()) }
+    val noRequests = remember { MutableStateFlow(persistentListOf<MemoChangeRequest>()) }
     val requests by (chat?.requests ?: noRequests).collectAsState()
     val noOff = remember { MutableStateFlow<String?>(null) }
     val chatOff by (chat?.off ?: noOff).collectAsState()
@@ -403,7 +405,7 @@ private fun MemoInputModeTab(value: MemoInputMode, mode: MemoInputMode, tag: Str
 
 /** 앱22 (규약-대화 §6): what the memo bot asked to have changed. The phone only shows it (no button changes a state). */
 @Composable
-private fun MemoRequestCards(requests: List<MemoChangeRequest>) {
+private fun MemoRequestCards(requests: ImmutableList<MemoChangeRequest>) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).testTag(MemoTags.PANEL_REQUESTS)) {
         Text(
             memoRequestHeadText(requests),
@@ -574,7 +576,11 @@ private fun MemoChatRow(bubble: MemoBubble, nowMs: Long, onResend: () -> Unit, o
                     Text(
                         line,
                         modifier = Modifier.widthIn(max = 300.dp).testTag(MemoTags.PANEL_BUBBLE_STATE),
-                        color = if (bubble.status == MemoDirectiveStatus.NOT_SENT) ElementTheme.colors.textCriticalPrimary else ElementTheme.colors.textSecondary,
+                        color = if (bubble.status == MemoDirectiveStatus.NOT_SENT) {
+                            ElementTheme.colors.textCriticalPrimary
+                        } else {
+                            ElementTheme.colors.textSecondary
+                        },
                         style = ElementTheme.typography.fontBodyXsRegular,
                     )
                 }
