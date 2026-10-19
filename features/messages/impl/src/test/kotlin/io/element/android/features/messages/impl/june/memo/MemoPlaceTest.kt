@@ -55,19 +55,40 @@ class MemoPlaceTest : RobolectricTest() {
     }
 
     @Test
-    fun `a restaurant shows the fork, its name and introduction, the address on the second line`() {
+    fun `a restaurant shows the fork and its name, the address on the second line`() {
+        // 앱23 추가요청 4: 소개는 칸에서 빼고 주소는 저장된 원문 그대로 둘째 줄에 둔다.
         val p = memoPlaceLine(header(place()))!!
-        assertEquals("🍴 가짜 꼬치집 · 꼬치튀김 전문점", p.title)
+        assertEquals("🍴 가짜 꼬치집", p.title)
         assertEquals("가짜시 가짜구 1-2-3", p.address)
         assertEquals(map, p.map)
-        assertEquals("🍴 가짜 꼬치집 · 꼬치튀김 전문점, 가짜시 가짜구 1-2-3", p.description)
+        assertEquals("🍴 가짜 꼬치집, 가짜시 가짜구 1-2-3", p.description)
     }
 
     @Test
     fun `another kind shows the pin, a phone position adds (근처)`() {
-        assertEquals("📍 가짜 탑 · 전망대", memoPlaceLine(header(place(name = "가짜 탑", kind = "관광", intro = "전망대")))!!.title)
-        assertEquals("🍴 가짜 꼬치집 (근처) · 꼬치튀김 전문점", memoPlaceLine(header(place(approx = true)))!!.title)
-        assertEquals("🍴 가짜 꼬치집 · 꼬치튀김 전문점", memoPlaceLine(header(place(approx = false)))!!.title)
+        assertEquals("📍 가짜 탑", memoPlaceLine(header(place(name = "가짜 탑", kind = "관광", intro = "전망대")))!!.title)
+        assertEquals("🍴 가짜 꼬치집 (근처)", memoPlaceLine(header(place(approx = true)))!!.title)
+        assertEquals("🍴 가짜 꼬치집", memoPlaceLine(header(place(approx = false)))!!.title)
+    }
+
+    @Test
+    fun `첫 줄은 서버가 준 표시이름이고 둘째 줄은 주소 원문이다`() {
+        // 앱23 추가요청 3·5: 표시이름 → 이름 → 근처 순. 주소는 일본어라도 그대로 (가짜 값).
+        val p = place(name = "カスガ ゴラクジョウ", address = "가짜현 가짜시 가짜구 3-2-19")
+            .put(MEMO_PLACE_SHOWN_NAME, "카스가 고라쿠조오")
+        val line = memoPlaceLine(header(p))!!
+        assertEquals("🍴 카스가 고라쿠조오", line.title)
+        assertEquals("가짜현 가짜시 가짜구 3-2-19", line.address)
+
+        // 서버 21차 적용 전(표시이름이 없는 노트)은 이름으로 돌아간다 — 깨지지 않는다.
+        assertEquals("🍴 カスガ ゴラクジョウ", memoPlaceLine(header(place(name = "カスガ ゴラクジョウ")))!!.title)
+        // 표시이름이 비어 있어도 마찬가지.
+        assertEquals("🍴 가짜 꼬치집", memoPlaceLine(header(place().put(MEMO_PLACE_SHOWN_NAME, "  ")))!!.title)
+        // 폰 위치기록 기준이면 (근처)가 붙는다 (추가요청 6: 서버가 정황 대조로 확정하면 붙지 않는다).
+        assertEquals(
+            "🍴 카스가 고라쿠조오 (근처)",
+            memoPlaceLine(header(place(approx = true).put(MEMO_PLACE_SHOWN_NAME, "카스가 고라쿠조오")))!!.title,
+        )
     }
 
     @Test
@@ -89,7 +110,7 @@ class MemoPlaceTest : RobolectricTest() {
     @Test
     fun `unknown parts of the place are ignored`() {
         val p = place().put("새칸", JSONObject().put("x", 1))
-        assertEquals("🍴 가짜 꼬치집 · 꼬치튀김 전문점", memoPlaceLine(header(p))!!.title)
+        assertEquals("🍴 가짜 꼬치집", memoPlaceLine(header(p))!!.title)
     }
 
     @Test
