@@ -387,6 +387,21 @@ class MemoEditTest : RobolectricTest() {
     }
 
     @Test
+    fun `app23 - 편집 화면의 칩은 초안의 한 줄로 돌아간다`() {
+        // 결정기록 8: 초안은 문자열 그대로 (자동 저장·취소·memoEditOp 가 그대로 동작한다).
+        assertEquals("#일상 #지도", memoEditTagsText(listOf("일상", "지도"), ""))
+        assertEquals("#일상 #지도 #카", memoEditTagsText(listOf("일상", "지도"), "#카"))
+        assertEquals("#일상", memoEditTagsText(listOf("일상"), "   "))
+        assertEquals("카페", memoEditTagsText(emptyList(), "카페"))
+        assertEquals("", memoEditTagsText(emptyList(), ""))
+        // 칩으로 되읽으면 같은 태그가 나온다 (시트의 규칙을 그대로 쓴다).
+        assertEquals(listOf("일상", "지도"), memoParseTagInput(memoEditTagsText(listOf("일상", "지도"), "")))
+        assertEquals(listOf("일상", "카페"), memoParseTagInput(memoEditTagsText(listOf("일상"), "#카페")))
+        // 저장되는 태그는 시트와 같은 함수로 정해진다.
+        assertEquals(listOf("일상", "카페"), memoTagSheetTags(listOf("일상"), "#카페"))
+    }
+
+    @Test
     fun `app19 - nothing becomes a chip without a hash after a space`() {
         val none = { s: String -> MemoTagChipSplit(emptyList(), s, 0) }
         assertEquals(none(""), memoTagChipSplit(""))

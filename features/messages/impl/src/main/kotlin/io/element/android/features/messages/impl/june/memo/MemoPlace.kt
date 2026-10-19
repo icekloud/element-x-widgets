@@ -21,9 +21,16 @@ internal const val MEMO_FIELD_PLACE = "장소"
 internal const val MEMO_PLACE_KIND_FOOD = "음식점"
 
 /**
- * 앱21 ②: what the place box shows. [title] is the first line (📍/🍴, the name or `근처: …`, `(근처)` for a phone
- * position, ` · ` and the short introduction), [address] the second (empty: one line). [map] is the link a press opens,
- * null when there is none to open (the box is then drawn without a press).
+ * 앱23 추가요청 3·5: the name of the place as it is meant to be read (서버 21차). The server writes the Korean name of
+ * the place here; a note from before it, or a server without it, has only `이름` and the box falls back to that.
+ */
+internal const val MEMO_PLACE_SHOWN_NAME = "표시이름"
+
+/**
+ * 앱21 ② + 앱23 추가요청 4·5: what the place box shows. [title] is the first line (📍/🍴, the place name the server
+ * gives, `(근처)` for a phone position), [address] the second — the address exactly as it is stored, in its own
+ * language (empty: one line). The short introduction is not shown any more (추가요청 4: 소개만 칸에서 뺀다). [map] is
+ * the link a press opens, null when there is none to open (the box is then drawn without a press).
  */
 internal data class MemoPlaceLine(val title: String, val address: String, val map: String?) {
     val description: String get() = listOf(title, address).filter { it.isNotEmpty() }.joinToString(", ")
@@ -35,7 +42,10 @@ internal data class MemoPlaceLine(val title: String, val address: String, val ma
  */
 internal fun memoPlaceLine(header: JSONObject?): MemoPlaceLine? {
     val p = header?.optJSONObject(MEMO_FIELD_PLACE) ?: return null
-    val name = p.optString("이름").trim()
+    // 앱23 추가요청 3·5: the first line is the name the server means to be read (`표시이름`, Korean where the server
+    // has it). A note or a server that does not know the field yet falls back to `이름`, so nothing breaks.
+    val shown = p.optString(MEMO_PLACE_SHOWN_NAME).trim()
+    val name = shown.ifEmpty { p.optString("이름").trim() }
     val near = p.optString("근처").trim()
     val intro = p.optString("소개").trim()
     val address = p.optString("주소").trim()
@@ -47,8 +57,8 @@ internal fun memoPlaceLine(header: JSONObject?): MemoPlaceLine? {
         else -> return null
     }
     val mark = if (p.optString("종류") == MEMO_PLACE_KIND_FOOD) "🍴" else "📍"
-    val title = "$mark $label" + if (intro.isNotEmpty()) " · $intro" else ""
-    return MemoPlaceLine(title, address, map)
+    // 앱23 추가요청 4: the introduction is kept in the note (saved, searched) but not drawn in the box.
+    return MemoPlaceLine("$mark $label", address, map)
 }
 
 /**

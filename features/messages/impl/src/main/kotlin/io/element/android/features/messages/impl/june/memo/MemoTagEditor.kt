@@ -108,6 +108,59 @@ internal fun MemoTagEditor(
     }
 }
 
+/**
+ * 앱23 (관리자: 편집 화면의 태그 칸도 시트와 같은 칩으로): the tag line of the note editor. The same chips, the same ✕
+ * and the same `#`-after-a-space rule as the sheet above — only the draft keeps one string ([memoEditTagsText],
+ * 결정기록 8), so the auto save and 취소 are untouched. Known tags not there yet can be picked beside it.
+ */
+@Composable
+internal fun MemoEditTagChips(
+    noteId: String,
+    tags: String,
+    known: ImmutableList<String>,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // The note's own tags are chips from the start; what is typed next waits in the input.
+    var chips by remember(noteId) { mutableStateOf(memoParseTagInput(tags)) }
+    var field by remember(noteId) { mutableStateOf(TextFieldValue("")) }
+    fun write(newChips: List<String>, rest: String) {
+        chips = newChips
+        onChange(memoEditTagsText(newChips, rest))
+    }
+    Column(modifier) {
+        FlowRow(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center) {
+            chips.forEach { tag -> MemoTagChip(tag, onRemove = { write(chips - tag, field.text) }) }
+        }
+        TextField(
+            value = field,
+            onValueChange = { value ->
+                val split = memoTagChipSplit(value.text, value.composition?.start)
+                field = if (split.cut == 0) {
+                    write(chips, value.text)
+                    value
+                } else {
+                    val end = split.rest.length
+                    write(memoTagChipsAdd(chips, split.tags), split.rest)
+                    TextFieldValue(
+                        split.rest,
+                        TextRange((value.selection.start - split.cut).coerceIn(0, end), (value.selection.end - split.cut).coerceIn(0, end)),
+                        value.composition?.let { TextRange((it.start - split.cut).coerceIn(0, end), (it.end - split.cut).coerceIn(0, end)) },
+                    )
+                }
+            },
+            placeholder = "태그 (#교토 #빵집)",
+            modifier = Modifier.fillMaxWidth().testTag(MemoTags.EDIT_TAGS),
+        )
+        val typed = memoParseTagInput(field.text)
+        FlowRow {
+            known.filter { it !in chips && it !in typed }.take(MEMO_PICK_TAGS).forEach { name ->
+                MemoChip("#$name", onClick = { write(memoTagChipsAdd(chips, listOf(name)), field.text) })
+            }
+        }
+    }
+}
+
 /** One tag of the sheet: `#이름` in a rounded box, the small ✕ over its top left corner removes it. */
 @Composable
 private fun MemoTagChip(tag: String, onRemove: () -> Unit) {

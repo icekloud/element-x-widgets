@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.v2.runAndroidComposeUiTest
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.tests.testutils.robolectric.RobolectricTest
@@ -62,7 +63,9 @@ class MemoTagEditorUiTest : RobolectricTest() {
     fun `one press on the small x removes the tag at once, the chip itself does nothing`() = runAndroidComposeUiTest<ComponentActivity> {
         var saved: List<String>? = null
         editor(listOf("일상", "지도", "카페")) { saved = it }
-        onNodeWithText("#지도", useUnmergedTree = true).performClick()
+        // 앱23 (결정기록 9): the chip's own text starts under the ✕ box (22dp, over the top left corner), so the
+        // middle of the text node can land inside it. Pressed where only the chip is, nothing happens.
+        onNodeWithText("#지도", useUnmergedTree = true).performTouchInput { click(centerRight) }
         waitForIdle()
         assertEquals(3, chips())
         onNodeWithContentDescription("지도 태그 제거").performClick()

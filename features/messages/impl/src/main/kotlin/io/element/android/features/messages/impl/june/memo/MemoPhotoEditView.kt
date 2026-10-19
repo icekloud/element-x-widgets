@@ -41,9 +41,12 @@ import io.element.android.libraries.designsystem.theme.components.Text
  */
 @Composable
 internal fun MemoEditorPhotos(edit: MemoPhotoEdit, onChange: (MemoPhotoEdit) -> Unit, modifier: Modifier = Modifier) {
-    val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+    // 앱23: the picker is asked to keep the location in the pictures it hands over (MemoPhotoLocationPicker); the
+    // user allows or refuses that in the picker itself, and a refusal only means the photo goes up without one.
+    val gallery = rememberLauncherForActivityResult(MemoPickPhotosWithLocation()) { uris ->
         if (uris.isNotEmpty()) onChange(edit.pick(uris.map { it.toString() }))
     }
+    val askMediaLocation = rememberMemoMediaLocationAsk()
     Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
         edit.existing.forEach { a ->
             val removed = edit.isRemoved(a)
@@ -70,7 +73,11 @@ internal fun MemoEditorPhotos(edit: MemoPhotoEdit, onChange: (MemoPhotoEdit) -> 
                 .size(MEMO_EDIT_PHOTO_DP.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(ElementTheme.colors.bgSubtleSecondary)
-                .clickable { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                .clickable {
+                    // 앱23: asked here, where the user is actually picking photos — never on opening the screen.
+                    askMediaLocation()
+                    gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }
                 .testTag(MemoTags.EDIT_PHOTO_ADD),
             contentAlignment = Alignment.Center,
         ) {
