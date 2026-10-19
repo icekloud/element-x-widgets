@@ -338,6 +338,7 @@ internal class MemoSyncRunner(
         }
         val result = MemoSync.applyAck(db, ack.content, notes, clock())
         applyProposalResults(ack.content.optJSONArray("제안결과"), answers)
+        fillPhotoLocations(notes)
         MemoSync.applyFolderIconAck(db, icons)
         log("올리기 응답 받음 ${result.accepted} · 합침 ${result.merged} · 거절 ${result.rejected}")
         // 진단앱수신: a merged note whose server body is newer came back without it; fetched like a truncated note.
@@ -348,6 +349,27 @@ internal class MemoSyncRunner(
         MemoLocalChanges.changed()
         if (result.pullAgain) pullLocked()
         return Pushed(true, notes.size)
+    }
+
+    /**
+     * 규약-사진위치 2절 ③ ("위치만 보충"): a note queued before its photo's location was known went up without it.
+     * It is queued once more exactly as it stands — the stamps do not change, so the server answers `같음` and only
+     * stores the location. Nothing is logged but the count: coordinates never reach a log (요청문 5).
+     */
+    private fun fillPhotoLocations(sent: List<MemoOutboxRow>) {
+        if (sent.isEmpty()) return
+        val now = clock()
+        var filled = 0
+        db.transaction {
+            for (row in sent) {
+                val change = tryOrNull { JSONObject(row.payload) } ?: continue
+                val note = db.note(row.target) ?: continue
+                if (!memoNeedsLocationFill(change, note.attachments)) continue
+                MemoSync.enqueueNote(db, note, now)
+                filled++
+            }
+        }
+        if (filled > 0) log("사진 위치 보충 ${filled}건")
     }
 
     private fun applyProposalResults(results: JSONArray?, sent: List<MemoOutboxRow>) {
@@ -425,7 +447,10 @@ internal class MemoSyncRunner(
             val now = clock()
             log("사진 올림 · 업로드 ${now - uploadStart}ms")
             db.transaction {
-                db.updateAttachment(a.id, mxc, sealed.fileJson(mxc, a.mime).toString(), MEMO_ATTACH_DONE, 0)
+                // 앱23 (결정기록 2): the location read when the photo was picked rides on in the server copy's json,
+                // so the push that follows can tell the server where this photo was taken (규약-사진위치 1절).
+                val fileJson = memoFileJsonWithLocation(sealed.fileJson(mxc, a.mime).toString(), a.location)
+                db.updateAttachment(a.id, mxc, fileJson, MEMO_ATTACH_DONE, 0)
                 // The attachment bundle changed (its mxc is now known): a new stamp, and the note goes up again.
                 db.note(noteId)?.let { n ->
                     val stamped = n.copy(revs = n.revs.with(MemoBundle.Attach, db.nextRev(device(), now)), dirty = true)
@@ -566,7 +591,9 @@ internal fun memoChangeOfNote(note: MemoNote): JSONObject {
     val files = JSONArray()
     note.attachments.forEach { a ->
         val f = JSONObject().put("mxc", a.mxc)
-        a.fileJson?.let { tryOrNull { JSONObject(it) } }?.let { f.put("file", it) }
+        a.fileJson?.let { tryOrNull { JSONObject(it) } }?.let { f.put("file", memoFileWithoutLocation(it)) }
+        // 앱23: a location the server already knows comes back down and goes up again unchanged (규약-사진위치 3절).
+        memoAttachmentLocation(a.fileJson)?.let { f.put(MEMO_PHOTO_LOCATION_KEY, it.toJson()) }
         files.put(f)
     }
     return o.put("첨부", files)

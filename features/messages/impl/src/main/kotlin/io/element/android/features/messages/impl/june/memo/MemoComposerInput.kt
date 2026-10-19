@@ -78,7 +78,13 @@ internal class MemoLocalInputSink(
  * Copies picked pictures next to the database (`files/june_memo/`), the phone originals the upload reads later. The
  * composer and, 앱10 D, the note editor use the same copy. A picture that cannot be read is left out.
  */
-internal suspend fun memoCopyPictures(context: Context, uris: List<Uri>, clock: () -> Long = System::currentTimeMillis): List<MemoLocalAttachment> =
+internal suspend fun memoCopyPictures(
+    context: Context,
+    uris: List<Uri>,
+    clock: () -> Long = System::currentTimeMillis,
+    /** 앱23: the picture's own location, read from the phone original before it is copied (결정기록 1). */
+    readLocation: (Uri) -> MemoPhotoLocation? = { uri -> memoReadPhotoLocation(context, uri) },
+): List<MemoLocalAttachment> =
     withContext(Dispatchers.IO) {
         val now = clock()
         uris.mapIndexedNotNull { index, uri ->
@@ -87,7 +93,10 @@ internal suspend fun memoCopyPictures(context: Context, uris: List<Uri>, clock: 
                 val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
                 val out = memoFileTarget(context, "photo", now, index, ext)
                 context.contentResolver.openInputStream(uri)?.use { input -> out.outputStream().use { input.copyTo(it) } }?.let {
+                    // A picture whose location cannot be read (hidden, refused, none in it) is copied all the same.
+                    val location = tryOrNull { readLocation(uri) }
                     MemoLocalAttachment(id = out.name, localPath = out.absolutePath, mime = mime, bytes = out.length())
+                        .withLocation(location)
                 }
             }
         }

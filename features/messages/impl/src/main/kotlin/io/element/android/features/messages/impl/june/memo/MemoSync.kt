@@ -455,11 +455,14 @@ internal fun memoChangeFromJson(o: JSONObject): MemoNoteRecord? {
             // skipped here, so the list came in empty and the photo went off the phone.
             val f = files?.optJSONObject(i) ?: files?.optString(i)?.takeIf { it.startsWith("mxc://") }?.let { JSONObject().put("mxc", it) } ?: continue
             val mxc = f.optString("mxc").takeIf { it.isNotEmpty() } ?: continue
+            // 앱23: a photo's location comes down beside its file (규약-사진위치 3절) and is kept with the file
+            // information, so this phone can send it back unchanged and the merge below does not lose it.
+            val location = memoPhotoLocationFromJson(f.optJSONObject(MEMO_PHOTO_LOCATION_KEY))
             add(
                 MemoLocalAttachment(
                     id = mxc,
                     mxc = mxc,
-                    fileJson = f.optJSONObject("file")?.toString(),
+                    fileJson = memoFileJsonWithLocation(f.optJSONObject("file")?.toString(), location),
                     mime = f.optString("mimetype").takeIf { it.isNotEmpty() },
                     state = MEMO_ATTACH_DONE,
                 )

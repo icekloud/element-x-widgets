@@ -231,10 +231,14 @@ internal fun mergeMemoNote(a: MemoNoteRecord, b: MemoNoteRecord): MemoNoteRecord
     val phone = loser.attachments.filter { it.localPath != null }.associateBy { it.key }
     // 앱11 E: a server item without its key (plain mxc) keeps the key the other side has for the same photo.
     val keys = loser.attachments.filter { it.fileJson != null }.associateBy { it.key }
+    // 앱23 (결정기록 2): the location read on this phone lives inside the same json field. A side that does not know
+    // it yet (a server list that wins before the location went up) must not take it away.
+    val locations = loser.attachments.mapNotNull { l -> l.location?.let { l.key to it } }.toMap()
     val won = memoAttachmentsWon(attach.attachments, loser.attachments, a.revs.attach.compareTo(b.revs.attach) == 0).map { w ->
         val p = phone[w.key]
         val withPath = if (w.localPath != null || p == null) w else w.copy(localPath = p.localPath, mime = w.mime ?: p.mime, bytes = w.bytes ?: p.bytes)
-        if (withPath.fileJson != null) withPath else withPath.copy(fileJson = keys[w.key]?.fileJson)
+        val withFile = if (withPath.fileJson != null) withPath else withPath.copy(fileJson = keys[w.key]?.fileJson)
+        if (withFile.location != null) withFile else withFile.withLocation(locations[w.key])
     }
     return body.copy(
         folder = classes.folder,
@@ -472,7 +476,9 @@ internal fun MemoNoteRecord.toChangeJson(): JSONObject {
     attachments.filter { it.mxc != null }.forEach { a ->
         val f = JSONObject().put("mxc", a.mxc)
         a.mime?.let { f.put("mimetype", it) }
-        a.fileJson?.let { tryOrNull { JSONObject(it) } }?.let { f.put("file", it) }
+        // The location is kept inside the same json (결정기록 2) but goes on the wire as its own field (규약-사진위치 1절).
+        a.fileJson?.let { tryOrNull { JSONObject(it) } }?.let { f.put("file", memoFileWithoutLocation(it)) }
+        a.location?.let { f.put(MEMO_PHOTO_LOCATION_KEY, it.toJson()) }
         files.put(f)
     }
     o.put("첨부", files)

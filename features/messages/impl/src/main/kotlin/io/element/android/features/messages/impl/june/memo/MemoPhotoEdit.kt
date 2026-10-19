@@ -64,7 +64,8 @@ internal data class MemoPhotoEdit(
 }
 
 internal fun memoPhotoArg(a: MemoLocalAttachment): Map<String, Any?> =
-    linkedMapOf("id" to a.id, "경로" to a.localPath, "mime" to a.mime, "크기" to a.bytes)
+    // 앱23: the picture's own location was read when it was copied (결정기록 2); it rides in the op to the note.
+    linkedMapOf("id" to a.id, "경로" to a.localPath, "mime" to a.mime, "크기" to a.bytes, "파일" to a.fileJson)
 
 /** The new photos of an `edit` op ([MEMO_ARG_PHOTOS_ADDED]), waiting for their upload (로컬만). */
 internal fun memoPhotosOf(v: Any?): List<MemoLocalAttachment> = (v as? List<*>).orEmpty().mapNotNull { item ->
@@ -75,6 +76,7 @@ internal fun memoPhotosOf(v: Any?): List<MemoLocalAttachment> = (v as? List<*>).
         localPath = path,
         mime = m["mime"] as? String,
         bytes = (m["크기"] as? Number)?.toLong(),
+        fileJson = (m["파일"] as? String)?.takeIf { it.isNotEmpty() },
     )
 }
 

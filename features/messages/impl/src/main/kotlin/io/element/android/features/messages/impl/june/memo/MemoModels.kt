@@ -151,7 +151,6 @@ internal fun memoPhotoUploadMark(item: MemoItem): String = when {
 internal fun memoCardHeadTitle(item: MemoItem, text: String?): String = when {
     item.title.isBlank() -> if (text == null) item.kind else ""
     item.untitled -> if (text == null) item.kind else ""
-    text != null && text.startsWith(item.title) -> ""
     else -> item.title
 }
 
@@ -365,7 +364,12 @@ private fun parseAttachments(arr: JSONArray?): List<MemoAttachment> {
     return List(arr.length()) { i ->
         val o = arr.optJSONObject(i)
         if (o != null) {
-            o.optString("mxc").takeIf { it.isNotEmpty() }?.let { MemoAttachment(it, o.optJSONObject("file")?.toString()) }
+            o.optString("mxc").takeIf { it.isNotEmpty() }?.let {
+                // 앱23: the server sends the photo's location beside its file (규약-사진위치 3절); it is kept with the
+                // file information so the next push can send it back unchanged.
+                val location = memoPhotoLocationFromJson(o.optJSONObject(MEMO_PHOTO_LOCATION_KEY))
+                MemoAttachment(it, memoFileJsonWithLocation(o.optJSONObject("file")?.toString(), location))
+            }
         } else {
             arr.optString(i).takeIf { it.isNotEmpty() }?.let { MemoAttachment(it) }
         }
