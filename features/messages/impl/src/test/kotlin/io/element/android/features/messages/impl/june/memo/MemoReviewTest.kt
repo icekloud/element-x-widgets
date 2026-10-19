@@ -209,6 +209,40 @@ class MemoReviewTest : RobolectricTest() {
     }
 
     @Test
+    fun `app24 - the line of a directive is shown with the proposals too`() {
+        // 서버 20차 sends the 사유 of a review with a directive even when cards came (결과 "제안 N건").
+        val done = row("n1", "완료", "제안 2건", "지시 반영: 태그 제거 #가짜A, 추가 #가짜B · 제목이 길어요")
+        assertEquals(
+            "검토 완료: 제안 2건 — 지시 반영: 태그 제거 #가짜A, 추가 #가짜B · 제목이 길어요",
+            memoReviewDoneText(listOf("n1"), memoReviewStates(statesOf(done))),
+        )
+        val failed = row("n1", "완료", "제안 1건", "지시를 반영하지 못했어요: 노트에 없는 태그예요")
+        assertEquals("검토 완료: 제안 1건 — 지시를 반영하지 못했어요: 노트에 없는 태그예요", memoReviewDoneText(listOf("n1"), memoReviewStates(statesOf(failed))))
+        val checked = row("n1", "완료", "제안 3건", "지시 확인: 태그 변경 없음")
+        assertEquals("검토 완료: 제안 3건 — 지시 확인: 태그 변경 없음", memoReviewDoneText(listOf("n1"), memoReviewStates(statesOf(checked))))
+        // The failed count stays at the end; a long line is cut like any reason.
+        val long = row("n1", "완료", "제안 1건", "지시 반영: 추가 " + "#가짜태그".repeat(30))
+        val withFail = memoReviewDoneText(listOf("n1", "n2"), memoReviewStates(statesOf(long, row("n2", "완료", "실패"))))
+        assertTrue(withFail, withFail.startsWith("검토 완료: 제안 1건 — 지시 반영: 추가 #가짜태그"))
+        assertTrue(withFail, withFail.endsWith("… (실패 1건)"))
+        // Two notes with a directive line: the first one and how many more.
+        val two = memoReviewStates(statesOf(row("n1", "완료", "제안 1건", "지시 확인: 태그 변경 없음"), row("n2", "완료", "제안 없음", "지시 반영: 추가 #가짜B")))
+        assertEquals("검토 완료: 제안 1건 — 지시 확인: 태그 변경 없음 외 1건", memoReviewDoneText(listOf("n1", "n2"), two))
+        val noneTwo = memoReviewStates(statesOf(row("n1", "완료", "제안 없음", "지시 반영: 추가 #가짜A"), row("n2", "완료", "제안 없음", "짧은 메모예요")))
+        assertEquals("검토 완료: 제안 없음 2건 — 지시 반영: 추가 #가짜A", memoReviewDoneText(listOf("n1", "n2"), noneTwo))
+        // Any other reason with proposals is still not drawn (서버 19차 and before), and the sync still runs.
+        val other = memoReviewDoneText(listOf("n1"), memoReviewStates(statesOf(row("n1", "완료", "제안 2건", "제목이 길어요"))))
+        assertEquals("검토 완료: 제안 2건", other)
+        assertTrue(memoReviewSyncWanted(memoReviewDoneText(listOf("n1"), memoReviewStates(statesOf(done)))))
+        // Only at the start: a reason that only mentions it is not one.
+        assertFalse(memoReviewIsDirectiveReason("제목 · 지시 반영: 추가 #가짜A"))
+        assertTrue(memoReviewIsDirectiveReason(" 지시 확인: 태그 변경 없음"))
+        // One note without a proposal: the reason as in 앱18 (the directive line is the reason, not said twice).
+        val alone = memoReviewStates(statesOf(row("n1", "완료", "제안 없음", "지시 반영: 추가 #가짜A")))
+        assertEquals("검토 완료: 제안 없음 — 지시 반영: 추가 #가짜A", memoReviewDoneText(listOf("n1"), alone))
+    }
+
+    @Test
     fun `app18 - a result notice stays 8 s, the notice of a taken request 4 s`() {
         assertEquals(4_000L, MEMO_NOTICE_SHOW_MS)
         assertEquals(8_000L, MEMO_NOTICE_RESULT_SHOW_MS)

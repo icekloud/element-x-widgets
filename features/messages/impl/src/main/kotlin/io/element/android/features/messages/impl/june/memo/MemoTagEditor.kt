@@ -12,6 +12,7 @@ package io.element.android.features.messages.impl.june.memo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +35,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -40,6 +45,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.designsystem.theme.components.Text
 import io.element.android.libraries.designsystem.theme.components.TextField
@@ -132,7 +138,9 @@ internal fun MemoEditTagChips(
         FlowRow(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center) {
             chips.forEach { tag -> MemoTagChip(tag, onRemove = { write(chips - tag, field.text) }) }
         }
-        TextField(
+        // 앱24 (앱23 CI): the input is the small one line field of the title (앱14 D, [memoEditFieldHeight]), not the
+        // design system field the sheet uses — that one is almost twice as tall and took the room of the body.
+        MemoEditTagInput(
             value = field,
             onValueChange = { value ->
                 val split = memoTagChipSplit(value.text, value.composition?.start)
@@ -149,7 +157,7 @@ internal fun MemoEditTagChips(
                     )
                 }
             },
-            placeholder = "태그 (#교토 #빵집)",
+            hint = "태그 (#교토 #빵집)",
             modifier = Modifier.fillMaxWidth().testTag(MemoTags.EDIT_TAGS),
         )
         val typed = memoParseTagInput(field.text)
@@ -161,6 +169,37 @@ internal fun MemoEditTagChips(
     }
 }
 
+/**
+ * 앱24: the one line input under the chips of the editor, drawn like the title field of the editor (MemoSearchTab
+ * `MemoEditField`): 13 sp text, a thin border and the set height of [memoEditFieldHeight], growing with the font scale.
+ */
+@Composable
+private fun MemoEditTagInput(value: TextFieldValue, onValueChange: (TextFieldValue) -> Unit, hint: String, modifier: Modifier = Modifier) {
+    val style = ElementTheme.typography.fontBodyMdRegular.copy(fontSize = MEMO_EDIT_FIELD_TEXT_SP.sp, lineHeight = MEMO_EDIT_FIELD_LINE_SP.sp)
+    val fontScale = LocalDensity.current.fontScale
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        textStyle = style.copy(color = ElementTheme.colors.textPrimary),
+        singleLine = true,
+        cursorBrush = SolidColor(ElementTheme.colors.textPrimary),
+        decorationBox = { inner ->
+            Box(
+                Modifier
+                    .border(1.dp, ElementTheme.colors.borderInteractiveSecondary, RoundedCornerShape(4.dp))
+                    .fillMaxWidth()
+                    .height(memoEditFieldHeight(fontScale).dp)
+                    .padding(horizontal = 8.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (value.text.isEmpty()) Text(hint, style = style, color = ElementTheme.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                inner()
+            }
+        },
+    )
+}
+
 /** One tag of the sheet: `#이름` in a rounded box, the small ✕ over its top left corner removes it. */
 @Composable
 private fun MemoTagChip(tag: String, onRemove: () -> Unit) {
@@ -169,6 +208,10 @@ private fun MemoTagChip(tag: String, onRemove: () -> Unit) {
             text = "#$tag",
             modifier = Modifier
                 .padding(start = MEMO_TAG_X_DP.dp / 2, top = MEMO_TAG_X_DP.dp / 2)
+                // 앱24 (앱23 CI, 결정기록 4): the ✕ is smaller than the minimum touch size, so a press near it — on the
+                // chip — was taken by the ✕ too (its touch area is widened while nothing else there takes the
+                // press). The chip takes its own presses and does nothing with them.
+                .pointerInput(Unit) { detectTapGestures(onTap = {}) }
                 .clip(RoundedCornerShape(10.dp))
                 .border(1.dp, ElementTheme.colors.textActionAccent, RoundedCornerShape(10.dp))
                 .padding(horizontal = 10.dp, vertical = 4.dp),

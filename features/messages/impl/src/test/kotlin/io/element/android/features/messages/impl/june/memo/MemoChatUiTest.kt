@@ -16,6 +16,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.test.AndroidComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
@@ -166,6 +167,48 @@ class MemoChatUiTest : RobolectricTest() {
         onNodeWithTag(MemoTags.PANEL_YES).performClick()
         waitUntil(timeoutMillis = 5_000) { room.ops.any { it.op == MEMO_OP_CHAT } }
         assertEquals("네", room.ops.first { it.op == MEMO_OP_CHAT }.args["문장"])
+    }
+
+    @Test
+    fun `app24 - the work cards of a server bubble are one line each, five first and the rest behind one press`() = runAndroidComposeUiTest<ComponentActivity> {
+        val db = db()
+        val room = Room()
+        val chat = MemoChat(db, room, dispatcher = Dispatchers.Unconfined)
+        runBlocking { chat.setMode(MemoInputMode.Chat) }
+        val works = JSONArray(
+            (1..7).map { n ->
+                JSONObject().put("종류", "노트작성").put("대상", "#$n").put("결과", "가짜 노트 $n 을 만들었어요").put("되돌리기", n != 7)
+            },
+        )
+        room.bubbles = JSONArray(
+            listOf(
+                bubble(1, MemoChatSide.USER, "가짜 노트 일곱 개 만들어 줘"),
+                bubble(2, MemoChatSide.SERVER, "새 노트 7건을 만들었어요.").put("작업결과", works)
+                    .put("요약", JSONObject().put("노트작성", JSONArray(listOf(JSONObject().put("번호", 1))))),
+                // 서버 20차 and before: no 작업결과, the bubble is only its words.
+                bubble(3, MemoChatSide.SERVER, "태그를 달았어요."),
+            ),
+        )
+        panel(MemoDirectives(db, room, dispatcher = Dispatchers.Unconfined), chat)
+        waitUntil(timeoutMillis = 5_000) { shown(MemoTags.PANEL_WORK_CARD, this) }
+        fun cards() = onAllNodes(hasTestTag(MemoTags.PANEL_WORK_CARD), useUnmergedTree = true).fetchSemanticsNodes().size
+        assertEquals(5, cards())
+        onNodeWithText("노트작성 · #1 · 가짜 노트 1 을 만들었어요", useUnmergedTree = true).assertExists()
+        assertTrue(onAllNodes(hasText("노트작성 · #6 · 가짜 노트 6 을 만들었어요"), useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+        // The 요약 object is not drawn as a line again under the cards.
+        val summaryLine = hasText("노트작성", substring = true) and hasTestTag(MemoTags.PANEL_BUBBLE_STATE)
+        assertTrue(onAllNodes(summaryLine, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+        onNodeWithText("외 2건 더 보기", useUnmergedTree = true).performClick()
+        waitForIdle()
+        assertEquals(7, cards())
+        onNodeWithText("노트작성 · #7 · 가짜 노트 7 을 만들었어요", useUnmergedTree = true).assertExists()
+        // The cards that 되돌려줘 takes back carry the mark (6 of the 7).
+        assertEquals(6, onAllNodes(hasContentDescription(MEMO_WORK_UNDO_LABEL), useUnmergedTree = true).fetchSemanticsNodes().size)
+        onNodeWithText(MEMO_WORK_LESS, useUnmergedTree = true).performClick()
+        waitForIdle()
+        assertEquals(5, cards())
+        // The bubble without cards is drawn as before.
+        onNodeWithText("⚙ 태그를 달았어요.", useUnmergedTree = true).assertExists()
     }
 
     @Test

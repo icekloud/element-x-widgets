@@ -112,6 +112,8 @@ internal object MemoTags {
     const val PANEL_REQUESTS = "memo_panel_requests"
     const val PANEL_REQUEST_CARD = "memo_panel_request_card"
     const val PANEL_CHAT_OFF = "memo_panel_chat_off"
+    const val PANEL_WORK_CARD = "memo_panel_work_card"
+    const val PANEL_WORK_MORE = "memo_panel_work_more"
     const val PROPOSAL_SENDING = "memo_proposal_sending"
     const val BAND = "memo_band"
     const val TILE = "memo_tile"

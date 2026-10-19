@@ -250,15 +250,35 @@ internal fun memoReviewDoneText(ids: List<String>, states: List<MemoReviewProgre
     val proposals = done.sumOf { memoReviewProposals(it.result) ?: 0 }
     val ok = done.size - failed
     val failedText = if (failed > 0) " (실패 ${failed}건)" else ""
+    // 앱24 (추가요청 1): the line of a review with a directive (서버 20차) is shown even when other cards came too.
+    val directive = memoReviewDirectiveLine(done)
     return when {
         ok == 0 -> "검토 실패"
-        proposals > 0 -> "검토 완료: 제안 ${proposals}건$failedText"
-        ok > 1 -> "검토 완료: 제안 없음 ${ok}건$failedText"
+        proposals > 0 -> "검토 완료: 제안 ${proposals}건$directive$failedText"
+        ok > 1 -> "검토 완료: 제안 없음 ${ok}건$directive$failedText"
         else -> {
             val reason = memoReviewReasonText(done.first { memoReviewProposals(it.result) == 0 }.reason)
             "검토 완료: 제안 없음" + (if (reason.isEmpty()) "" else " — $reason") + failedText
         }
     }
+}
+
+/** 서버 20차: the heads a reason starts with when the review had a directive (`june_memo_directive.HEADS`). */
+internal val MEMO_REVIEW_DIRECTIVE_HEADS = listOf("지시 반영:", "지시를 반영하지 못했어요:", "지시 확인:")
+
+/** True when [reason] is the line of a review with a directive (one of [MEMO_REVIEW_DIRECTIVE_HEADS] at its start). */
+internal fun memoReviewIsDirectiveReason(reason: String): Boolean = MEMO_REVIEW_DIRECTIVE_HEADS.any { reason.trimStart().startsWith(it) }
+
+/**
+ * 앱24 (추가요청 1): " — <지시 반영 줄>" for the notice when it would not tell the reason otherwise (proposals came, or
+ * more than one note): the first reviewed note whose reason is a directive line, cut like any reason
+ * ([memoReviewReasonText]); more such notes are counted (" 외 N건"). Empty when no reason is one (서버 19차 and before).
+ */
+private fun memoReviewDirectiveLine(done: List<MemoReviewProgress>): String {
+    val lines = done.map { it.reason }.filter(::memoReviewIsDirectiveReason)
+    if (lines.isEmpty()) return ""
+    val more = if (lines.size > 1) " 외 ${lines.size - 1}건" else ""
+    return " — ${memoReviewReasonText(lines.first())}$more"
 }
 
 private val DONE_WITH_PROPOSALS = Regex("""^검토 완료: 제안 (\d+)건""")
