@@ -85,6 +85,18 @@ internal object MemoSyncHub {
         )
     }
 
+    private val chats = mutableMapOf<String, MemoChat>()
+
+    /** 앱22: the chat of the proposal area, one per room for the process (the mode and the bubbles live across screens). */
+    @Synchronized
+    fun chat(context: Context, sessionStore: SessionStore, roomId: String): MemoChat = chats.getOrPut(roomId) {
+        MemoChat(
+            MemoDatabase.get(context),
+            MemoRoomSyncTransport(sessionStore, room(context, sessionStore, roomId)),
+            log = { Timber.i("June memo sync: %s", it) },
+        )
+    }
+
     private val reviewers = mutableMapOf<String, MemoReviewer>()
 
     /**

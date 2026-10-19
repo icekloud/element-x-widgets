@@ -99,6 +99,19 @@ internal object MemoTags {
     const val PANEL_LIST = "memo_panel_list"
     const val PANEL_CLEAR = "memo_panel_clear"
     const val PANEL_BADGE = "memo_panel_badge"
+    const val PANEL_MODE_DIRECTIVE = "memo_panel_mode_directive"
+    const val PANEL_MODE_CHAT = "memo_panel_mode_chat"
+    const val PANEL_COUNT = "memo_panel_count"
+    const val PANEL_HINT = "memo_panel_hint"
+    const val PANEL_MENU = "memo_panel_menu"
+    const val PANEL_RESET = "memo_panel_reset"
+    const val PANEL_BUBBLE = "memo_panel_bubble"
+    const val PANEL_BUBBLE_STATE = "memo_panel_bubble_state"
+    const val PANEL_COMPARE = "memo_panel_compare"
+    const val PANEL_YES = "memo_panel_yes"
+    const val PANEL_REQUESTS = "memo_panel_requests"
+    const val PANEL_REQUEST_CARD = "memo_panel_request_card"
+    const val PANEL_CHAT_OFF = "memo_panel_chat_off"
     const val PROPOSAL_SENDING = "memo_proposal_sending"
     const val BAND = "memo_band"
     const val TILE = "memo_tile"
@@ -506,9 +519,18 @@ internal fun MemoScreen(
                 MemoSyncHub.runner(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
             }
         }
+        // 앱22: the chat of the same room (규약-대화 v1); null in the fake data mode, like the instructions.
+        val chat = if (useFakeData) {
+            null
+        } else {
+            remember(roomId) {
+                MemoSyncHub.chat(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+            }
+        }
         MemoPanel(
             controller = controller,
             directives = directives,
+            chat = chat,
             // A finished instruction changed notes or tags on the server: one sync brings them down.
             onSync = {
                 runner?.syncNow()
