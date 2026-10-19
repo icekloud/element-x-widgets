@@ -359,16 +359,13 @@ internal class MemoSyncRunner(
     private fun fillPhotoLocations(sent: List<MemoOutboxRow>) {
         if (sent.isEmpty()) return
         val now = clock()
-        var filled = 0
-        db.transaction {
-            for (row in sent) {
-                val change = tryOrNull { JSONObject(row.payload) } ?: continue
-                val note = db.note(row.target) ?: continue
-                if (!memoNeedsLocationFill(change, note.attachments)) continue
-                MemoSync.enqueueNote(db, note, now)
-                filled++
-            }
+        val toFill = sent.mapNotNull { row ->
+            val change = tryOrNull { JSONObject(row.payload) }
+            val note = db.note(row.target)
+            note.takeIf { change != null && it != null && memoNeedsLocationFill(change, it.attachments) }
         }
+        val filled = toFill.size
+        if (filled > 0) db.transaction { toFill.forEach { MemoSync.enqueueNote(db, it, now) } }
         if (filled > 0) log("사진 위치 보충 ${filled}건")
     }
 

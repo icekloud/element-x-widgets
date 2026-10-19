@@ -73,4 +73,4 @@ internal fun memoReadExifLocation(stream: InputStream): MemoPhotoLocation? {
     )
 }
 
-/* `memoExifTakenAt`, `memoDeviceOffset`: MemoPhotoLocation.kt (아무것도 폰에 기대지 않는 부분). */
+// `memoExifTakenAt`, `memoDeviceOffset`: MemoPhotoLocation.kt (아무것도 폰에 기대지 않는 부분).
