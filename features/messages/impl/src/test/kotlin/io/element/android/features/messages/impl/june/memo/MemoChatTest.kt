@@ -97,7 +97,7 @@ class MemoChatTest : RobolectricTest() {
         again.load()
         assertEquals(MemoInputMode.Chat, again.mode.value)
         again.setMode(MemoInputMode.Directive)
-        assertEquals(MemoInputMode.Directive, chat(db, room).also { it.load() }.mode.value)
+        assertEquals(MemoInputMode.Directive, chat(db, room).apply { load() }.mode.value)
         // Anything else that may be in the state table is the mode of before.
         assertEquals(MemoInputMode.Directive, MemoInputMode.of(null))
         assertEquals(MemoInputMode.Directive, MemoInputMode.of("무언가"))

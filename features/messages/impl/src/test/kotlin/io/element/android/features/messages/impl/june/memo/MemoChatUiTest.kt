@@ -114,7 +114,7 @@ class MemoChatUiTest : RobolectricTest() {
         waitUntil(timeoutMillis = 5_000) { shown(MemoTags.PANEL_BUBBLE, this) }
         // The phone keeps the mode: a new chat object of the same database opens in 대화.
         val again = MemoChat(db, room, dispatcher = Dispatchers.Unconfined)
-        assertEquals(MemoInputMode.Chat, runBlocking { again.load(); again.mode.value })
+        assertEquals(MemoInputMode.Chat, runBlocking { again.apply { load() }.mode.value })
     }
 
     @Test
