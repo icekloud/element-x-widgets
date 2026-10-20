@@ -78,10 +78,12 @@ import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /** Test tags of the memo screen (Compose UI tests). */
@@ -211,8 +213,15 @@ internal class MemoController(
     val answering = mutableStateSetOf<String>()
 
     /**
+     * 앱25: sends the written answers to the server at once ([MemoSyncRunner.pushAnswers]). Null: no server (the fake
+     * data); the answers then stay local as before.
+     */
+    var answerPush: (suspend () -> Unit)? = null
+
+    /**
      * Answers a proposal card once: locks it at once, then one op per proposal id ([memoGroupOps]). A second press
      * on a locked card does nothing; the local backend also answers an id only once, whatever screen asks.
+     * 앱25: the answers go up right after they are written ([answerPush]), not with the automatic push.
      */
     fun answer(group: MemoProposalGroup, answer: MemoAnswer, date: String? = null, folder: String? = null) {
         if (group.isSending || group.ids.any { it in answering }) return
@@ -221,14 +230,7 @@ internal class MemoController(
         answering += group.ids
         scope.launch {
             try {
-                for (op in ops) {
-                    val r = store.request(op)
-                    if (r is MemoResult.Failed) {
-                        error = r.reason to null
-                        break
-                    }
-                }
-                store.refreshIndex()
+                memoSendAnswers(store, ops, answerPush) { reason -> error = reason to null }
             } finally {
                 answering -= group.ids.toSet()
             }
@@ -431,6 +433,11 @@ internal fun MemoScreen(
         LaunchedEffect(controller, reviewRunner) {
             controller.reviewSync = { ids ->
                 reviewRunner.syncAfterReview(ids)
+                store.refreshIndex()
+            }
+            // 앱25: a card answer goes up at once, whatever the input pause or the editor (same lock as every sync).
+            controller.answerPush = {
+                withContext(Dispatchers.IO) { reviewRunner.pushAnswers() }
                 store.refreshIndex()
             }
         }
