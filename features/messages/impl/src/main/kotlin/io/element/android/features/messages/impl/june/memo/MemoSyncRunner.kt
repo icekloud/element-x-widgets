@@ -92,6 +92,10 @@ internal class MemoSyncRunner(
     private val mutex = Mutex()
     private val buttonRunning = AtomicBoolean(false)
 
+    /** 앱25: an immediate push of the card answers runs ([answerRunning]) and one more round is asked ([answerAgain]). */
+    private val answerRunning = AtomicBoolean(false)
+    private val answerAgain = AtomicBoolean(false)
+
     /** When the last pull round ended well, so a press right after the screen's own pull does not pull again. */
     @Volatile
     private var lastPullOkMs = 0L
@@ -210,6 +214,38 @@ internal class MemoSyncRunner(
     suspend fun pushNotes(): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
         mutex.withLock { pushNotesLocked(force = true).ok }
     } ?: false.also { log("올리기 시간 초과") }
+
+    /**
+     * 앱25 (관리자: "수락,거부 등 작업내용 승인 시는 동기화 타이밍과 관계없이 즉시 반영"): a proposal card was answered, so
+     * what waits goes up now in one `sync_push` ([pushNotesLocked] with [force]: the answers with the notes and the
+     * folder icons of the same moment, no input pause, no back-off, also while the editor is open). It takes the same
+     * lock as every other sync, so it never runs beside a pull or another push.
+     *
+     * Presses that come while one of these runs start nothing: they ask for one more round after it, which sends
+     * everything answered meanwhile at once (one request at a time, no answer sent twice on purpose). When the server
+     * is not reached the answers stay in the outbox with their back-off and their cards say so ([MemoAnswerFailures]).
+     */
+    suspend fun pushAnswers(): Boolean {
+        answerAgain.set(true)
+        var ok = true
+        // The outer turn: a press that came between the last round and the release below is taken here (or by the
+        // press itself when it got the run first), so nothing is left behind and no empty round is made.
+        while (ok && answerAgain.get()) {
+            if (!answerRunning.compareAndSet(false, true)) return true.also { log("제안응답 올리기: 진행 중인 올리기 뒤에 한 번 더") }
+            try {
+                while (ok && answerAgain.getAndSet(false)) {
+                    log("제안응답 바로 올리기")
+                    ok = withTimeoutOrNull(AUTO_TIMEOUT_MS) { mutex.withLock { pushNotesLocked(force = true).ok } }
+                        ?: false.also { log("올리기 시간 초과") }
+                }
+            } finally {
+                answerRunning.set(false)
+            }
+        }
+        // Not reached: the answers wait in the outbox with their back-off (the usual retry), the cards say so.
+        if (!ok) MemoAnswerFailures.failed(db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }.map { it.target })
+        return ok
+    }
 
     /**
      * The one-time job after the screen went away (관리자 결정 2026-10-13 1-1 (가)): the attachments only, without
@@ -395,6 +431,8 @@ internal class MemoSyncRunner(
             }
             if (confirmed.isNotEmpty()) memoRememberAnswered(db, confirmed)
         }
+        // 앱25: the server answered them: no "서버에 닿지 못함" line any more.
+        MemoAnswerFailures.clear(answered.map { it.second.target })
         if (answered.isNotEmpty()) log("제안결과 ${answered.size}건 정리")
     }
 

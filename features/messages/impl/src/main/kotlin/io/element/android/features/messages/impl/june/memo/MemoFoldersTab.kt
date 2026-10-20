@@ -148,6 +148,9 @@ internal fun MemoProposalCard(controller: MemoController, p: MemoProposal) = Mem
 internal fun MemoProposalCard(controller: MemoController, group: MemoProposalGroup) {
     val p = group.first
     val locked = group.isSending || group.ids.any { it in controller.answering }
+    // 앱25 요구 ④: the immediate push of this answer did not reach the server (it stays and is tried again).
+    val failedIds by MemoAnswerFailures.ids.collectAsState()
+    val unreached = group.ids.any { it in failedIds }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -164,7 +167,7 @@ internal fun MemoProposalCard(controller: MemoController, group: MemoProposalGro
         when {
             locked -> {
                 Text(
-                    "처리 중 · 메모봇에 전하는 중",
+                    memoProposalLockedText(failed = unreached),
                     modifier = Modifier.testTag(MemoTags.PROPOSAL_SENDING),
                     style = ElementTheme.typography.fontBodyXsRegular,
                     color = ElementTheme.colors.textSecondary,
