@@ -197,7 +197,7 @@ internal data class MemoNoteRecord(
  *
  * - each bundle: the larger [MemoRev] wins; equal stamps with different content (only reachable with corrupt data)
  *   keep the larger content text, so the answer stays the same whatever the order
- * - attachments: union by [MemoLocalAttachment.key], the winner's order first
+ * - attachments: the winner's list replaces the other one (앱10, was a union), see [memoAttachmentsWon]
  * - tombstone vs a live note: the later of the tombstone and the latest change of the other side wins the whole note
  *   (관리자 결정 3: delete vs edit is LWW, a later edit brings the note back)
  * - the fields outside the four bundles (kind, server header, origin event, schedule state) follow the body bundle
@@ -226,13 +226,19 @@ internal fun mergeMemoNote(a: MemoNoteRecord, b: MemoNoteRecord): MemoNoteRecord
     val mark = if (aWins(MemoBundle.Mark)) a else b
     val attach = if (aWins(MemoBundle.Attach)) a else b
     val loser = if (attach === a) b else a
-    val keys = attach.attachments.map { it.key }.toSet()
     // The server never knows the phone original: an attachment won by the server side keeps the phone path, type and
     // size of the same attachment (앱6 원인 B: the photo was drawn from the server copy only, or lost its original).
     val phone = loser.attachments.filter { it.localPath != null }.associateBy { it.key }
-    val won = attach.attachments.map { w ->
+    // 앱11 E: a server item without its key (plain mxc) keeps the key the other side has for the same photo.
+    val keys = loser.attachments.filter { it.fileJson != null }.associateBy { it.key }
+    // 앱23 (결정기록 2): the location read on this phone lives inside the same json field. A side that does not know
+    // it yet (a server list that wins before the location went up) must not take it away.
+    val locations = loser.attachments.mapNotNull { l -> l.location?.let { l.key to it } }.toMap()
+    val won = memoAttachmentsWon(attach.attachments, loser.attachments, a.revs.attach.compareTo(b.revs.attach) == 0).map { w ->
         val p = phone[w.key]
-        if (w.localPath != null || p == null) w else w.copy(localPath = p.localPath, mime = w.mime ?: p.mime, bytes = w.bytes ?: p.bytes)
+        val withPath = if (w.localPath != null || p == null) w else w.copy(localPath = p.localPath, mime = w.mime ?: p.mime, bytes = w.bytes ?: p.bytes)
+        val withFile = if (withPath.fileJson != null) withPath else withPath.copy(fileJson = keys[w.key]?.fileJson)
+        if (withFile.location != null) withFile else withFile.withLocation(locations[w.key])
     }
     return body.copy(
         folder = classes.folder,
@@ -241,10 +247,34 @@ internal fun mergeMemoNote(a: MemoNoteRecord, b: MemoNoteRecord): MemoNoteRecord
         pinSuggested = mark.pinSuggested,
         pinDismissed = mark.pinDismissed,
         deleted = mark.deleted,
-        attachments = won + loser.attachments.filter { it.key !in keys },
+        attachments = won,
         createdMs = minOf(a.createdMs, b.createdMs),
         revs = MemoRevs(body.revs.body, classes.revs.classes, mark.revs.mark, attach.revs.attach),
     )
+}
+
+/**
+ * The attachment list of a merge (규약 추가 결정 3, 앱10): the side whose `첨부` stamp wins gives the whole list, so a
+ * photo removed on the phone does not come back (it was a union before). Two exceptions:
+ * - photos not uploaded yet (no mxc) are kept from both sides: the server cannot know them (the note goes up first,
+ *   the photo later), so a server list that wins must not make the phone list shorter meanwhile;
+ * - [sameStamp] (the same change for the protocol, but the lists differ): only the photos both sides hold. The only
+ *   way to get there is a server that still adds lists up (before 서버 5차): what it added back is dropped again.
+ *   앱11 E: but an uploaded list that is empty on one side under the same stamp is a list lost here (the 앱10 phone
+ *   read the plain mxc items as nothing): the other side's list comes back. Removing every photo always takes a new
+ *   stamp, so this never brings back a photo the user removed.
+ */
+private fun memoAttachmentsWon(
+    winner: List<MemoLocalAttachment>,
+    loser: List<MemoLocalAttachment>,
+    sameStamp: Boolean,
+): List<MemoLocalAttachment> {
+    if (sameStamp && winner.none { it.mxc != null }) return winner + loser.filter { w -> winner.none { it.key == w.key } }
+    if (sameStamp && loser.none { it.mxc != null }) return winner + loser.filter { w -> winner.none { it.key == w.key } }
+    val loserKeys = loser.map { it.key }.toSet()
+    val kept = if (sameStamp) winner.filter { it.key in loserKeys || it.mxc == null } else winner
+    val keys = kept.map { it.key }.toSet() + winner.map { it.key }
+    return kept + loser.filter { it.mxc == null && it.key !in keys }
 }
 
 /** The content of one bundle as text, the last tie break of [mergeMemoNote]. */
@@ -401,7 +431,8 @@ internal fun memoLocalPreview(kind: String, preview: String, linkJson: String?, 
     val shown = attachments.mapNotNull { it.toScreen() }
     val first = shown.firstOrNull()
     if (first != null && (kind == "사진" || preview.isEmpty())) {
-        return MemoPreview.Photo(first.mxc, attachments.size, first.fileJson, shown.take(MEMO_CARD_PHOTOS))
+        // 앱20: every photo, so a tap on a card opens all of them; the card draws only [memoCardCells].
+        return MemoPreview.Photo(first.mxc, attachments.size, first.fileJson, shown)
     }
     linkJson?.let { tryOrNull { JSONObject(it) } }?.let { o ->
         val url = o.optString("url")
@@ -445,7 +476,9 @@ internal fun MemoNoteRecord.toChangeJson(): JSONObject {
     attachments.filter { it.mxc != null }.forEach { a ->
         val f = JSONObject().put("mxc", a.mxc)
         a.mime?.let { f.put("mimetype", it) }
-        a.fileJson?.let { tryOrNull { JSONObject(it) } }?.let { f.put("file", it) }
+        // The location is kept inside the same json (결정기록 2) but goes on the wire as its own field (규약-사진위치 1절).
+        a.fileJson?.let { tryOrNull { JSONObject(it) } }?.let { f.put("file", memoFileWithoutLocation(it)) }
+        a.location?.let { f.put(MEMO_PHOTO_LOCATION_KEY, it.toJson()) }
         files.put(f)
     }
     o.put("첨부", files)

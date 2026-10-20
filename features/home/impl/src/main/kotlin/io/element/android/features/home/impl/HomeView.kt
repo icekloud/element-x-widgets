@@ -14,19 +14,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FabPosition
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
@@ -36,18 +31,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import dev.chrisbanes.haze.rememberHazeState
 import io.element.android.compound.theme.ElementTheme
-import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.features.home.impl.components.HomeTopBar
 import io.element.android.features.home.impl.components.RoomListContentView
 import io.element.android.features.home.impl.components.RoomListMenuAction
@@ -68,8 +60,6 @@ import io.element.android.libraries.androidutils.throttler.FirstThrottler
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
-import io.element.android.libraries.designsystem.theme.components.HorizontalFloatingToolbar
-import io.element.android.libraries.designsystem.theme.components.HorizontalFloatingToolbarItem
 import io.element.android.libraries.designsystem.theme.components.Scaffold
 import io.element.android.libraries.designsystem.utils.lazyColumnContentPadding
 import io.element.android.libraries.designsystem.utils.scaffoldScrollableContentInsets
@@ -193,114 +183,113 @@ private fun HomeScaffold(
     // Element June (추가요청 1~3): the bottom bar only holds the memo button, which opens the memo room set in the June
     // settings, and the memo room is not listed with the other rooms. Without a memo room there is no bottom bar.
     // The chats, spaces and + buttons are only left out of the bar: their screens and code stay.
-    val juneMemoRoomId = JuneSettings.memoRoomId(LocalContext.current)
+    val context = LocalContext.current
+    val juneMemoRoomId = JuneSettings.memoRoomId(context)
     val roomsLazyListState = rememberLazyListState()
     val spacesLazyListState = rememberLazyListState()
 
-    Scaffold(
-        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            HomeTopBar(
-                selectedNavigationItem = state.currentHomeNavigationBarItem,
-                currentUserAndNeighbors = state.currentUserAndNeighbors,
-                showAvatarIndicator = state.showAvatarIndicator,
-                areSearchResultsDisplayed = if (roomListState.globalSearchState.isEnabled) {
-                    roomListState.globalSearchState.isSearchActive
-                } else {
-                    roomListState.searchState.isSearchActive
-                },
-                onToggleSearch = {
-                    if (roomListState.globalSearchState.isEnabled) {
-                        roomListState.globalSearchState.eventSink(GlobalSearchEvent.ToggleSearchVisibility)
+    // 앱19 추가요청 1: the memo button lies over the whole screen (not in the bottom slot) so it can be moved anywhere.
+    Box(modifier) {
+        Scaffold(
+            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+            topBar = {
+                HomeTopBar(
+                    selectedNavigationItem = state.currentHomeNavigationBarItem,
+                    currentUserAndNeighbors = state.currentUserAndNeighbors,
+                    showAvatarIndicator = state.showAvatarIndicator,
+                    areSearchResultsDisplayed = if (roomListState.globalSearchState.isEnabled) {
+                        roomListState.globalSearchState.isSearchActive
                     } else {
-                        roomListState.eventSink(RoomListEvent.ToggleSearchResults)
+                        roomListState.searchState.isSearchActive
+                    },
+                    onToggleSearch = {
+                        if (roomListState.globalSearchState.isEnabled) {
+                            roomListState.globalSearchState.eventSink(GlobalSearchEvent.ToggleSearchVisibility)
+                        } else {
+                            roomListState.eventSink(RoomListEvent.ToggleSearchResults)
+                        }
+                    },
+                    onMenuActionClick = onMenuActionClick,
+                    onOpenSettings = onOpenSettings,
+                    onAccountSwitch = {
+                        state.eventSink(HomeEvent.SwitchToAccount(it))
+                    },
+                    scrollBehavior = scrollBehavior,
+                    displayFilters = state.displayRoomListFilters,
+                    filtersState = roomListState.filtersState,
+                    spaceFiltersState = roomListState.spaceFiltersState,
+                    canReportBug = state.canReportBug,
+                    modifier = Modifier.hazeEffect(
+                        state = hazeState,
+                        style = HazeMaterials.thick(),
+                    )
+                )
+            },
+            contentWindowInsets = scaffoldScrollableContentInsets,
+            content = { padding ->
+                val outerPadding = PaddingValues(
+                    start = padding.calculateStartPadding(LocalLayoutDirection.current),
+                    end = padding.calculateEndPadding(LocalLayoutDirection.current),
+                    // Remove these two lines once https://issuetracker.google.com/issues/436432313 has been fixed
+                    bottom = padding.calculateBottomPadding(),
+                    top = padding.calculateTopPadding()
+                )
+                // Room left at the end of the list for the bottom bar, none when there is no bar (추가요청 3 ③)
+                val contentPadding = PaddingValues(
+                    bottom = if (juneMemoRoomId != null) 96.dp else 0.dp,
+                )
+                when (state.currentHomeNavigationBarItem) {
+                    HomeNavigationBarItem.Chats -> {
+                        RoomListContentView(
+                            contentState = roomListState.contentState.withoutJuneMemoRoom(juneMemoRoomId),
+                            filtersState = roomListState.filtersState,
+                            spaceFiltersState = roomListState.spaceFiltersState,
+                            lazyListState = roomsLazyListState,
+                            hideInvitesAvatars = roomListState.hideInvitesAvatars,
+                            eventSink = roomListState.eventSink,
+                            onSetUpRecoveryClick = onSetUpRecoveryClick,
+                            onConfirmRecoveryKeyClick = onConfirmRecoveryKeyClick,
+                            onRoomClick = ::onRoomClick,
+                            onCreateRoomClick = onStartChatClick,
+                            contentPadding = lazyColumnContentPadding + contentPadding,
+                            modifier = Modifier
+                                .padding(outerPadding)
+                                .consumeWindowInsets(outerPadding)
+                                .hazeSource(state = hazeState)
+                        )
+                        SpaceFiltersView(roomListState.spaceFiltersState)
                     }
-                },
-                onMenuActionClick = onMenuActionClick,
-                onOpenSettings = onOpenSettings,
-                onAccountSwitch = {
-                    state.eventSink(HomeEvent.SwitchToAccount(it))
-                },
-                scrollBehavior = scrollBehavior,
-                displayFilters = state.displayRoomListFilters,
-                filtersState = roomListState.filtersState,
-                spaceFiltersState = roomListState.spaceFiltersState,
-                canReportBug = state.canReportBug,
-                modifier = Modifier.hazeEffect(
-                    state = hazeState,
-                    style = HazeMaterials.thick(),
-                )
-            )
-        },
-        floatingActionButton = {
-            if (juneMemoRoomId != null) {
-                JuneMemoBottomBar(
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
-                    onClick = { onRoomClick(RoomId(juneMemoRoomId)) },
-                )
-            }
-        },
-        floatingActionButtonPosition = FabPosition.Center,
-        contentWindowInsets = scaffoldScrollableContentInsets,
-        content = { padding ->
-            val outerPadding = PaddingValues(
-                start = padding.calculateStartPadding(LocalLayoutDirection.current),
-                end = padding.calculateEndPadding(LocalLayoutDirection.current),
-                // Remove these two lines once https://issuetracker.google.com/issues/436432313 has been fixed
-                bottom = padding.calculateBottomPadding(),
-                top = padding.calculateTopPadding()
-            )
-            // Room left at the end of the list for the bottom bar, none when there is no bar (추가요청 3 ③)
-            val contentPadding = PaddingValues(
-                bottom = if (juneMemoRoomId != null) 96.dp else 0.dp,
-            )
-            when (state.currentHomeNavigationBarItem) {
-                HomeNavigationBarItem.Chats -> {
-                    RoomListContentView(
-                        contentState = roomListState.contentState.withoutJuneMemoRoom(juneMemoRoomId),
-                        filtersState = roomListState.filtersState,
-                        spaceFiltersState = roomListState.spaceFiltersState,
-                        lazyListState = roomsLazyListState,
-                        hideInvitesAvatars = roomListState.hideInvitesAvatars,
-                        eventSink = roomListState.eventSink,
-                        onSetUpRecoveryClick = onSetUpRecoveryClick,
-                        onConfirmRecoveryKeyClick = onConfirmRecoveryKeyClick,
-                        onRoomClick = ::onRoomClick,
-                        onCreateRoomClick = onStartChatClick,
-                        contentPadding = lazyColumnContentPadding + contentPadding,
-                        modifier = Modifier
-                            .padding(outerPadding)
-                            .consumeWindowInsets(outerPadding)
-                            .hazeSource(state = hazeState)
-                    )
-                    SpaceFiltersView(roomListState.spaceFiltersState)
+                    HomeNavigationBarItem.Spaces -> {
+                        HomeSpacesView(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(outerPadding)
+                                .consumeWindowInsets(outerPadding)
+                                .hazeSource(state = hazeState),
+                            contentPadding = lazyColumnContentPadding + contentPadding,
+                            state = state.homeSpacesState,
+                            lazyListState = spacesLazyListState,
+                            onSpaceClick = { spaceId ->
+                                onRoomClick(spaceId)
+                            },
+                            onCreateSpaceClick = onCreateSpaceClick,
+                            // TODO use actual callbacks for this
+                            onExploreClick = {},
+                        )
+                    }
                 }
-                HomeNavigationBarItem.Spaces -> {
-                    HomeSpacesView(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(outerPadding)
-                            .consumeWindowInsets(outerPadding)
-                            .hazeSource(state = hazeState),
-                        contentPadding = lazyColumnContentPadding + contentPadding,
-                        state = state.homeSpacesState,
-                        lazyListState = spacesLazyListState,
-                        onSpaceClick = { spaceId ->
-                            onRoomClick(spaceId)
-                        },
-                        onCreateSpaceClick = onCreateSpaceClick,
-                        // TODO use actual callbacks for this
-                        onExploreClick = {},
-                    )
-                }
-            }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-    )
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        )
+        if (juneMemoRoomId != null) {
+            JuneMovableMemoButton(
+                spot = JuneSettings.memoButtonSpot(context),
+                onMove = { JuneSettings.setMemoButtonSpot(context, it) },
+                onClick = { onRoomClick(RoomId(juneMemoRoomId)) },
+            )
+        }
+    }
 }
-
-/** Test tag of the memo button of the home bottom bar. */
-internal const val JUNE_HOME_MEMO_BUTTON = "june_home_memo_button"
 
 /** The room list without the memo room (it opens from the memo button). Other states are returned as they are. */
 internal fun RoomListContentState.withoutJuneMemoRoom(memoRoomId: String?): RoomListContentState =
@@ -309,24 +298,6 @@ internal fun RoomListContentState.withoutJuneMemoRoom(memoRoomId: String?): Room
     } else {
         copy(summaries = summaries.filter { it.roomId.value != memoRoomId }.toImmutableList())
     }
-
-/** Element June: the bottom bar with the memo button only (추가요청 3). */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun JuneMemoBottomBar(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    HorizontalFloatingToolbar(modifier = modifier.zIndex(1f)) {
-        HorizontalFloatingToolbarItem(
-            icon = CompoundIcons.Document(),
-            tooltipLabel = "메모",
-            isSelected = false,
-            onClick = onClick,
-            modifier = Modifier.testTag(JUNE_HOME_MEMO_BUTTON),
-        )
-    }
-}
 
 internal fun RoomListRoomSummary.contentType() = displayType.ordinal
 
