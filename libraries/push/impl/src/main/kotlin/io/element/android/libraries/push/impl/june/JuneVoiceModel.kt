@@ -35,6 +35,9 @@ internal const val JUNE_VOICE_SPEED = 1.05f
 /** Language tag given to the multilingual model. */
 private const val LANGUAGE = "ko"
 
+/** The step of the denoising loop is given to the model as one number for the one line being read. */
+private val STEP_SHAPE = longArrayOf(1)
+
 private const val FILE_DURATION_PREDICTOR = "duration_predictor.onnx"
 private const val FILE_TEXT_ENCODER = "text_encoder.onnx"
 private const val FILE_VECTOR_ESTIMATOR = "vector_estimator.onnx"
@@ -128,7 +131,7 @@ internal class JuneVoiceModel private constructor(
         val latentShape = longArrayOf(1, dimensions.toLong(), latentLength.toLong())
 
         OnnxTensor.createTensor(environment, FloatBuffer.wrap(latentMask), longArrayOf(1, 1, latentLength.toLong())).use { maskTensor ->
-            OnnxTensor.createTensor(environment, FloatBuffer.wrap(floatArrayOf(JUNE_VOICE_TOTAL_STEPS.toFloat()))).use { totalStep ->
+            OnnxTensor.createTensor(environment, FloatBuffer.wrap(floatArrayOf(JUNE_VOICE_TOTAL_STEPS.toFloat())), STEP_SHAPE).use { totalStep ->
                 repeat(JUNE_VOICE_TOTAL_STEPS) { step ->
                     latent = denoiseStep(latent, latentShape, textEmbedding, textMask, maskTensor, totalStep, step)
                 }
@@ -156,7 +159,7 @@ internal class JuneVoiceModel private constructor(
         step: Int,
     ): FloatArray {
         OnnxTensor.createTensor(environment, FloatBuffer.wrap(latent), latentShape).use { noisyLatent ->
-            OnnxTensor.createTensor(environment, FloatBuffer.wrap(floatArrayOf(step.toFloat()))).use { currentStep ->
+            OnnxTensor.createTensor(environment, FloatBuffer.wrap(floatArrayOf(step.toFloat())), STEP_SHAPE).use { currentStep ->
                 vectorEstimator.run(
                     mapOf(
                         "noisy_latent" to noisyLatent,

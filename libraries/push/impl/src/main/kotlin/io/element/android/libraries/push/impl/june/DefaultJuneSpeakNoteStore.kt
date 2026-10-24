@@ -10,7 +10,6 @@ package io.element.android.libraries.push.impl.june
 import android.content.Context
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
-import dev.zacsweers.metro.Inject
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.di.annotations.ApplicationContext
 import io.element.android.services.toolbox.api.systemclock.SystemClock
@@ -29,7 +28,6 @@ fun interface JuneSpeakNoteStore {
 private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 @ContributesBinding(AppScope::class)
-@Inject
 class DefaultJuneSpeakNoteStore(
     @ApplicationContext private val context: Context,
     private val systemClock: SystemClock,

@@ -10,7 +10,6 @@ package io.element.android.libraries.push.impl.june
 import android.content.Context
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
-import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.designsystem.june.JuneSettings
@@ -35,7 +34,6 @@ fun interface JuneVoicePreview {
 
 @ContributesBinding(AppScope::class)
 @SingleIn(AppScope::class)
-@Inject
 class DefaultJuneVoicePreview(
     @ApplicationContext private val context: Context,
     private val engine: SupertonicJuneSpeechEngine,

@@ -58,12 +58,6 @@ android {
     androidResources {
         noCompress += listOf("onnx")
     }
-
-    sourceSets {
-        getByName("main") {
-            assets.srcDir(juneVoiceAssets)
-        }
-    }
 }
 
 /*
@@ -87,51 +81,57 @@ val juneVoiceFiles = mapOf(
     "LICENSE" to "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
 )
 
-val juneVoiceAssets: Provider<Directory> = layout.buildDirectory.dir("june-voice-assets")
+abstract class JuneVoiceDownloadTask : DefaultTask() {
+    @get:Input
+    abstract val revision: Property<String>
 
-val juneVoiceDownload = tasks.register("juneVoiceDownload") {
-    description = "Downloads the files of the Korean voice built into the app and checks their hashes."
-    val target = juneVoiceAssets
-    val revision = juneVoiceRevision
-    val files = juneVoiceFiles
-    outputs.dir(target)
-    outputs.upToDateWhen { task ->
-        val folder = target.get().asFile.resolve("june_voice")
-        files.all { (path, hash) -> folder.resolve(path.substringAfterLast('/')).takeIf { it.isFile }?.let { sha256(it) == hash } == true }
-            .also { if (!it) task.logger.lifecycle("The files of the built-in voice have to be downloaded") }
-    }
-    doLast {
-        val folder = target.get().asFile.resolve("june_voice").apply { mkdirs() }
-        files.forEach { (path, expected) ->
+    @get:Input
+    abstract val files: MapProperty<String, String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun download() {
+        val folder = outputDirectory.get().asFile.resolve("june_voice").apply { mkdirs() }
+        files.get().forEach { (path, expected) ->
             val file = folder.resolve(path.substringAfterLast('/'))
             if (file.isFile && sha256(file) == expected) return@forEach
-            val source = "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/$revision/$path"
             logger.lifecycle("Downloading the built-in voice file $path")
+            val source = "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/${revision.get()}/$path"
             URI(source).toURL().openStream().use { input -> file.outputStream().use { output -> input.copyTo(output) } }
             val actual = sha256(file)
             if (actual != expected) {
                 file.delete()
-                error("The built-in voice file $path does not match what is expected ($actual instead of $expected)")
+                throw GradleException("The built-in voice file $path does not match what is expected ($actual instead of $expected)")
             }
         }
     }
-}
 
-fun sha256(file: File): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    file.inputStream().use { input ->
-        val buffer = ByteArray(1 shl 16)
-        while (true) {
-            val read = input.read(buffer)
-            if (read <= 0) break
-            digest.update(buffer, 0, read)
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(1 shl 16)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
         }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
-    return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(juneVoiceDownload)
+val juneVoiceDownload = tasks.register<JuneVoiceDownloadTask>("juneVoiceDownload") {
+    description = "Downloads the files of the Korean voice built into the app and checks their hashes."
+    revision.set(juneVoiceRevision)
+    files.set(juneVoiceFiles)
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(juneVoiceDownload, JuneVoiceDownloadTask::outputDirectory)
+    }
 }
 
 setupDependencyInjection()

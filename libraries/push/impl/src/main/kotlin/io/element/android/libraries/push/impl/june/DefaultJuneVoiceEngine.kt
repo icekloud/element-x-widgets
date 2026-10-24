@@ -10,7 +10,6 @@ package io.element.android.libraries.push.impl.june
 import android.content.Context
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
-import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.di.annotations.ApplicationContext
@@ -21,7 +20,6 @@ import io.element.android.libraries.di.annotations.ApplicationContext
  */
 @ContributesBinding(AppScope::class)
 @SingleIn(AppScope::class)
-@Inject
 class DefaultJuneVoiceEngine(
     @ApplicationContext context: Context,
     phone: DefaultJuneSpeechEngine,
