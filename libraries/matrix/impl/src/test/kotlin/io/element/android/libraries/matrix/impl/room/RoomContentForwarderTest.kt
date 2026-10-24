@@ -253,7 +253,7 @@ class RoomContentForwarderTest {
                     timelineLambda = {
                         FakeFfiTimeline(
                             sendLambda = { msg ->
-                                if (RoomId(id) in failIn) throw IllegalStateException("not sent")
+                                check(RoomId(id) !in failIn) { "not sent" }
                                 sent.getOrPut(id) { mutableListOf() }.add((msg as FakeFfiRoomMessageEventContentWithoutRelation).content)
                                 FakeFfiSendHandle()
                             }
