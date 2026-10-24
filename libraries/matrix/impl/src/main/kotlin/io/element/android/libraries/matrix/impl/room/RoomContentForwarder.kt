@@ -58,7 +58,8 @@ class RoomContentForwarder(
         // Element June: one event with the header inside, or (types without room for it) the header just before
         val contents = when (header) {
             null -> listOf(content)
-            else -> juneForwardContent(content, header)?.let { listOf(it) } ?: listOf(juneForwardHeaderContent(header), content)
+            // BEFORE (CI only, not for merge): the old behaviour, the header always as a message of its own
+            else -> listOf(juneForwardHeaderContent(header), content)
         }
 
         val targetRooms = toRoomIds.toSet().mapNotNull { roomId -> roomListService.roomOrNull(roomId.value) }

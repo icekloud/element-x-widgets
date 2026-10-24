@@ -100,8 +100,9 @@ class ForwardMessagesPresenter(
  * reads the header as the first line of the message, so line breaks in the comment or the room name become spaces.
  */
 internal fun juneForwardHeader(sourceName: String?, comment: String): String {
-    val source = sourceName?.let(::juneOneLine)?.takeIf { it.isNotEmpty() } ?: "알 수 없는 방"
-    val text = juneOneLine(comment)
+    // BEFORE (CI only, not for merge): the old header, line breaks kept
+    val source = sourceName?.takeIf { it.isNotBlank() } ?: "알 수 없는 방"
+    val text = comment.trim()
     return if (text.isEmpty()) "[전달: $source]" else "[전달: $source, 맥락:$text]"
 }
 
