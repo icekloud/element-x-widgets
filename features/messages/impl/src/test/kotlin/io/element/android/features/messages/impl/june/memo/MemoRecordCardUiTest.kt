@@ -13,13 +13,17 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.v2.runAndroidComposeUiTest
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextOverflow
@@ -89,5 +93,31 @@ class MemoRecordCardUiTest : RobolectricTest() {
             assertEquals(MEMO_CARD_LINES, input.maxLines)
             assertEquals(TextOverflow.Ellipsis, input.overflow)
         }
+    }
+
+    @Test
+    fun `a tap on the +2 cell opens all six photos at the fourth`() = runAndroidComposeUiTest<ComponentActivity> {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        MemoDb.Schema.create(driver)
+        val backend = MemoLocalBackend({ MemoDb(driver) }, dispatcher = EmptyCoroutineContext)
+        runBlocking { backend.create("", (1..6).map { MemoLocalAttachment(id = "a$it", localPath = "/none/$it.jpg") }) }
+        setContent {
+            ElementTheme {
+                val scope = rememberCoroutineScope()
+                // Kept like the memo screen does (remember), so setting the viewer does not make a new controller.
+                val controller = remember { MemoController(MemoStore(backend), scope, mutableStateOf(MemoLocation())) }
+                val version by MemoLocalChanges.version.collectAsState()
+                MemoRecordTab(controller, version)
+                // The memo screen draws the viewer the same way (MemoScreen).
+                controller.viewer?.let { MemoPhotoViewer(it, onClose = { controller.viewer = null }) }
+            }
+        }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.RECORD_PHOTO, useUnmergedTree = true).fetchSemanticsNodes().size == MEMO_CARD_PHOTOS }
+        onNodeWithText("+2", useUnmergedTree = true).assertIsDisplayed()
+        // The files are not there, so each cell shows its "↻ 다시" in the middle and a tap there would retry: the cell's
+        // own click (the one a tap on a drawn photo reaches) is used.
+        onAllNodesWithTag(MemoTags.RECORD_PHOTO, useUnmergedTree = true)[MEMO_CARD_PHOTOS - 1].performSemanticsAction(SemanticsActions.OnClick)
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(MemoTags.VIEWER_COUNTER).fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag(MemoTags.VIEWER_COUNTER).assertTextEquals("4/6")
     }
 }

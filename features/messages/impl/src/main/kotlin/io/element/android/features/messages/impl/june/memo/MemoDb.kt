@@ -41,6 +41,9 @@ internal const val MEMO_OUTBOX_FOLDER = "folder"
 /** A suggestion answer waiting for the next `sync_push` (`제안응답[]`, 이벤트규약 v2 §2). Target = suggestion id. */
 internal const val MEMO_OUTBOX_PROPOSAL = "proposal"
 
+/** 앱15 A: a folder icon picked here, waiting for the next `sync_push` (`폴더아이콘[]`). Target = folder path. */
+internal const val MEMO_OUTBOX_FOLDER_ICON = "folder_icon"
+
 /** One developer log line of the sync (설계 §k-6). Counts and timings only, never note content. */
 internal data class MemoSyncLogRow(val atMs: Long, val kind: String, val notes: Int, val tookMs: Long?, val result: String?)
 
@@ -114,11 +117,13 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
             when (folder) {
                 MEMO_TRASH -> "deleted = 1"
                 MEMO_ALL_FOLDERS -> "deleted = 0"
+                // 앱11 A: the pinned strip of the record tab, the pinned notes of every folder.
+                MEMO_PINNED_LIST -> "deleted = 0 AND pinned = 1"
                 else -> "deleted = 0 AND folder = ?"
             }
         )
         val args = mutableListOf<Any?>()
-        if (folder != MEMO_TRASH && folder != MEMO_ALL_FOLDERS) args += folder
+        if (folder != MEMO_TRASH && folder != MEMO_ALL_FOLDERS && folder != MEMO_PINNED_LIST) args += folder
         tagFilter(tags, where, args)
         val column = if (sort == "수정") "modified_ms" else "created_ms"
         val order: String
@@ -204,8 +209,27 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         val tags = tagsOf(ids)
         val attachments = attachmentsOf(ids)
         val proposals = suggestionCounts(ids)
-        return rows.map { it.toItem(tags[it.id].orEmpty(), attachments[it.id].orEmpty()).copy(proposals = proposals[it.id] ?: 0) }
+        val metas = memoNoteMetas(this, ids)
+        val waiting = waitingNoteIds(ids)
+        return rows.map {
+            // 앱13 D: the cards draw copies of one picture once, like the open note.
+            val all = attachments[it.id].orEmpty()
+            val photos = memoDistinctPhotos(all)
+            it.toItem(tags[it.id].orEmpty(), photos, metas[it.id] ?: MemoNoteMeta()).copy(
+                proposals = proposals[it.id] ?: 0,
+                // 앱15 F: the small sync mark beside the dates.
+                syncWaiting = memoNoteWaiting(it.id, waiting, all),
+            )
+        }
     }
+
+    /** 앱15 F: those of [ids] with a change in the outbox (not taken by the server yet). */
+    fun waitingNoteIds(ids: List<String>): Set<String> = inChunks(ids) { chunk ->
+        query(
+            "SELECT target FROM outbox WHERE kind = ? AND target IN (${marks(chunk.size)})",
+            listOf<Any?>(MEMO_OUTBOX_NOTE) + chunk,
+        ) { c -> c.getString(0)!! }
+    }.toSet()
 
     private fun tagsOf(ids: List<String>): Map<String, List<String>> = inChunks(ids) { chunk ->
         query("SELECT note_id, tag FROM note_tag WHERE note_id IN (${marks(chunk.size)}) ORDER BY rowid", chunk) { c -> c.getString(0)!! to c.getString(1)!! }
@@ -307,6 +331,27 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         listOf(f.path, f.icon, f.source, f.order, f.deleted, rev.ms, rev.device, rev.seq, dirty),
     )
 
+    /**
+     * 앱14 C: the icons set on this phone that the server has not taken (rows changed here, `dirty`, with an icon of
+     * their own; 📁 was the old default of a folder made here, not a choice).
+     */
+    fun pickedFolderIcons(): Map<String, String> = query(
+        "SELECT path, icon FROM folder WHERE dirty = 1 AND deleted = 0 AND icon NOT IN ('', ?)",
+        listOf(MEMO_FOLDER_ICON_DEFAULT),
+    ) { c -> c.getString(0)!! to c.getString(1)!! }.toMap()
+
+    /** 앱15 A: the server took the icon of [path]: the row is clean again when it still holds that [icon]. */
+    fun cleanFolderIcon(path: String, icon: String) = exec(
+        "UPDATE folder SET dirty = 0 WHERE path = ? AND icon = ? AND deleted = 0",
+        listOf(path, icon),
+    )
+
+    /** 앱14 C: the place of a folder from the server, leaving its icon, stamp and `dirty` as they are. */
+    fun moveFolderRow(f: MemoFolderRow) = exec(
+        "UPDATE folder SET source = ?, order_idx = ?, deleted = ? WHERE path = ?",
+        listOf(f.source, f.order, f.deleted, f.path),
+    )
+
     /** Note counts of every folder that has notes (trash = notes with 삭제 1) and the three newest titles. */
     fun folderCounts(): List<MemoFolderCount> {
         val counts = query(
@@ -356,6 +401,11 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
     fun state(key: String): String? = query("SELECT value FROM sync_state WHERE key = ?", listOf(key)) { c -> c.getString(0) }.firstOrNull()
 
     fun setState(key: String, value: String) = exec("INSERT OR REPLACE INTO sync_state(key, value) VALUES (?, ?)", listOf(key, value))
+
+    /** The values of [keys] that are kept (앱10: the note numbers of one list page). */
+    fun states(keys: List<String>): Map<String, String> = inChunks(keys) { chunk ->
+        query("SELECT key, value FROM sync_state WHERE key IN (${marks(chunk.size)})", chunk) { c -> c.getString(0)!! to c.getString(1)!! }
+    }.toMap()
 
     /** A new change stamp of this device: [nowMs] with the next per device sequence number (설계 §c-2). */
     fun nextRev(device: String, nowMs: Long): MemoRev {
@@ -488,20 +538,6 @@ private fun likeEscape(s: String) = s.replace("\\", "\\\\").replace("%", "\\%").
 
 internal const val MEMO_PREVIEW_CHARS = 90
 
-/** The built-in folders (server `BUILTIN_FOLDERS` + archive and trash), created with the database. */
-internal val MEMO_BUILTIN_FOLDERS = listOf(
-    MEMO_INBOX to "📥",
-    "여행" to "✈️",
-    "쇼핑·구매" to "🛒",
-    "아이디어" to "💡",
-    "집·생활" to "🏠",
-    "일·공부" to "📚",
-    "사람" to "👤",
-    "링크보관" to "🔗",
-    MEMO_ARCHIVE to "📦",
-    MEMO_TRASH to "🗑",
-)
-
 private const val NOTE_COLS = "id, folder, title, body, kind, created_ms, rev_json, modified_ms, modified_device, modified_seq, deleted, pinned, " +
     "pin_suggested, pin_dismissed, link_json, header_json, origin_event, schedule_state, server_rev, dirty"
 private const val NOTE_COL_COUNT = 20
@@ -546,14 +582,25 @@ private class MemoRow(
     /** The start of the plain body ([MEMO_CARD_TEXT_CHARS]), what the record card shows on up to 7 lines (앱6). */
     val text: String,
 ) {
-    fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>) = MemoItem(
+    fun toItem(tags: List<String>, attachments: List<MemoLocalAttachment>, meta: MemoNoteMeta = MemoNoteMeta()): MemoItem {
+        val shown = memoLocalPreview(kind, preview, linkJson, attachments)
+        return item(shown, tags, attachments, meta)
+    }
+
+    private fun item(shown: MemoPreview?, tags: List<String>, attachments: List<MemoLocalAttachment>, meta: MemoNoteMeta) = MemoItem(
         id = id,
         kind = kind,
         // 앱7 항목 1: an untitled note shows the start of its body here, for the screen only (never stored).
         title = memoDisplayTitle(title, preview, id),
         untitled = title.isEmpty(),
-        preview = memoLocalPreview(kind, preview, linkJson, attachments),
-        date = memoIso(createdMs),
+        preview = shown,
+        // 앱11 D: a text note with photos shows them under its text (the kind the server gave is not looked at).
+        photos = memoCardPhotos(shown, attachments),
+        // 앱10: the date shown is the last change of the user, else the creation; the number is the server's.
+        date = memoIso(meta.userModifiedMs.takeIf { it > 0 } ?: createdMs),
+        created = memoIso(createdMs),
+        userModified = meta.userModifiedMs.takeIf { it > 0 }?.let(::memoIso).orEmpty(),
+        number = meta.number,
         tags = tags,
         folder = folder,
         pinned = pinned,

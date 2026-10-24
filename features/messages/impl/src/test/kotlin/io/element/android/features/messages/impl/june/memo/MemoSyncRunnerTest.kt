@@ -65,7 +65,15 @@ class MemoSyncRunnerTest : RobolectricTest() {
             }
         }
 
-        override suspend fun fetchProposals(): List<JSONObject>? = if (online) proposals else null
+        /** 앱19: how many times the index proposals were read; [nextProposals] are given first, one per read. */
+        var fetches = 0
+        val nextProposals = ArrayDeque<List<JSONObject>>()
+
+        override suspend fun fetchProposals(): List<JSONObject>? {
+            fetches++
+            if (!online) return null
+            return nextProposals.removeFirstOrNull() ?: proposals
+        }
 
         override suspend fun upload(bytes: ByteArray): String {
             if (!online || uploadFails) throw MemoSendException("off")
@@ -182,6 +190,55 @@ class MemoSyncRunnerTest : RobolectricTest() {
         // The server took it: the suggestion is gone here too, and a later pull does not bring it back as waiting.
         assertTrue(db.suggestions().isEmpty())
         assertFalse(r.hasPendingUploads())
+    }
+
+    private fun card(id: String, note: String) =
+        JSONObject().put("id", id).put("종류", "분류").put("요약", "태그 #여행").put("상태", "대기").put("노트", note)
+            .put("제안내용", JSONObject().put("태그", JSONArray(listOf("여행"))))
+
+    @Test
+    fun `app19 - after a review the new card comes with one pull and nothing goes up`() = runTest {
+        val db = db()
+        val id = backend(db).create("교토 메모")
+        val room = FakeMemoSyncTransport(proposals = listOf(card("$id.cls", id)))
+        assertTrue(runner(db, room).syncAfterReview(listOf(id)))
+        assertEquals(listOf("$id.cls"), db.suggestions().map { it.id })
+        assertEquals(1, room.ops.count { it.op == "sync_pull" })
+        // 추가요청 2 (편집 중 올리기 보류): the review sync only brings things down.
+        assertTrue(room.pushed().isEmpty())
+        assertEquals(1, room.fetches)
+    }
+
+    @Test
+    fun `app19 - an index not yet published is read once more, only once, without a second pull`() = runTest {
+        val db = db()
+        val id = backend(db).create("교토 메모")
+        val old = card("old.cls", "old")
+        val room = FakeMemoSyncTransport(proposals = listOf(old, card("$id.cls", id)))
+        // The pull is answered before the server publishes the index of the review: the first read is the old one.
+        room.nextProposals += listOf(old)
+        assertTrue(runner(db, room).syncAfterReview(listOf(id)))
+        assertEquals(setOf("old.cls", "$id.cls"), db.suggestions().map { it.id }.toSet())
+        assertEquals(1, room.ops.count { it.op == "sync_pull" })
+        assertEquals(2, room.fetches)
+        // Still not there after the second read: it stops (no third read, no timer); the next sync brings it.
+        val db2 = db()
+        val id2 = backend(db2).create("메모")
+        val late = FakeMemoSyncTransport(proposals = emptyList())
+        assertTrue(runner(db2, late).syncAfterReview(listOf(id2)))
+        assertEquals(2, late.fetches)
+        assertEquals(1, late.ops.count { it.op == "sync_pull" })
+        assertTrue(db2.suggestions().isEmpty())
+    }
+
+    @Test
+    fun `app19 - with the server off the review sync gives up at once and throws nothing`() = runTest {
+        val db = db()
+        val id = backend(db).create("메모")
+        val room = FakeMemoSyncTransport(online = false)
+        assertFalse(runner(db, room).syncAfterReview(listOf(id)))
+        assertEquals(0, room.fetches)
+        assertNotNull(db.note(id))
     }
 
     @Test

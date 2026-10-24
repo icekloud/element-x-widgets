@@ -58,34 +58,53 @@ internal class MemoLocalInputSink(
     override suspend fun saveText(text: String): String = backend.create(text)
 
     override suspend fun savePictures(uris: List<Uri>, caption: String?): String {
-        val files = withContext(Dispatchers.IO) { uris.mapIndexedNotNull { i, uri -> copy(uri, i) } }
+        val files = memoCopyPictures(context, uris, clock)
         return backend.create(caption.orEmpty(), attachments = files, kind = "사진")
     }
 
     override suspend fun saveVoice(file: File, mimeType: String): String {
         val copy = withContext(Dispatchers.IO) {
             val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: file.extension.ifEmpty { "ogg" }
-            val out = target("voice", 0, ext)
+            val out = memoFileTarget(context, "voice", clock(), 0, ext)
             file.copyTo(out, overwrite = true)
             MemoLocalAttachment(id = out.name, localPath = out.absolutePath, mime = mimeType, bytes = out.length())
         }
         // The transcript comes with the bot review (A5); until then the note says what it is.
         return backend.create(MEMO_VOICE_BODY, attachments = listOf(copy), kind = "음성")
     }
+}
 
-    private fun copy(uri: Uri, index: Int): MemoLocalAttachment? = tryOrNull {
-        val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
-        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
-        val out = target("photo", index, ext)
-        context.contentResolver.openInputStream(uri)?.use { input -> out.outputStream().use { input.copyTo(it) } }?.let {
-            MemoLocalAttachment(id = out.name, localPath = out.absolutePath, mime = mime, bytes = out.length())
+/**
+ * Copies picked pictures next to the database (`files/june_memo/`), the phone originals the upload reads later. The
+ * composer and, 앱10 D, the note editor use the same copy. A picture that cannot be read is left out.
+ */
+internal suspend fun memoCopyPictures(
+    context: Context,
+    uris: List<Uri>,
+    clock: () -> Long = System::currentTimeMillis,
+    /** 앱23: the picture's own location, read from the phone original before it is copied (결정기록 1). */
+    readLocation: (Uri) -> MemoPhotoLocation? = { uri -> memoReadPhotoLocation(context, uri) },
+): List<MemoLocalAttachment> =
+    withContext(Dispatchers.IO) {
+        val now = clock()
+        uris.mapIndexedNotNull { index, uri ->
+            tryOrNull {
+                val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+                val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
+                val out = memoFileTarget(context, "photo", now, index, ext)
+                context.contentResolver.openInputStream(uri)?.use { input -> out.outputStream().use { input.copyTo(it) } }?.let {
+                    // A picture whose location cannot be read (hidden, refused, none in it) is copied all the same.
+                    val location = tryOrNull { readLocation(uri) }
+                    MemoLocalAttachment(id = out.name, localPath = out.absolutePath, mime = mime, bytes = out.length())
+                        .withLocation(location)
+                }
+            }
         }
     }
 
-    private fun target(kind: String, index: Int, ext: String): File {
-        val dir = File(context.filesDir, "june_memo").apply { mkdirs() }
-        return File(dir, "$kind-${clock()}-$index.$ext")
-    }
+private fun memoFileTarget(context: Context, kind: String, nowMs: Long, index: Int, ext: String): File {
+    val dir = File(context.filesDir, "june_memo").apply { mkdirs() }
+    return File(dir, "$kind-$nowMs-$index.$ext")
 }
 
 internal const val MEMO_VOICE_BODY = "🎤 음성 메모"
