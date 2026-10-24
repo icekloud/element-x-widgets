@@ -17,6 +17,7 @@ import org.matrix.rustcomponents.sdk.NoHandle
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.RoomInfo
 import org.matrix.rustcomponents.sdk.RoomMembersIterator
+import org.matrix.rustcomponents.sdk.Timeline
 import uniffi.matrix_sdk.RoomMemberRole
 
 class FakeFfiRoom(
@@ -27,9 +28,14 @@ class FakeFfiRoom(
     private val latestEventLambda: () -> LatestEventValue = { lambdaError() },
     private val suggestedRoleForUserLambda: (String) -> RoomMemberRole = { lambdaError() },
     private val roomInfo: RoomInfo = aRustRoomInfo(id = roomId.value),
+    private val timelineLambda: () -> Timeline = { lambdaError() },
 ) : Room(NoHandle) {
     override fun id(): String {
         return roomId.value
+    }
+
+    override suspend fun timeline(): Timeline {
+        return timelineLambda()
     }
 
     override suspend fun members(): RoomMembersIterator {
