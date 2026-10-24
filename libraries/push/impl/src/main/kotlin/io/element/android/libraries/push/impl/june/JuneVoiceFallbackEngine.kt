@@ -22,14 +22,14 @@ private const val TAG = "JuneVoice"
 internal val JUNE_VOICE_LINE_TIMEOUT = 45.seconds
 
 /** What the built-in voice did with the last line, to show the speed on the phone. */
-internal data class JuneVoiceLineStats(
+data class JuneVoiceLineStats(
     val characters: Int,
     val generationMillis: Long,
     val audioMillis: Long,
 )
 
 /** An engine that can tell how long the last line took, so the speed can be shown in the settings. */
-internal interface JuneVoiceStatsSource {
+interface JuneVoiceStatsSource {
     val lastLineStats: JuneVoiceLineStats?
 }
 
