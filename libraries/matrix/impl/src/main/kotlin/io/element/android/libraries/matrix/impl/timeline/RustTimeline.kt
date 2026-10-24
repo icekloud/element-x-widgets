@@ -497,6 +497,14 @@ class RustTimeline(
         }
     }
 
+    override suspend fun forwardEventWithHeader(eventId: EventId, roomIds: List<RoomId>, header: String): Result<Unit> = withContext(dispatcher) {
+        runCatchingExceptions {
+            roomContentForwarder.forward(fromTimeline = inner, eventId = eventId, toRoomIds = roomIds, header = header)
+        }.onFailure {
+            Timber.tag(loggerTag).e(it)
+        }
+    }
+
     override suspend fun sendLocation(
         body: String,
         geoUri: String,
