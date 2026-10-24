@@ -32,9 +32,6 @@ internal const val JUNE_VOICE_ASSETS = "june_voice"
 internal const val JUNE_VOICE_TOTAL_STEPS = 8
 internal const val JUNE_VOICE_SPEED = 1.05f
 
-/** Language tag given to the multilingual model. */
-private const val LANGUAGE = "ko"
-
 /** The step of the denoising loop is given to the model as one number for the one line being read. */
 private val STEP_SHAPE = longArrayOf(1)
 
@@ -90,7 +87,7 @@ internal class JuneVoiceModel private constructor(
 
     /** Makes the audio of one [chunk]. The chunk must be short (see [juneVoiceChunks]). */
     fun synthesize(chunk: String): JuneVoiceAudio {
-        val text = "<$LANGUAGE>${chunk.trim()}</$LANGUAGE>"
+        val text = juneVoiceModelText(chunk)
         val codePoints = text.codePoints().toArray()
         val textIds = LongArray(codePoints.size) { index ->
             val codePoint = codePoints[index]
