@@ -32,6 +32,8 @@ object JuneSettings {
     private const val KEY_APERTURE_ROOMS = "aperture_rooms"
     private const val KEY_BT_SPEAK = "bt_speak"
     private const val KEY_BT_SPEAK_STATUS = "bt_speak_status"
+    private const val KEY_BT_SPEAK_ENGINE = "bt_speak_engine"
+    private const val KEY_BT_SPEAK_VOICE_NOTE = "bt_speak_voice_note"
     private const val KEY_MEMO_ROOM = "memo_room_id"
     private const val KEY_MEMO_FAKE = "memo_fake_data"
     private const val KEY_MEMO_BUTTON_SPOT = "memo_button_spot"
@@ -125,6 +127,8 @@ object JuneSettings {
     private val apertureRooms = mutableStateOf(DEFAULT_APERTURE_ROOMS)
     private val btSpeak = mutableStateOf(true)
     private val btSpeakStatus = mutableStateOf<String?>(null)
+    private val btSpeakEngine = mutableStateOf(JuneVoiceEngineChoice.Phone)
+    private val btSpeakVoiceNote = mutableStateOf<String?>(null)
     private val memoRoomId = mutableStateOf<String?>(null)
     private val memoFake = mutableStateOf(false)
     private val memoButtonSpot = mutableStateOf<JuneMemoButtonSpot?>(null)
@@ -155,6 +159,8 @@ object JuneSettings {
             }
             btSpeak.value = tryOrNull { p.getBoolean(KEY_BT_SPEAK, true) } ?: true
             btSpeakStatus.value = tryOrNull { p.getString(KEY_BT_SPEAK_STATUS, null) }
+            btSpeakEngine.value = JuneVoiceEngineChoice.parse(tryOrNull { p.getString(KEY_BT_SPEAK_ENGINE, null) })
+            btSpeakVoiceNote.value = tryOrNull { p.getString(KEY_BT_SPEAK_VOICE_NOTE, null) }
             memoRoomId.value = tryOrNull { p.getString(KEY_MEMO_ROOM, null) }?.takeIf { it.isNotBlank() }
             memoFake.value = tryOrNull { p.getBoolean(KEY_MEMO_FAKE, false) } ?: false
             memoButtonSpot.value = JuneMemoButtonSpot.parse(tryOrNull { p.getString(KEY_MEMO_BUTTON_SPOT, null) })
@@ -340,6 +346,36 @@ object JuneSettings {
         ensureLoaded(context)
         btSpeakStatus.value = status
         prefs(context).edit().putString(KEY_BT_SPEAK_STATUS, status).apply()
+    }
+
+    /**
+     * 앱27: which voice reads the 🔊 lines (observable). The phone engine by default: the built-in voice is only used once it has been
+     * chosen in the settings.
+     */
+    fun btSpeakEngine(context: Context): JuneVoiceEngineChoice {
+        ensureLoaded(context)
+        return btSpeakEngine.value
+    }
+
+    fun setBtSpeakEngine(context: Context, choice: JuneVoiceEngineChoice) {
+        ensureLoaded(context)
+        btSpeakEngine.value = choice
+        prefs(context).edit().putString(KEY_BT_SPEAK_ENGINE, choice.key).apply()
+    }
+
+    /**
+     * 앱27: what the built-in voice did with the last line, for instance "내장 · 42자 · 생성 6.1초 · 재생 5.8초" or
+     * "폰 기본 대체(시간 초과)" (observable, null when none yet). Never the message text.
+     */
+    fun btSpeakVoiceNote(context: Context): String? {
+        ensureLoaded(context)
+        return btSpeakVoiceNote.value
+    }
+
+    fun setBtSpeakVoiceNote(context: Context, note: String?) {
+        ensureLoaded(context)
+        btSpeakVoiceNote.value = note
+        prefs(context).edit().putString(KEY_BT_SPEAK_VOICE_NOTE, note).apply()
     }
 
     /** Room shown as the memo bot screen (기록 · 폴더 · 검색) instead of the chat timeline, null = none (observable). */

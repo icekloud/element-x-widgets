@@ -15,8 +15,7 @@ import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.content.getSystemService
-import dev.zacsweers.metro.AppScope
-import dev.zacsweers.metro.ContributesBinding
+import dev.zacsweers.metro.Inject
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.di.annotations.ApplicationContext
@@ -36,7 +35,7 @@ private const val TAG = "JuneSpeechEngine"
  * heard even when the phone is silent or on vibrate, over the music of other apps which keeps playing lowered by the system
  * (AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK) and gets back to its volume when the focus is released in [close].
  */
-@ContributesBinding(AppScope::class)
+@Inject
 class DefaultJuneSpeechEngine(
     @ApplicationContext private val context: Context,
 ) : JuneSpeechEngine {

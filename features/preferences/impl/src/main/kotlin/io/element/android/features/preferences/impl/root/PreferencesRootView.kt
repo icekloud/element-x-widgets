@@ -337,6 +337,8 @@ private fun AppSettingsSection(
         JuneSwipeSteerPreference()
         // Element June: read the 🔊 line of incoming messages aloud when a Bluetooth audio output is connected
         JuneBtSpeakPreference()
+        // Element June: which voice reads the 🔊 lines, the phone one or the Korean voice built into the app
+        JuneVoiceEnginePreference()
         ListItem(
             content = { Text(stringResource(id = CommonStrings.common_media_upload_quality)) },
             leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
