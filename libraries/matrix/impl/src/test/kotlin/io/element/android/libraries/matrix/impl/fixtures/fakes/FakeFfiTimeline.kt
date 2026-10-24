@@ -8,15 +8,22 @@
 
 package io.element.android.libraries.matrix.impl.fixtures.fakes
 
+import io.element.android.tests.testutils.lambda.lambdaError
+import org.matrix.rustcomponents.sdk.EventTimelineItem
 import org.matrix.rustcomponents.sdk.NoHandle
 import org.matrix.rustcomponents.sdk.PaginationStatusListener
+import org.matrix.rustcomponents.sdk.RoomMessageEventContentWithoutRelation
+import org.matrix.rustcomponents.sdk.SendHandle
 import org.matrix.rustcomponents.sdk.TaskHandle
 import org.matrix.rustcomponents.sdk.Timeline
 import org.matrix.rustcomponents.sdk.TimelineDiff
 import org.matrix.rustcomponents.sdk.TimelineListener
 import uniffi.matrix_sdk.PaginationStatus
 
-class FakeFfiTimeline : Timeline(NoHandle) {
+class FakeFfiTimeline(
+    private val getEventTimelineItemByEventIdLambda: (String) -> EventTimelineItem = { lambdaError() },
+    private val sendLambda: (RoomMessageEventContentWithoutRelation) -> SendHandle = { lambdaError() },
+) : Timeline(NoHandle) {
     private var listener: TimelineListener? = null
     override suspend fun addListener(listener: TimelineListener): TaskHandle {
         this.listener = listener
@@ -42,4 +49,12 @@ class FakeFfiTimeline : Timeline(NoHandle) {
     }
 
     override suspend fun fetchMembers() = Unit
+
+    override suspend fun getEventTimelineItemByEventId(eventId: String): EventTimelineItem {
+        return getEventTimelineItemByEventIdLambda(eventId)
+    }
+
+    override suspend fun send(msg: RoomMessageEventContentWithoutRelation): SendHandle {
+        return sendLambda(msg)
+    }
 }

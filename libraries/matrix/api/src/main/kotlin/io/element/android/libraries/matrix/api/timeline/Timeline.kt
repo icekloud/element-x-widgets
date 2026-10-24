@@ -324,6 +324,17 @@ interface Timeline : AutoCloseable {
     suspend fun forwardEvent(eventId: EventId, roomIds: List<RoomId>): Result<Unit>
 
     /**
+     * Element June: forwards the content of an event to other rooms with [header] as its first line, one event per
+     * room where the message type allows it (text, picture, voice message, gallery). Other types get [header] as a
+     * message of its own just before the forwarded one. A room that fails does not stop the others.
+     *
+     * @param eventId the event whose content is forwarded.
+     * @param roomIds the rooms to forward it to.
+     * @param header the "[전달: …]" line.
+     */
+    suspend fun forwardEventWithHeader(eventId: EventId, roomIds: List<RoomId>, header: String): Result<Unit>
+
+    /**
      * Cancels an event that is still waiting in the send queue, by redacting its local echo.
      *
      * @param transactionId the transaction id of the local echo to drop.

@@ -34,6 +34,7 @@ object JuneSettings {
     private const val KEY_BT_SPEAK_STATUS = "bt_speak_status"
     private const val KEY_MEMO_ROOM = "memo_room_id"
     private const val KEY_MEMO_FAKE = "memo_fake_data"
+    private const val KEY_MEMO_BUTTON_SPOT = "memo_button_spot"
 
     /** Default room name keywords that get the Aperture (GLaDOS) chat theme. */
     const val DEFAULT_APERTURE_ROOMS = "GLaDOS, 글라도스"
@@ -126,6 +127,7 @@ object JuneSettings {
     private val btSpeakStatus = mutableStateOf<String?>(null)
     private val memoRoomId = mutableStateOf<String?>(null)
     private val memoFake = mutableStateOf(false)
+    private val memoButtonSpot = mutableStateOf<JuneMemoButtonSpot?>(null)
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -155,6 +157,7 @@ object JuneSettings {
             btSpeakStatus.value = tryOrNull { p.getString(KEY_BT_SPEAK_STATUS, null) }
             memoRoomId.value = tryOrNull { p.getString(KEY_MEMO_ROOM, null) }?.takeIf { it.isNotBlank() }
             memoFake.value = tryOrNull { p.getBoolean(KEY_MEMO_FAKE, false) } ?: false
+            memoButtonSpot.value = JuneMemoButtonSpot.parse(tryOrNull { p.getString(KEY_MEMO_BUTTON_SPOT, null) })
             loaded = true
         }
     }
@@ -364,6 +367,29 @@ object JuneSettings {
         ensureLoaded(context)
         memoFake.value = enabled
         prefs(context).edit().putBoolean(KEY_MEMO_FAKE, enabled).apply()
+    }
+
+    /**
+     * 앱19 추가요청 1: where the memo button of the home screen was moved to (observable), null = the default place
+     * (bottom centre). A broken saved value reads as null.
+     */
+    fun memoButtonSpot(context: Context): JuneMemoButtonSpot? {
+        ensureLoaded(context)
+        return memoButtonSpot.value
+    }
+
+    fun setMemoButtonSpot(context: Context, spot: JuneMemoButtonSpot) {
+        ensureLoaded(context)
+        val kept = JuneMemoButtonSpot(spot.x.coerceIn(0f, 1f), spot.y.coerceIn(0f, 1f))
+        memoButtonSpot.value = kept
+        prefs(context).edit().putString(KEY_MEMO_BUTTON_SPOT, kept.encode()).apply()
+    }
+
+    /** 추가요청 2: "메모 버튼 위치 초기화" of the settings screen: the saved spot goes, the button is back at the bottom centre. */
+    fun resetMemoButtonSpot(context: Context) {
+        ensureLoaded(context)
+        memoButtonSpot.value = null
+        prefs(context).edit().remove(KEY_MEMO_BUTTON_SPOT).apply()
     }
 
     /** True if [roomName] contains one of the Aperture keywords (case insensitive). */

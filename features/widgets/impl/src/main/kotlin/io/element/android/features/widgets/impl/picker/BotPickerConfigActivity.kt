@@ -25,12 +25,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -39,11 +42,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import io.element.android.features.widgets.impl.BotPickerFixedSide
+import io.element.android.features.widgets.impl.BotPickerSlotCounts
+import io.element.android.features.widgets.impl.DEFAULT_BOT_PICKER_FIXED
+import io.element.android.features.widgets.impl.DEFAULT_BOT_PICKER_FLEXIBLE
+import io.element.android.features.widgets.impl.MAX_BOT_PICKER_FIXED
+import io.element.android.features.widgets.impl.MAX_BOT_PICKER_FLEXIBLE
 import io.element.android.features.widgets.impl.WidgetBindings
 import io.element.android.features.widgets.impl.WidgetRoom
+import io.element.android.features.widgets.impl.botPickerSlotsHint
 import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.june.JuneSettings
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Element June: choose and order the rooms shown by the "봇 선택" icon. Stored on the device only.
@@ -54,6 +65,9 @@ class BotPickerConfigActivity : ComponentActivity() {
     private val loading = mutableStateOf(true)
     private val radius = mutableStateOf(io.element.android.features.widgets.impl.DEFAULT_BOT_PICKER_RADIUS)
     private val customCenter = mutableStateOf(false)
+    private val fixedCount = mutableIntStateOf(DEFAULT_BOT_PICKER_FIXED)
+    private val flexibleCount = mutableIntStateOf(DEFAULT_BOT_PICKER_FLEXIBLE)
+    private val fixedSide = mutableStateOf(BotPickerFixedSide.Top)
     private var sessionId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,12 +76,17 @@ class BotPickerConfigActivity : ComponentActivity() {
         val repository = bindings<WidgetBindings>().widgetRoomRepository()
         radius.value = repository.store.getBotPickerRadius()
         customCenter.value = repository.store.getBotPickerCenter() != null
+        val counts = repository.store.getBotPickerSlotCounts()
+        fixedCount.intValue = counts.fixed
+        flexibleCount.intValue = counts.flexible
+        fixedSide.value = repository.store.getBotPickerFixedSide()
         lifecycleScope.launch {
             val sid = repository.defaultSessionId() ?: return@launch finish()
             sessionId = sid
             val rooms = runCatching { repository.loadAllRooms(sid) }.getOrDefault(emptyList())
             allRooms.addAll(rooms)
-            selected.addAll(runCatching { repository.botPickerRooms(sid, cacheOnly = true) }.getOrDefault(emptyList()))
+            // 앱15 B: the order list itself (the picker now rearranges the places below the fixed ones).
+            selected.addAll(repository.botPickerOrder(sid, rooms))
             loading.value = false
         }
         setContent {
@@ -112,6 +131,8 @@ class BotPickerConfigActivity : ComponentActivity() {
                             }
                         }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        SlotCountSettings(fixedLimit = minOf(selected.size, MAX_BOT_PICKER_FIXED))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text("펼쳐지는 거리: ${radius.value.toInt()}dp", fontWeight = FontWeight.Bold)
                         Slider(
                             value = radius.value,
@@ -134,6 +155,13 @@ class BotPickerConfigActivity : ComponentActivity() {
                             TextButton(onClick = { finish() }) { Text("취소") }
                             Button(onClick = {
                                 repository.store.saveBotPickerRadius(radius.value)
+                                repository.store.saveBotPickerSlotCounts(
+                                    BotPickerSlotCounts(
+                                        fixed = fixedCount.intValue.coerceAtMost(selected.size),
+                                        flexible = flexibleCount.intValue,
+                                    )
+                                )
+                                repository.store.saveBotPickerFixedSide(fixedSide.value)
                                 sessionId?.let { repository.store.saveBotPickerRoomIds(it, selected.map { room -> room.roomId }) }
                                 finish()
                             }) { Text("저장") }
@@ -141,6 +169,72 @@ class BotPickerConfigActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 앱15 B: how many rooms of the order stay in place (at most [fixedLimit], the length of the order) and how many
+     * places follow the badges. 0 flexible = the order as it is, like before. 앱16 A: and whether the fixed places are
+     * the highest or the lowest ones on screen.
+     */
+    @Composable
+    private fun SlotCountSettings(fixedLimit: Int) {
+        val fixedShown = fixedCount.intValue.coerceAtMost(fixedLimit)
+        val side = fixedSide.value
+        val (fixedEnd, flexEnd) = if (side == BotPickerFixedSide.Top) "위쪽" to "아래쪽" else "아래쪽" to "위쪽"
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // 앱16 A (관리자: "위에서부터는 지금 화면 기준 위에서부터", "상황에 따라 커스텀 가능하게"): the side of the fixed places.
+            Text("고정 위치", fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                RadioButton(
+                    selected = side == BotPickerFixedSide.Top,
+                    onClick = { fixedSide.value = BotPickerFixedSide.Top },
+                )
+                Text("화면 위쪽", modifier = Modifier.weight(1f))
+                RadioButton(
+                    selected = side == BotPickerFixedSide.Bottom,
+                    onClick = { fixedSide.value = BotPickerFixedSide.Bottom },
+                )
+                Text("화면 아래쪽", modifier = Modifier.weight(1f))
+            }
+            Text(
+                botPickerSlotsHint(BotPickerSlotCounts(fixedShown, flexibleCount.intValue), side),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "위·아래는 펼쳐진 화면에서 봇이 놓인 높이로 정합니다. 펼쳐지는 방향은 누른 아이콘(또는 옮긴 중심) 위치에 따라 바뀌므로, " +
+                    "순서 번호 중 어느 것이 고정되는지도 그 위치에 따라 달라집니다.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.padding(4.dp))
+            Text("고정: ${fixedShown}개", fontWeight = FontWeight.Bold)
+            Text(
+                "펼쳐질 순서 중 화면 $fixedEnd 자리에 오는 봇을 이 개수만큼 늘 같은 자리에 둡니다.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (fixedLimit > 0) {
+                Slider(
+                    value = fixedShown.toFloat(),
+                    onValueChange = { fixedCount.intValue = it.roundToInt() },
+                    valueRange = 0f..fixedLimit.toFloat(),
+                    steps = (fixedLimit - 1).coerceAtLeast(0),
+                )
+            }
+            Text("$flexEnd 유동: ${flexibleCount.intValue}개", fontWeight = FontWeight.Bold)
+            Text(
+                if (flexibleCount.intValue == 0) {
+                    "0개면 펼쳐질 순서를 그대로 펼칩니다."
+                } else {
+                    "고정한 봇을 뺀 1:1 봇 중 알림 배지가 가장 최근에 생긴 봇부터 채웁니다. 배지가 모자라면 최근 메시지 순입니다."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = flexibleCount.intValue.toFloat(),
+                onValueChange = { flexibleCount.intValue = it.roundToInt() },
+                valueRange = 0f..MAX_BOT_PICKER_FLEXIBLE.toFloat(),
+                steps = MAX_BOT_PICKER_FLEXIBLE - 1,
+            )
         }
     }
 

@@ -266,6 +266,25 @@ internal class MemoStore(
                 }
                 notes.remove(id)
             }
+            // 앱11 C: the selection mode (the local change signal reloads the lists right after; this keeps them right
+            // in between).
+            MEMO_OP_BULK_TRASH, MEMO_OP_BULK_MOVE -> {
+                val ids = memoArgStrings(op.args["ids"]).toSet()
+                val to = op.args["folder"] as? String
+                _lists.update { all ->
+                    all.mapValues { (key, s) -> if (to != null && key.folder == to) s else s.copy(items = s.items.filterNot { it.id in ids }) }
+                }
+                ids.forEach { notes.remove(it) }
+            }
+            MEMO_OP_BULK_TAG -> {
+                val ids = memoArgStrings(op.args["ids"]).toSet()
+                val add = memoArgStrings(op.args["tags"])
+                _lists.update { all ->
+                    all.mapValues { (_, s) -> s.copy(items = s.items.map { if (it.id in ids) it.copy(tags = (it.tags + add).distinct()) else it }) }
+                }
+                ids.forEach { notes.remove(it) }
+                _tags.value = emptyList()
+            }
             "tag_rename", "tag_merge", "tag_delete", "tag_create" -> _tags.value = emptyList()
         }
     }
