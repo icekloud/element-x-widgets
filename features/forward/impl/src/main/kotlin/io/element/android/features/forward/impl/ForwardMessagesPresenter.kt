@@ -18,7 +18,6 @@ import io.element.android.libraries.architecture.AsyncAction
 import io.element.android.libraries.architecture.Presenter
 import io.element.android.libraries.architecture.runCatchingUpdatingState
 import io.element.android.libraries.di.annotations.SessionCoroutineScope
-import io.element.android.libraries.matrix.api.MatrixClient
 import io.element.android.libraries.matrix.api.core.EventId
 import io.element.android.libraries.matrix.api.core.RoomId
 import io.element.android.libraries.matrix.api.timeline.TimelineProvider
@@ -32,7 +31,6 @@ class ForwardMessagesPresenter(
     @Assisted eventId: String,
     @Assisted private val timelineProvider: TimelineProvider,
     @Assisted private val sourceName: String?,
-    private val matrixClient: MatrixClient,
     @SessionCoroutineScope
     private val sessionCoroutineScope: CoroutineScope,
 ) : Presenter<ForwardMessagesState> {
@@ -84,14 +82,10 @@ class ForwardMessagesPresenter(
         comment: String,
     ) = launch {
         suspend {
-            // Element June: header message so the receiving bot knows where the message comes from
+            // Element June: the header goes inside the forwarded message (one event per room) so the receiving bot
+            // knows where it comes from. Types without room for it get the header just before (see forwardEventWithHeader).
             val header = juneForwardHeader(sourceName, comment)
-            roomIds.forEach { roomId ->
-                matrixClient.getJoinedRoom(roomId)?.liveTimeline
-                    ?.sendMessage(body = header, htmlBody = null, intentionalMentions = emptyList())
-                    ?.onFailure { Timber.w(it, "Element June: forward header not sent") }
-            }
-            timelineProvider.getActiveTimeline().forwardEvent(eventId, roomIds)
+            timelineProvider.getActiveTimeline().forwardEventWithHeader(eventId, roomIds, header)
                 .onFailure {
                     Timber.e(it, "Error while forwarding event")
                 }
@@ -101,9 +95,16 @@ class ForwardMessagesPresenter(
     }
 }
 
-/** Element June: "[전달: <room>, 맥락:<comment>]", or "[전달: <room>]" without a comment. */
+/**
+ * Element June: "[전달: <room>, 맥락:<comment>]", or "[전달: <room>]" without a comment. Always one line: the receiving bot
+ * reads the header as the first line of the message, so line breaks in the comment or the room name become spaces.
+ */
 internal fun juneForwardHeader(sourceName: String?, comment: String): String {
-    val source = sourceName?.takeIf { it.isNotBlank() } ?: "알 수 없는 방"
-    val text = comment.trim()
+    val source = sourceName?.let(::juneOneLine)?.takeIf { it.isNotEmpty() } ?: "알 수 없는 방"
+    val text = juneOneLine(comment)
     return if (text.isEmpty()) "[전달: $source]" else "[전달: $source, 맥락:$text]"
 }
+
+private val JUNE_LINE_BREAKS = Regex("\\s*[\\r\\n\\u0085\\u2028\\u2029]+\\s*")
+
+private fun juneOneLine(text: String): String = text.trim().replace(JUNE_LINE_BREAKS, " ")
