@@ -2,6 +2,8 @@ import config.BuildTimeConfig
 import extension.buildConfigFieldStr
 import extension.setupDependencyInjection
 import extension.testCommonDependencies
+import java.net.URI
+import java.security.MessageDigest
 
 /*
  * Copyright (c) 2025 Element Creations Ltd.
@@ -51,6 +53,85 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    // Element June: the model of the built-in voice is read straight from the package, so it must not be compressed
+    androidResources {
+        noCompress += listOf("onnx")
+    }
+
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(juneVoiceAssets)
+        }
+    }
+}
+
+/*
+ * Element June: the files of the Korean voice built into the app (Supertonic 3, voice F1).
+ *
+ * They are about 380 MB, so they are not kept in the repository: the build downloads them once from the frozen revision of the model
+ * and checks the hash of every one of them. A file that does not match stops the build. They land in the assets of the app.
+ */
+val juneVoiceRevision = "aafc6e32416a594460b32413efc49d7fe4ce6d46"
+
+val juneVoiceFiles = mapOf(
+    "onnx/duration_predictor.onnx" to "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+    "onnx/text_encoder.onnx" to "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
+    "onnx/vector_estimator.onnx" to "883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c",
+    "onnx/vocoder.onnx" to "085de76dd8e8d5836d6ca66826601f615939218f90e519f70ee8a36ed2a4c4ba",
+    "onnx/unicode_indexer.json" to "9bf7346e43883a81f8645c81224f786d43c5b57f3641f6e7671a7d6c493cb24f",
+    "onnx/tts.json" to "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
+    "voice_styles/F1.json" to "bbdec6ee00231c2c742ad05483df5334cab3b52fda3ba38e6a07059c4563dbc2",
+    "config.json" to "4099082b107a9d4029849ac76b89eca65e03732660969c2babe5bf308c7357f2",
+    // The licence of the model (BigScience OpenRAIL-M) travels with it, so it is in the app next to the files it covers
+    "LICENSE" to "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
+)
+
+val juneVoiceAssets: Provider<Directory> = layout.buildDirectory.dir("june-voice-assets")
+
+val juneVoiceDownload = tasks.register("juneVoiceDownload") {
+    description = "Downloads the files of the Korean voice built into the app and checks their hashes."
+    val target = juneVoiceAssets
+    val revision = juneVoiceRevision
+    val files = juneVoiceFiles
+    outputs.dir(target)
+    outputs.upToDateWhen { task ->
+        val folder = target.get().asFile.resolve("june_voice")
+        files.all { (path, hash) -> folder.resolve(path.substringAfterLast('/')).takeIf { it.isFile }?.let { sha256(it) == hash } == true }
+            .also { if (!it) task.logger.lifecycle("The files of the built-in voice have to be downloaded") }
+    }
+    doLast {
+        val folder = target.get().asFile.resolve("june_voice").apply { mkdirs() }
+        files.forEach { (path, expected) ->
+            val file = folder.resolve(path.substringAfterLast('/'))
+            if (file.isFile && sha256(file) == expected) return@forEach
+            val source = "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/$revision/$path"
+            logger.lifecycle("Downloading the built-in voice file $path")
+            URI(source).toURL().openStream().use { input -> file.outputStream().use { output -> input.copyTo(output) } }
+            val actual = sha256(file)
+            if (actual != expected) {
+                file.delete()
+                error("The built-in voice file $path does not match what is expected ($actual instead of $expected)")
+            }
+        }
+    }
+}
+
+fun sha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(1 shl 16)
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(juneVoiceDownload)
 }
 
 setupDependencyInjection()
@@ -62,6 +143,9 @@ dependencies {
     implementation(libs.network.retrofit)
     implementation(libs.serialization.json)
     implementation(libs.coil)
+
+    // Element June: the Korean voice built into the app (Supertonic 3, voice F1) runs with it
+    implementation(libs.onnxruntime.android)
 
     implementation(libs.sqldelight.driver.android)
     implementation(libs.sqlcipher)
