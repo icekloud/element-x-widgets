@@ -8,7 +8,6 @@
 
 package io.element.android.libraries.matrix.impl.fixtures.fakes
 
-import io.element.android.tests.testutils.lambda.lambdaError
 import org.matrix.rustcomponents.sdk.NoHandle
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.RoomList
@@ -19,14 +18,15 @@ import org.matrix.rustcomponents.sdk.RoomListServiceSyncIndicatorListener
 import org.matrix.rustcomponents.sdk.TaskHandle
 
 class FakeFfiRoomListService(
-    private val roomLambda: (String) -> Room = { lambdaError() },
+    // Element June: null keeps the SDK behaviour, other tests rely on it failing with an exception
+    private val roomLambda: ((String) -> Room)? = null,
 ) : RoomListService(NoHandle) {
     override suspend fun allRooms(): RoomList {
         return FakeFfiRoomList()
     }
 
     override fun room(roomId: String): Room {
-        return roomLambda(roomId)
+        return roomLambda?.invoke(roomId) ?: super.room(roomId)
     }
 
     private var listener: RoomListServiceSyncIndicatorListener? = null
