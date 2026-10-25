@@ -37,6 +37,7 @@ object JuneSettings {
     private const val KEY_MEMO_ROOM = "memo_room_id"
     private const val KEY_MEMO_FAKE = "memo_fake_data"
     private const val KEY_MEMO_BUTTON_SPOT = "memo_button_spot"
+    private const val KEY_MEMO_DIAG = "memo_diag"
 
     /** Default room name keywords that get the Aperture (GLaDOS) chat theme. */
     const val DEFAULT_APERTURE_ROOMS = "GLaDOS, 글라도스"
@@ -132,6 +133,7 @@ object JuneSettings {
     private val memoRoomId = mutableStateOf<String?>(null)
     private val memoFake = mutableStateOf(false)
     private val memoButtonSpot = mutableStateOf<JuneMemoButtonSpot?>(null)
+    private val memoDiag = mutableStateOf<String?>(null)
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -164,6 +166,7 @@ object JuneSettings {
             memoRoomId.value = tryOrNull { p.getString(KEY_MEMO_ROOM, null) }?.takeIf { it.isNotBlank() }
             memoFake.value = tryOrNull { p.getBoolean(KEY_MEMO_FAKE, false) } ?: false
             memoButtonSpot.value = JuneMemoButtonSpot.parse(tryOrNull { p.getString(KEY_MEMO_BUTTON_SPOT, null) })
+            memoDiag.value = tryOrNull { p.getString(KEY_MEMO_DIAG, null) }
             loaded = true
         }
     }
@@ -426,6 +429,22 @@ object JuneSettings {
         ensureLoaded(context)
         memoButtonSpot.value = null
         prefs(context).edit().remove(KEY_MEMO_BUTTON_SPOT).apply()
+    }
+
+    /**
+     * 앱28 추가요청 1: the photo upload and proposal receive lines of the memo sync, as the sync made them last
+     * (observable, null when no sync ran yet). Counts, times and short reasons only: never a path, an address or an id.
+     */
+    fun memoDiag(context: Context): String? {
+        ensureLoaded(context)
+        return memoDiag.value
+    }
+
+    fun setMemoDiag(context: Context, text: String?) {
+        ensureLoaded(context)
+        if (memoDiag.value == text) return
+        memoDiag.value = text
+        prefs(context).edit().putString(KEY_MEMO_DIAG, text).apply()
     }
 
     /** True if [roomName] contains one of the Aperture keywords (case insensitive). */

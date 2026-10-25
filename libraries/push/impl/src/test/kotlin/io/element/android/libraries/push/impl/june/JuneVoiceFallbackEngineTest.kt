@@ -91,6 +91,48 @@ class JuneVoiceFallbackEngineTest {
     }
 
     @Test
+    fun `the note says why the built-in model could not be opened`() = runTest {
+        val builtIn = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady).apply {
+            lastLoadFailure = "세션 생성 vocoder.onnx · IOException: fstat failed"
+        }
+        val notes = mutableListOf<String>()
+        val engine = createEngine(builtIn = builtIn, notes = notes)
+        assertThat(engine.open()).isNull()
+        assertThat(notes).containsExactly("폰 기본 대체 · 내장 준비 실패: 세션 생성 vocoder.onnx · IOException: fstat failed")
+    }
+
+    @Test
+    fun `the note gives the error when opening the built-in model throws`() = runTest {
+        val builtIn = object : JuneSpeechEngine by FakeJuneSpeechEngine() {
+            override suspend fun open(): JuneSpeakResult? = throw IllegalStateException("broken at /data/app/x")
+        }
+        val notes = mutableListOf<String>()
+        val engine = JuneVoiceFallbackEngine(builtIn, FakeJuneSpeechEngine(), { JuneVoiceEngineChoice.BuiltIn }, { notes += it })
+        assertThat(engine.open()).isNull()
+        assertThat(notes).containsExactly("폰 기본 대체 · 내장 준비 실패: IllegalStateException: broken at <경로>")
+    }
+
+    @Test
+    fun `the note keeps the old text when the built-in engine gives no reason`() = runTest {
+        val notes = mutableListOf<String>()
+        val engine = createEngine(builtIn = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady), notes = notes)
+        engine.open()
+        assertThat(notes).containsExactly("폰 기본 대체(내장 준비 실패)")
+    }
+
+    @Test
+    fun `the note says when the model files had to be copied`() = runTest {
+        val builtIn = FakeJuneSpeechEngine().apply { lastLoadNote = "복사 방식" }
+        val notes = mutableListOf<String>()
+        val engine = createEngine(builtIn = builtIn, notes = notes)
+        assertThat(engine.open()).isNull()
+        engine.speak("안녕하세요")
+        assertThat(notes.first()).isEqualTo("내장 준비: 복사 방식")
+        assertThat(notes.last()).startsWith("내장 · 5자")
+        assertThat(notes.last()).endsWith(" · 복사 방식")
+    }
+
+    @Test
     fun `nothing can be read when both engines fail to open`() = runTest {
         val builtIn = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady)
         val phone = FakeJuneSpeechEngine(openResult = JuneSpeakResult.NoKoreanVoice)

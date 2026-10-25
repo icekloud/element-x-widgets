@@ -339,6 +339,8 @@ private fun AppSettingsSection(
         JuneBtSpeakPreference()
         // Element June: which voice reads the 🔊 lines, the phone one or the Korean voice built into the app
         JuneVoiceEnginePreference()
+        // Element June: what the memo sync did with the photos and the proposals (shown only)
+        JuneMemoDiagPreference()
         ListItem(
             content = { Text(stringResource(id = CommonStrings.common_media_upload_quality)) },
             leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
