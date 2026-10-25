@@ -55,10 +55,10 @@ android {
         require(juneAbi == null || juneAbi in allAbis) { "juneAbi must be one of $allAbis, got '$juneAbi'" }
 
         // Keep abiFilter for the universalApk
-        ndk {
-            if (juneAbi != null) {
-                abiFilters += listOf(juneAbi)
-            } else {
+        // Element June: with -PjuneAbi there is no universal APK and AGP rejects ndk abiFilters next to ABI splits,
+        // so the split below alone limits the APK to that ABI.
+        if (juneAbi == null) {
+            ndk {
                 abiFilters += listOf("armeabi-v7a", "x86", "arm64-v8a", "x86_64")
             }
         }
