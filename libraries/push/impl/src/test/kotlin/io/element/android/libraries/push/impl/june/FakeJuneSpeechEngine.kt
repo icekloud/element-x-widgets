@@ -20,7 +20,10 @@ class FakeJuneSpeechEngine(
     var speakResult: Boolean = true,
     var speakFailure: Exception? = null,
     private val onSpeak: (String) -> Unit = {},
-) : JuneSpeechEngine {
+) : JuneSpeechEngine, JuneVoiceLoadReport {
+    override var lastLoadFailure: String? = null
+    override var lastLoadNote: String? = null
+
     val spoken = mutableListOf<String>()
     var openCount = 0
     var closeCount = 0

@@ -43,7 +43,7 @@ private const val STALLED_POLLS = 40
 class SupertonicJuneSpeechEngine(
     @ApplicationContext private val context: Context,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
-) : JuneSpeechEngine, JuneVoiceStatsSource {
+) : JuneSpeechEngine, JuneVoiceStatsSource, JuneVoiceLoadReport {
     private val speechAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -59,11 +59,27 @@ class SupertonicJuneSpeechEngine(
 
     override fun requestFocus(): Boolean = true
 
+    @Volatile override var lastLoadFailure: String? = null
+        private set
+
+    @Volatile override var lastLoadNote: String? = null
+        private set
+
     override suspend fun open(): JuneSpeakResult? {
         if (model != null) return null
-        val loaded = withContext(dispatcher) { JuneVoiceModel.load(context) } ?: return JuneSpeakResult.EngineNotReady
-        model = loaded
-        return null
+        return when (val loaded = withContext(dispatcher) { JuneVoiceModel.load(context) }) {
+            is JuneVoiceModelLoad.Loaded -> {
+                model = loaded.model
+                lastLoadFailure = null
+                lastLoadNote = juneVoiceOpenNote(loaded.copiedFiles)
+                null
+            }
+            is JuneVoiceModelLoad.Failed -> {
+                lastLoadFailure = loaded.reason
+                lastLoadNote = null
+                JuneSpeakResult.EngineNotReady
+            }
+        }
     }
 
     override suspend fun speak(text: String): Boolean {

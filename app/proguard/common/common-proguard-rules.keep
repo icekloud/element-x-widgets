@@ -77,3 +77,8 @@
 
 # Rustls Platform Verifier
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+
+# Element June: ONNX Runtime, for the built-in voice. Its native library builds Java objects (OrtException, TensorInfo, OnnxTensor,
+# NodeInfo...) through constructors only it calls, found by name, which R8 would otherwise remove.
+# Rule from https://onnxruntime.ai/docs/build/android.html (Proguard rules for R8 minimization)
+-keep class ai.onnxruntime.** { *; }

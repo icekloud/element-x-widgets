@@ -11,6 +11,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
+import android.content.res.AssetFileDescriptor
 import android.content.res.AssetManager
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import org.json.JSONArray
@@ -18,6 +19,7 @@ import org.json.JSONObject
 import timber.log.Timber
 import java.io.Closeable
 import java.io.File
+import java.io.FileInputStream
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
 import java.nio.channels.FileChannel
@@ -43,15 +45,12 @@ private const val FILE_INDEXER = "unicode_indexer.json"
 private const val FILE_CONFIG = "tts.json"
 private const val FILE_VOICE_STYLE = "F1.json"
 
-/** Every file the built-in voice needs, as they are in the assets. */
-internal val JUNE_VOICE_FILES = listOf(
+/** The model files of the built-in voice, in the order of the sessions, as they are in the assets. */
+internal val JUNE_VOICE_SESSION_FILES = listOf(
     FILE_DURATION_PREDICTOR,
     FILE_TEXT_ENCODER,
     FILE_VECTOR_ESTIMATOR,
     FILE_VOCODER,
-    FILE_INDEXER,
-    FILE_CONFIG,
-    FILE_VOICE_STYLE,
 )
 
 /** The audio made for one chunk, and how long it lasts. */
@@ -185,63 +184,102 @@ internal class JuneVoiceModel private constructor(
         return result
     }
 
+    /** Gives the memory back: the sessions first, then the files they read, which had to stay open as long as the sessions. */
     fun close() {
         runCatchingExceptions {
             styleTtl.close()
             styleDp.close()
             sessions.forEach { it.close() }
-            closeables.forEach { it.close() }
         }.onFailure { Timber.tag(TAG).e(it, "Cannot close the built-in voice model") }
+        closeables.forEach { juneVoiceCloseQuietly(it) }
     }
 
     companion object {
         /**
-         * Loads the model of the built-in voice, or null when it cannot be loaded (files missing, not enough memory).
-         * The model files are read straight from the assets of the app when they are stored there uncompressed, so nothing is copied
-         * and nothing is kept in the Java heap; if that is not possible they are copied once into the files of the app.
+         * Loads the model of the built-in voice, or says where it stopped (files missing, not enough memory or storage, ONNX Runtime
+         * that cannot be used). The model files are read straight from the package of the app when they are stored there
+         * uncompressed, so nothing is copied and nothing is kept in the Java heap; a file for which that does not work is copied once
+         * into the files of the app and read from there.
          */
-        fun load(context: Context): JuneVoiceModel? = runCatchingExceptions { loadOrThrow(context) }.getOrElse { error ->
-            Timber.tag(TAG).e(error, "Cannot load the built-in voice model")
-            null
+        fun load(context: Context): JuneVoiceModelLoad {
+            val failure = try {
+                return loadOrThrow(context)
+            } catch (reported: JuneVoiceLoadException) {
+                reported
+            } catch (error: Throwable) {
+                // Every step says where it stopped; this is only for what would happen in between
+                juneVoiceLoadException(JuneVoiceLoadStep.Environment, null, error) as? JuneVoiceLoadException ?: throw error
+            }
+            Timber.tag(TAG).e(failure, "Cannot load the built-in voice model: %s", failure.failure.reason)
+            return JuneVoiceModelLoad.Failed(failure.failure.reason)
         }
 
-        private fun loadOrThrow(context: Context): JuneVoiceModel {
-            val environment = OrtEnvironment.getEnvironment()
-            val options = OrtSession.SessionOptions().apply {
-                // Half of the cores, so the reading does not take the whole phone while the app is in the background
-                setIntraOpNumThreads((Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4))
-            }
-            val sources = JUNE_VOICE_FILES.associateWith { name -> JuneVoiceSource.of(context, name) }
-            val closeables = mutableListOf<Closeable>()
-            val sessions = mutableListOf<OrtSession>()
-            try {
-                listOf(FILE_DURATION_PREDICTOR, FILE_TEXT_ENCODER, FILE_VECTOR_ESTIMATOR, FILE_VOCODER).forEach { name ->
-                    val source = sources.getValue(name)
-                    sessions += source.createSession(environment, options)
-                    source.keepAlive()?.let { closeables += it }
+        private fun loadOrThrow(context: Context): JuneVoiceModelLoad.Loaded {
+            val (environment, options) = juneVoiceStep(JuneVoiceLoadStep.Environment, null) {
+                OrtEnvironment.getEnvironment() to OrtSession.SessionOptions().apply {
+                    // Half of the cores, so the reading does not take the whole phone while the app is in the background
+                    setIntraOpNumThreads((Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4))
                 }
-                val config = JSONObject(sources.getValue(FILE_CONFIG).readText())
-                val autoEncoder = config.getJSONObject("ae")
-                val latentConfig = config.getJSONObject("ttl")
-                val style = JSONObject(sources.getValue(FILE_VOICE_STYLE).readText())
-                return JuneVoiceModel(
+            }
+            val sources = mutableListOf<Closeable>()
+            val sessions = mutableListOf<OrtSession>()
+            val copied = mutableListOf<String>()
+            try {
+                JUNE_VOICE_SESSION_FILES.forEach { name ->
+                    val opened = juneVoiceOpenSession(
+                        file = name,
+                        openMapped = { JuneVoiceSource.mapped(context, name) },
+                        openCopied = { JuneVoiceSource.copied(context, name) },
+                        createSession = { source -> source.createSession(environment, options) },
+                    )
+                    sources += opened.source
+                    sessions += opened.session
+                    if (opened.copied) copied += name
+                }
+                val config = juneVoiceStep(JuneVoiceLoadStep.ReadConfig, FILE_CONFIG) { JSONObject(readAssetText(context, FILE_CONFIG)) }
+                val (sampleRate, baseChunkSize) = juneVoiceStep(JuneVoiceLoadStep.ReadConfig, FILE_CONFIG) {
+                    val autoEncoder = config.getJSONObject("ae")
+                    autoEncoder.getInt("sample_rate") to autoEncoder.getInt("base_chunk_size")
+                }
+                val (chunkCompressFactor, latentDim) = juneVoiceStep(JuneVoiceLoadStep.ReadConfig, FILE_CONFIG) {
+                    val latentConfig = config.getJSONObject("ttl")
+                    latentConfig.getInt("chunk_compress_factor") to latentConfig.getInt("latent_dim")
+                }
+                val indexer = juneVoiceStep(JuneVoiceLoadStep.ReadConfig, FILE_INDEXER) { readIndexer(readAssetText(context, FILE_INDEXER)) }
+                val styles = juneVoiceStep(JuneVoiceLoadStep.ReadConfig, FILE_VOICE_STYLE) {
+                    val style = JSONObject(readAssetText(context, FILE_VOICE_STYLE))
+                    val styleTtl = readStyle(environment, style.getJSONObject("style_ttl"))
+                    try {
+                        styleTtl to readStyle(environment, style.getJSONObject("style_dp"))
+                    } catch (error: Throwable) {
+                        styleTtl.close()
+                        throw error
+                    }
+                }
+                if (copied.isNotEmpty()) Timber.tag(TAG).w("The model files %s were copied to be read", copied)
+                val model = JuneVoiceModel(
                     environment = environment,
                     sessions = sessions,
-                    closeables = closeables,
-                    indexer = readIndexer(sources.getValue(FILE_INDEXER).readText()),
-                    styleTtl = readStyle(environment, style.getJSONObject("style_ttl")),
-                    styleDp = readStyle(environment, style.getJSONObject("style_dp")),
-                    sampleRate = autoEncoder.getInt("sample_rate"),
-                    baseChunkSize = autoEncoder.getInt("base_chunk_size"),
-                    chunkCompressFactor = latentConfig.getInt("chunk_compress_factor"),
-                    latentDim = latentConfig.getInt("latent_dim"),
+                    closeables = sources,
+                    indexer = indexer,
+                    styleTtl = styles.first,
+                    styleDp = styles.second,
+                    sampleRate = sampleRate,
+                    baseChunkSize = baseChunkSize,
+                    chunkCompressFactor = chunkCompressFactor,
+                    latentDim = latentDim,
                 )
+                return JuneVoiceModelLoad.Loaded(model, copied)
             } catch (error: Throwable) {
                 sessions.forEach { runCatchingExceptions { it.close() } }
-                closeables.forEach { runCatchingExceptions { it.close() } }
+                sources.forEach { juneVoiceCloseQuietly(it) }
                 throw error
             }
         }
+
+        /** The small text files are read from the package as they are, compressed or not: they are a few hundred KB. */
+        private fun readAssetText(context: Context, name: String): String =
+            context.assets.open("$JUNE_VOICE_ASSETS/$name").use { input -> String(input.readBytes(), Charsets.UTF_8) }
 
         private fun readIndexer(text: String): IntArray {
             val array = JSONArray(text)
@@ -266,32 +304,36 @@ internal class JuneVoiceModel private constructor(
     }
 }
 
+/** What [JuneVoiceModel.load] gives: the model and the files that had to be copied, or the reason it could not be loaded. */
+internal sealed interface JuneVoiceModelLoad {
+    class Loaded(val model: JuneVoiceModel, val copiedFiles: List<String>) : JuneVoiceModelLoad
+    class Failed(val reason: String) : JuneVoiceModelLoad
+}
+
 /**
- * Where one model file is read from: straight from the assets of the app when they hold it uncompressed (nothing is copied), else from
- * a copy made once in the files of the app.
+ * Where one model file is read from: straight from the package of the app when it is stored there uncompressed (nothing is copied),
+ * else from a copy made once in the files of the app. It stays open while its session is used, and is closed with the model.
  */
-internal sealed interface JuneVoiceSource {
+internal sealed interface JuneVoiceSource : Closeable {
     fun createSession(environment: OrtEnvironment, options: OrtSession.SessionOptions): OrtSession
-    fun readText(): String
 
-    /** Something that has to stay open while the session uses it, or null. */
-    fun keepAlive(): Closeable?
+    /**
+     * The file is mapped from the package: ONNX Runtime reads it without copying it to the Java heap. The descriptor of the asset and
+     * its stream share one file descriptor, so both stay open until [close]: closing the descriptor first leaves the channel with a
+     * closed file descriptor, and mapping it then fails.
+     */
+    class Mapped(private val descriptor: AssetFileDescriptor) : JuneVoiceSource {
+        private val stream: FileInputStream = descriptor.createInputStream()
 
-    /** The file is mapped from the assets of the app: ONNX Runtime reads it without copying it to the Java heap. */
-    class Mapped(private val channel: FileChannel, private val offset: Long, private val length: Long) : JuneVoiceSource {
         override fun createSession(environment: OrtEnvironment, options: OrtSession.SessionOptions): OrtSession {
-            val buffer = channel.map(FileChannel.MapMode.READ_ONLY, offset, length)
+            val buffer = stream.channel.map(FileChannel.MapMode.READ_ONLY, descriptor.startOffset, descriptor.length)
             return environment.createSession(buffer, options)
         }
 
-        override fun readText(): String {
-            val buffer = channel.map(FileChannel.MapMode.READ_ONLY, offset, length)
-            val bytes = ByteArray(length.toInt())
-            buffer.get(bytes)
-            return String(bytes, Charsets.UTF_8)
+        override fun close() {
+            juneVoiceCloseQuietly(stream)
+            juneVoiceCloseQuietly(descriptor)
         }
-
-        override fun keepAlive(): Closeable = channel
     }
 
     /** The file was copied into the files of the app and is read by its path. */
@@ -299,33 +341,30 @@ internal sealed interface JuneVoiceSource {
         override fun createSession(environment: OrtEnvironment, options: OrtSession.SessionOptions): OrtSession =
             environment.createSession(file.absolutePath, options)
 
-        override fun readText(): String = file.readText()
-
-        override fun keepAlive(): Closeable? = null
+        override fun close() = Unit
     }
 
     companion object {
-        fun of(context: Context, name: String): JuneVoiceSource {
-            val assetPath = "$JUNE_VOICE_ASSETS/$name"
-            val mapped = runCatchingExceptions {
-                val descriptor = context.assets.openFd(assetPath)
-                // openFd only works on an asset stored uncompressed, which is what the build makes sure of
-                descriptor.use { Mapped(it.createInputStream().channel, it.startOffset, it.length) }
-            }.getOrNull()
-            if (mapped != null) return mapped
-            Timber.tag(TAG).w("The model file %s is not stored uncompressed, copying it", name)
-            return Copied(copyAsset(context, assetPath, name))
+        fun mapped(context: Context, name: String): Mapped {
+            // openFd only works on an asset stored uncompressed, which is what the build makes sure of for the model files
+            val descriptor = context.assets.openFd("$JUNE_VOICE_ASSETS/$name")
+            return try {
+                Mapped(descriptor)
+            } catch (error: Throwable) {
+                juneVoiceCloseQuietly(descriptor)
+                throw error
+            }
         }
 
-        private fun copyAsset(context: Context, assetPath: String, name: String): File {
+        /** Copies the file once into the files of the app; the length of the asset is checked when the package gives it. */
+        fun copied(context: Context, name: String): Copied {
+            val assetPath = "$JUNE_VOICE_ASSETS/$name"
+            val expectedLength = runCatchingExceptions { context.assets.openFd(assetPath).use { it.length } }.getOrNull()
             val folder = File(context.filesDir, JUNE_VOICE_ASSETS).apply { mkdirs() }
-            val file = File(folder, name)
-            val expected = context.assets.open(assetPath, AssetManager.ACCESS_STREAMING).use { input -> input.available().toLong() }
-            if (file.length() > 0 && (expected <= 0 || file.length() == expected)) return file
-            context.assets.open(assetPath, AssetManager.ACCESS_STREAMING).use { input ->
-                file.outputStream().use { output -> input.copyTo(output) }
+            val file = juneVoiceCopy(File(folder, name), expectedLength, usableSpace = { folder.usableSpace }) {
+                context.assets.open(assetPath, AssetManager.ACCESS_STREAMING)
             }
-            return file
+            return Copied(file)
         }
     }
 }

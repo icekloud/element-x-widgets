@@ -33,6 +33,15 @@ interface JuneVoiceStatsSource {
     val lastLineStats: JuneVoiceLineStats?
 }
 
+/** 앱28: an engine that can tell how its model was opened, so a failure can be understood from the settings of the phone. */
+interface JuneVoiceLoadReport {
+    /** Why the last [JuneSpeechEngine.open] gave [JuneSpeakResult.EngineNotReady], for instance "세션 생성 vocoder.onnx · IOException". */
+    val lastLoadFailure: String?
+
+    /** What is worth knowing about how the model was opened when it worked (for instance "복사 방식"), or null. */
+    val lastLoadNote: String?
+}
+
 /**
  * Element June: reads the 🔊 lines with the engine chosen in the settings, and falls back to the phone engine for the lines the
  * built-in voice cannot read (model missing, out of memory, failure, too slow). A failure never changes the setting: the built-in
@@ -55,16 +64,22 @@ internal class JuneVoiceFallbackEngine(
 
     override suspend fun open(): JuneSpeakResult? {
         if (chosenEngine() == JuneVoiceEngineChoice.BuiltIn) {
+            var reason: String? = null
             val failure = runCatchingExceptions { builtIn.open() }.getOrElse { error ->
                 Timber.tag(TAG).e(error, "The built-in voice could not be opened")
+                reason = juneVoiceErrorText(error)
                 JuneSpeakResult.EngineNotReady
             }
+            val report = builtIn as? JuneVoiceLoadReport
             if (failure == null) {
                 builtInOpen = true
+                report?.lastLoadNote?.let { note("내장 준비: $it") }
                 return null
             }
-            // The phone engine reads everything until the next time the lines are read
-            note("폰 기본 대체(내장 준비 실패)")
+            // The phone engine reads everything until the next time the lines are read. The reason is shown, so a failure on the phone
+            // can be understood without its logs.
+            val shown = reason ?: report?.lastLoadFailure
+            note(if (shown == null) "폰 기본 대체(내장 준비 실패)" else "폰 기본 대체 · 내장 준비 실패: $shown")
         }
         return openPhone()
     }
@@ -104,9 +119,10 @@ internal class JuneVoiceFallbackEngine(
         val stats = (builtIn as? JuneVoiceStatsSource)?.lastLineStats
         val generation = stats?.generationMillis ?: elapsedMillis
         val head = "내장 · ${text.length}자 · 생성 ${seconds(generation)}초"
-        val audioMillis = stats?.audioMillis ?: return head
+        val loadNote = (builtIn as? JuneVoiceLoadReport)?.lastLoadNote?.let { " · $it" }.orEmpty()
+        val audioMillis = stats?.audioMillis ?: return head + loadNote
         val slower = if (generation > audioMillis) " · 실시간보다 느림" else ""
-        return "$head · 재생 ${seconds(audioMillis)}초$slower"
+        return "$head · 재생 ${seconds(audioMillis)}초$slower$loadNote"
     }
 
     private fun seconds(millis: Long): String = "%.1f".format(millis / 1000.0)
