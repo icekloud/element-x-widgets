@@ -27,6 +27,7 @@ internal const val MEMO_DIAG_PHOTO_TRY = "diag_photo_try"
 internal const val MEMO_DIAG_INDEX = "diag_index"
 internal const val MEMO_DIAG_INDEX_FAIL = "diag_index_fail"
 internal const val MEMO_DIAG_PULL = "diag_pull"
+internal const val MEMO_DIAG_PUSH = "diag_push"
 internal const val MEMO_DIAG_RESULTS = "diag_results"
 
 /** One remembered event of the diagnosis: when, how many, and the short result. */
@@ -60,6 +61,8 @@ internal data class MemoProposalDiag(
     val index: MemoDiagMark?,
     val indexFail: MemoDiagMark?,
     val pull: MemoDiagMark?,
+    /** The last `sync_push` and whether its answer came ([MemoDiagMark.count]: the suggestion answers it carried). */
+    val push: MemoDiagMark? = null,
     val localWaiting: Int,
     val localAnswered: Int,
     /** The suggestion answers still in the outbox, oldest first: each one's next try and reason. */
@@ -124,6 +127,7 @@ internal fun memoProposalDiagLines(d: MemoProposalDiag, reader: MemoReaderDiag?,
         ?.let { " · 읽기 실패 ${memoDiagTime(it.atMs, nowMs)}" }.orEmpty()
     // The index is read only after a pull got its answer (MemoSyncRunner.pullLocked): its last result says why not.
     val pull = d.pull?.let { "받기(sync_pull): ${memoDiagTime(it.atMs, nowMs)} ${it.result ?: ""}".trimEnd() } ?: "받기(sync_pull): 기록 없음"
+    val push = d.push?.let { "올리기(sync_push): ${memoDiagTime(it.atMs, nowMs)} ${it.result ?: ""}".trimEnd() } ?: "올리기(sync_push): 기록 없음"
     val local = "폰 제안: 대기 ${d.localWaiting} · 답함 ${d.localAnswered} · 서버에 못 전한 답 ${d.unsent.size}"
     val unsent = d.unsent.take(MEMO_DIAG_UNSENT_SHOWN).map { u ->
         val next = if (u.nextTryMs <= nowMs) "지금" else memoDiagTime(u.nextTryMs, nowMs)
@@ -134,7 +138,7 @@ internal fun memoProposalDiagLines(d: MemoProposalDiag, reader: MemoReaderDiag?,
     val readerLine = reader?.let { r ->
         "응답 읽기: ${r.state} ${memoDiagTime(r.atMs, nowMs)}" + (r.lastAnswerMs?.let { " · 마지막 응답 ${memoDiagTime(it, nowMs)}" } ?: " · 받은 응답 없음")
     } ?: "응답 읽기: 이번 실행에서 시작 안 함"
-    return listOf(index + indexFail, pull, local) + unsent + listOf(results, readerLine)
+    return listOf(index + indexFail, pull, push, local) + unsent + listOf(results, readerLine)
 }
 
 /** The counts of the photo line, read from the existing attachment columns. */
@@ -153,11 +157,12 @@ internal fun memoPhotoDiagOf(db: MemoDb): MemoPhotoDiag {
 internal fun memoProposalDiagOf(db: MemoDb): MemoProposalDiag {
     val suggestions = db.suggestions()
     val answers = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }
-    val marks = db.states(listOf(MEMO_DIAG_INDEX, MEMO_DIAG_INDEX_FAIL, MEMO_DIAG_PULL, MEMO_DIAG_RESULTS))
+    val marks = db.states(listOf(MEMO_DIAG_INDEX, MEMO_DIAG_INDEX_FAIL, MEMO_DIAG_PULL, MEMO_DIAG_PUSH, MEMO_DIAG_RESULTS))
     return MemoProposalDiag(
         index = MemoDiagMark.parse(marks[MEMO_DIAG_INDEX]),
         indexFail = MemoDiagMark.parse(marks[MEMO_DIAG_INDEX_FAIL]),
         pull = MemoDiagMark.parse(marks[MEMO_DIAG_PULL]),
+        push = MemoDiagMark.parse(marks[MEMO_DIAG_PUSH]),
         localWaiting = suggestions.count { it.status == MEMO_SUGGESTION_WAITING },
         localAnswered = suggestions.count { it.status != MEMO_SUGGESTION_WAITING },
         unsent = answers.map { MemoUnsentAnswer(it.nextTryMs, it.tries, it.lastError) },

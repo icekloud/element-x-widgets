@@ -77,17 +77,19 @@ class MemoDiagTest : RobolectricTest() {
 
     @Test
     fun `the proposal lines say 받은 적 없음 before the first index and list the unsent answers`() {
-        val never = memoProposalDiagLines(MemoProposalDiag(null, null, null, 0, 0, emptyList(), null), null, t0)
+        val never = memoProposalDiagLines(MemoProposalDiag(null, null, null, null, 0, 0, emptyList(), null), null, t0)
         assertEquals("제안 목록(방 상태): $MEMO_DIAG_NONE", never[0])
         assertEquals("받기(sync_pull): 기록 없음", never[1])
-        assertEquals("폰 제안: 대기 0 · 답함 0 · 서버에 못 전한 답 0", never[2])
-        assertEquals("제안결과: $MEMO_DIAG_NONE", never[3])
-        assertEquals("응답 읽기: 이번 실행에서 시작 안 함", never[4])
+        assertEquals("올리기(sync_push): 기록 없음", never[2])
+        assertEquals("폰 제안: 대기 0 · 답함 0 · 서버에 못 전한 답 0", never[3])
+        assertEquals("제안결과: $MEMO_DIAG_NONE", never[4])
+        assertEquals("응답 읽기: 이번 실행에서 시작 안 함", never[5])
 
         val d = MemoProposalDiag(
             index = MemoDiagMark(t0, 4),
             indexFail = MemoDiagMark(t0 + 5_000),
             pull = MemoDiagMark(t0 + 4_000, result = "답 없음: 시간 초과"),
+            push = MemoDiagMark(t0 + 6_000, 2, "답 없음: 시간 초과"),
             localWaiting = 2,
             localAnswered = 2,
             unsent = listOf(
@@ -101,18 +103,19 @@ class MemoDiagTest : RobolectricTest() {
         val lines = memoProposalDiagLines(d, MemoReaderDiag("준비됨", t0, t0 + 2_000), t0 + 10_000)
         assertEquals("제안 목록(방 상태): 11:24:25 받음 4건 · 읽기 실패 11:24:30", lines[0])
         assertEquals("받기(sync_pull): 11:24:29 답 없음: 시간 초과", lines[1])
-        assertEquals("폰 제안: 대기 2 · 답함 2 · 서버에 못 전한 답 4", lines[2])
-        assertEquals(" · 다음 시도 11:25:25 · 시도 2번: 서버에 닿지 못함", lines[3])
-        assertEquals(" · 다음 시도 지금 · 아직 보내지 않음", lines[4])
-        assertEquals(" · 다음 시도 지금 · 사유 없음", lines[5])
-        assertEquals(" · 외 1건", lines[6])
-        assertEquals("제안결과: 10-24 11:24 2건", lines[7])
-        assertEquals("응답 읽기: 준비됨 11:24:25 · 마지막 응답 11:24:27", lines[8])
+        assertEquals("올리기(sync_push): 11:24:31 답 없음: 시간 초과", lines[2])
+        assertEquals("폰 제안: 대기 2 · 답함 2 · 서버에 못 전한 답 4", lines[3])
+        assertEquals(" · 다음 시도 11:25:25 · 시도 2번: 서버에 닿지 못함", lines[4])
+        assertEquals(" · 다음 시도 지금 · 아직 보내지 않음", lines[5])
+        assertEquals(" · 다음 시도 지금 · 사유 없음", lines[6])
+        assertEquals(" · 외 1건", lines[7])
+        assertEquals("제안결과: 10-24 11:24 2건", lines[8])
+        assertEquals("응답 읽기: 준비됨 11:24:25 · 마지막 응답 11:24:27", lines[9])
     }
 
     @Test
     fun `an index failure older than the last good read is not shown`() {
-        val d = MemoProposalDiag(MemoDiagMark(t0 + 1_000, 1), MemoDiagMark(t0), null, 0, 0, emptyList(), null)
+        val d = MemoProposalDiag(MemoDiagMark(t0 + 1_000, 1), MemoDiagMark(t0), null, null, 0, 0, emptyList(), null)
         assertEquals("제안 목록(방 상태): 11:24:26 받음 1건", memoProposalDiagLines(d, null, t0 + 2_000)[0])
     }
 
@@ -247,6 +250,7 @@ class MemoDiagTest : RobolectricTest() {
         assertTrue(r.pushAnswers())
         d = memoProposalDiagOf(db)
         assertEquals(MemoDiagMark(t0 + 1_000, 1, "이 폰 답과 맞음 1건"), d.results)
+        assertEquals(MemoDiagMark(t0 + 1_000, 1, "답 받음 · 노트 0건 · 제안응답 1건"), d.push)
         assertTrue(d.unsent.isEmpty())
 
         // The index cannot be read: the failure time is kept, the last good read too.
@@ -293,6 +297,8 @@ class MemoDiagTest : RobolectricTest() {
         assertEquals(1, off.tries)
         assertEquals("서버에 닿지 못함", off.reason)
         assertTrue(off.nextTryMs > now)
+        // The push line tells which one it was: here the send itself failed (not a missed answer).
+        assertEquals("답 없음: 보내지 못함 MemoSendException", memoProposalDiagOf(db).push?.result)
     }
 
     @Test

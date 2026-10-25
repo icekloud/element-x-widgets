@@ -402,8 +402,11 @@ internal class MemoSyncRunner(
         if (ack == null) {
             log("올리기 실패(답 없음)")
             MemoSync.failUploads(db, notes + answers + icons, now, "서버에 닿지 못함")
+            // 앱28 진단: the outbox reason is the same for both; this line tells a send failure from a missed answer.
+            diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, memoDiagReason("답 없음", lastCallFailure)))
             return Pushed(false, 0)
         }
+        diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, "답 받음 · 노트 ${notes.size}건 · 제안응답 ${answers.size}건"))
         val result = MemoSync.applyAck(db, ack.content, notes, clock())
         applyProposalResults(ack.content.optJSONArray("제안결과"), answers)
         fillPhotoLocations(notes)
