@@ -48,9 +48,19 @@ android {
         versionCode = Versions.VERSION_CODE
         versionName = Versions.VERSION_NAME
 
+        // Element June: `-PjuneAbi=<abi>` builds the APK for that single ABI only (no other splits, no universal APK).
+        // Without the property, the ABI configuration below is unchanged.
+        val juneAbi = project.providers.gradleProperty("juneAbi").orNull?.trim()?.ifEmpty { null }
+        val allAbis = listOf("armeabi-v7a", "x86", "arm64-v8a", "x86_64")
+        require(juneAbi == null || juneAbi in allAbis) { "juneAbi must be one of $allAbis, got '$juneAbi'" }
+
         // Keep abiFilter for the universalApk
-        ndk {
-            abiFilters += listOf("armeabi-v7a", "x86", "arm64-v8a", "x86_64")
+        // Element June: with -PjuneAbi there is no universal APK and AGP rejects ndk abiFilters next to ABI splits,
+        // so the split below alone limits the APK to that ABI.
+        if (juneAbi == null) {
+            ndk {
+                abiFilters += listOf("armeabi-v7a", "x86", "arm64-v8a", "x86_64")
+            }
         }
 
         // Ref: https://developer.android.com/studio/build/configure-apk-splits.html#configure-abi-split
@@ -67,7 +77,11 @@ android {
                 // Resets the list of ABIs that Gradle should create APKs for to none.
                 reset()
 
-                if (!buildingAppBundle) {
+                if (!buildingAppBundle && juneAbi != null) {
+                    // Element June: a single APK for the requested ABI only.
+                    include(juneAbi)
+                    isUniversalApk = false
+                } else if (!buildingAppBundle) {
                     // Specifies a list of ABIs that Gradle should create APKs for.
                     include("armeabi-v7a", "x86", "arm64-v8a", "x86_64")
                     // Generate a universal APK that includes all ABIs, so user who installs from CI tool can use this one by default.
