@@ -66,6 +66,8 @@ internal object MemoSyncHub {
                 MemoRoomSyncTransport(sessionStore, room),
                 // 앱8 항목 1 e: step names and counts only (no token, address or key ever reaches this line).
                 log = { Timber.i("June memo sync: %s", it) },
+                // 앱28 추가요청 1: the settings diagnosis item (shown only, read by nothing else).
+                diag = { JuneSettings.setMemoDiag(context, it) },
             )
         }
 

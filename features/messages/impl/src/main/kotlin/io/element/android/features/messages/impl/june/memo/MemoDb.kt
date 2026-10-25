@@ -265,6 +265,15 @@ internal class MemoDb(sqlDriver: SqlDriver) : TransacterImpl(sqlDriver) {
         listOf(retryAtMs, MEMO_ATTACH_LOCAL, MEMO_ATTACH_UPLOADING, retryAtMs),
     )
 
+    /**
+     * 앱28 진단: attachments that are not uploaded and have no phone original: [pendingAttachments] never lists them, so
+     * nothing tries them again (the diagnosis line only, nothing acts on it).
+     */
+    fun attachmentsWithoutSource(): Int = query(
+        "SELECT COUNT(*) FROM attachment WHERE state IN (?, ?) AND local_path IS NULL AND mxc IS NULL",
+        listOf(MEMO_ATTACH_LOCAL, MEMO_ATTACH_UPLOADING),
+    ) { c -> c.getLong(0)!!.toInt() }.first()
+
     /** How many attachments gave up after [MEMO_ATTACH_MAX_TRIES] tries (the "다시 시도" line). */
     fun failedAttachmentCount(): Int =
         query("SELECT COUNT(*) FROM attachment WHERE state = ?", listOf(MEMO_ATTACH_FAILED)) { c -> c.getLong(0)!!.toInt() }.first()

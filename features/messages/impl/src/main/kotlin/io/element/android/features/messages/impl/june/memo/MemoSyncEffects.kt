@@ -85,11 +85,29 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
         val joined = sessionStore.getLatestSession()?.let { activeRooms.getActiveRoomMatching(UserId(it.userId), RoomId(roomId)) }
         val driver = joined?.getEventReaderDriver(memoReaderWidgetSettings(), MEMO_RESPONSE_TYPES)?.getOrNull()
         if (driver == null) {
-            Timber.i("June memo sync: %s", "응답 읽기 시작 못 함 (${if (joined == null) "방 없음" else "드라이버 없음"})")
+            val why = if (joined == null) "방 없음" else "드라이버 없음"
+            Timber.i("June memo sync: %s", "응답 읽기 시작 못 함 ($why)")
+            // 앱28 진단: the settings line says the answers of this open are only read by the /messages poll.
+            MemoReaderStatus.set("시작 못 함($why)")
             readerReady.complete(false)
             return@LaunchedEffect
         }
-        runMemoAnswerReader(driver, room::deliver, readerReady) { Timber.i("June memo sync: %s", it) }
+        MemoReaderStatus.set("시작 중")
+        try {
+            runMemoAnswerReader(
+                driver,
+                { answer ->
+                    MemoReaderStatus.answered()
+                    room.deliver(answer)
+                },
+                readerReady,
+            ) { line ->
+                Timber.i("June memo sync: %s", line)
+                if (line.startsWith("응답 읽기 준비")) MemoReaderStatus.set(if (line.contains("준비 됨")) "준비됨" else "읽기 허가 없음")
+            }
+        } finally {
+            MemoReaderStatus.set("멈춤(화면 닫힘)")
+        }
     }
 
     // Shown: pull once (and push what waits). Each time the screen comes back, once more — never on a timer.

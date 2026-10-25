@@ -88,6 +88,8 @@ internal class MemoSyncRunner(
     private val fileSize: (String) -> Long? = { path -> File(path).takeIf { it.isFile }?.length() },
     /** One line per step (앱8 항목 1 e): counts and step names only, never a token, an address or a key. */
     private val log: (String) -> Unit = {},
+    /** 앱28 진단: the text of the settings diagnosis item, made again after each step it shows ([memoDiagText]). */
+    private val diag: (String) -> Unit = {},
 ) {
     private val mutex = Mutex()
     private val buttonRunning = AtomicBoolean(false)
@@ -104,6 +106,25 @@ internal class MemoSyncRunner(
     private var receivedInRound = 0
 
     private fun device(): String = memoDeviceOf(db)
+
+    /** 앱28 진단: why the last call of [callOrNull] gave no answer (null when it got one). */
+    private var lastCallFailure: String? = null
+
+    /**
+     * 앱28 진단: remembers [mark] under [key] (sync_state, no new column) and makes the settings text again. Only shows
+     * what happened: a failure here never reaches the sync.
+     */
+    private fun diagMark(key: String, mark: MemoDiagMark) {
+        tryOrNull {
+            db.setState(key, mark.toJson())
+            publishDiag()
+        }
+    }
+
+    /** 앱28 진단: makes the settings text from the database as it is now. */
+    fun publishDiag() {
+        tryOrNull { diag(memoDiagText(memoPhotoDiagOf(db), memoProposalDiagOf(db), MemoReaderStatus.current, clock())) }
+    }
 
     /** True when something waits for the server: notes, suggestion answers or attachments (the screen retry test). */
     fun hasPendingUploads(): Boolean = db.outbox().any { it.kind in PUSHED_KINDS } || hasPendingAttachments()
@@ -268,9 +289,15 @@ internal class MemoSyncRunner(
             log("받기 요청")
             val content = when (val r = callOrNull(MemoOp("sync_pull", MemoSync.pullArgs(db, device(), withSegments).toArgs()))) {
                 is MemoResponse.Sync -> r.content
-                else -> return false.also { log("받기 실패(답 없음)") }
+                else -> return false.also {
+                    log("받기 실패(답 없음)")
+                    diagMark(MEMO_DIAG_PULL, MemoDiagMark(clock(), result = memoDiagReason("답 없음", lastCallFailure ?: r?.javaClass?.simpleName)))
+                }
             }
             val result = MemoSync.applySync(db, content, clock())
+            val gets = (result.truncatedIds + result.wantedIds).distinct().size
+            val more = if (result.morePages) " · 다음 쪽 있음" else ""
+            diagMark(MEMO_DIAG_PULL, MemoDiagMark(clock(), result.applied, "답 받음 · 적용 ${result.applied}건 · 개별받기 ${gets}건$more"))
             receivedInRound += result.applied
             log("받기 적용 ${result.applied}건 · 다시받을 ${result.wantedIds.size + result.truncatedIds.size}건 · 올릴 ${result.pushIds.size}건")
             // ① server newer / ④ unknown here, and the notes sent cut short: fetched one by one (규약 §3).
@@ -294,7 +321,12 @@ internal class MemoSyncRunner(
 
     /** Copies the waiting bot suggestions of the index into the local `suggestion` table (설계 §d-③). */
     private suspend fun syncSuggestions() {
-        val items = transport.fetchProposals() ?: return
+        val items = transport.fetchProposals()
+        if (items == null) {
+            diagMark(MEMO_DIAG_INDEX_FAIL, MemoDiagMark(clock()))
+            return
+        }
+        diagMark(MEMO_DIAG_INDEX, MemoDiagMark(clock(), items.size))
         val now = clock()
         val local = db.suggestions().associateBy { it.id }
         val answering = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }.map { it.target }.toSet()
@@ -407,7 +439,8 @@ internal class MemoSyncRunner(
 
     private fun applyProposalResults(results: JSONArray?, sent: List<MemoOutboxRow>) {
         val byId = sent.associateBy { it.target }
-        val answered = (0 until (results?.length() ?: 0))
+        val count = results?.length() ?: 0
+        val answered = (0 until count)
             .mapNotNull { results?.optJSONObject(it) }
             .mapNotNull { r -> byId[r.optString("id")]?.let { row -> r to row } }
         val confirmed = mutableListOf<String>()
@@ -434,6 +467,8 @@ internal class MemoSyncRunner(
         // 앱25: the server answered them: no "서버에 닿지 못함" line any more.
         MemoAnswerFailures.clear(answered.map { it.second.target })
         if (answered.isNotEmpty()) log("제안결과 ${answered.size}건 정리")
+        // 앱28 진단: the last answer of the server that carried proposal results (all of them, ours or not).
+        if (count > 0) diagMark(MEMO_DIAG_RESULTS, MemoDiagMark(clock(), count, "이 폰 답과 맞음 ${answered.size}건"))
     }
 
     /**
@@ -444,7 +479,7 @@ internal class MemoSyncRunner(
     private suspend fun uploadAttachments(force: Boolean): Boolean {
         val start = clock()
         val due = db.pendingAttachments().filter { force || it.second.retryAtMs <= start }
-        if (due.isEmpty()) return true
+        if (due.isEmpty()) return true.also { publishDiag() }
         // Asked once per round: a file over the limit is never read (관리자 결정 1-2 (나), no streaming yet).
         val limit = transport.maxUploadSize()?.takeIf { it > 0 } ?: MEMO_ATTACH_DEFAULT_MAX_BYTES
         for ((noteId, a) in due) {
@@ -455,6 +490,7 @@ internal class MemoSyncRunner(
                 is Sealed.Refused -> {
                     // Trying again cannot help (too big, gone, unreadable): 실패 with the reason, the next one goes on.
                     db.updateAttachment(a.id, a.mxc, a.fileJson, MEMO_ATTACH_FAILED, a.tries + 1, error = s.reason)
+                    diagMark(MEMO_DIAG_PHOTO_TRY, MemoDiagMark(clock(), result = memoDiagReason(s.step, s.detail ?: s.reason)))
                     MemoLocalChanges.changed()
                     continue
                 }
@@ -471,10 +507,12 @@ internal class MemoSyncRunner(
                 currentCoroutineContext().ensureActive()
                 uploadFailed(a)
                 log("사진 올리기 시간 초과")
+                diagMark(MEMO_DIAG_PHOTO_TRY, MemoDiagMark(clock(), result = memoDiagReason(MEMO_DIAG_STEP_UPLOAD, "시간 초과")))
                 return false
             } catch (e: Exception) {
                 log("사진 올리기 실패 (${e.javaClass.simpleName})")
                 uploadFailed(a)
+                diagMark(MEMO_DIAG_PHOTO_TRY, MemoDiagMark(clock(), result = memoDiagReason(MEMO_DIAG_STEP_UPLOAD, e.javaClass.simpleName)))
                 return false
             } finally {
                 MemoSendingNotes.end(listOf(noteId))
@@ -494,6 +532,7 @@ internal class MemoSyncRunner(
                 }
             }
             MemoLocalChanges.changed()
+            diagMark(MEMO_DIAG_PHOTO_TRY, MemoDiagMark(clock(), result = "올림"))
         }
         return true
     }
@@ -523,7 +562,8 @@ internal class MemoSyncRunner(
     private sealed interface Sealed {
         class Ready(val file: MemoEncryptedFile) : Sealed
 
-        class Refused(val reason: String) : Sealed
+        /** [step]: 앱28 진단, where it stopped (읽기 / 암호화); [detail]: the exception name, when one was thrown. */
+        class Refused(val reason: String, val step: String = MEMO_DIAG_STEP_READ, val detail: String? = null) : Sealed
     }
 
     /**
@@ -537,11 +577,17 @@ internal class MemoSyncRunner(
             if (size != null && size > limit) return Sealed.Refused(memoAttachTooBig(size, limit))
             val bytes = readFile(path) ?: return Sealed.Refused(MEMO_ATTACH_ERR_MISSING)
             if (bytes.size > limit) return Sealed.Refused(memoAttachTooBig(bytes.size.toLong(), limit))
-            Sealed.Ready(encrypt(bytes))
+            try {
+                Sealed.Ready(encrypt(bytes))
+            } catch (e: OutOfMemoryError) {
+                Sealed.Refused(MEMO_ATTACH_ERR_MEMORY, MEMO_DIAG_STEP_ENCRYPT, e.javaClass.simpleName)
+            } catch (e: Exception) {
+                Sealed.Refused(MEMO_ATTACH_ERR_READ, MEMO_DIAG_STEP_ENCRYPT, e.javaClass.simpleName)
+            }
         } catch (e: OutOfMemoryError) {
-            Sealed.Refused(MEMO_ATTACH_ERR_MEMORY)
+            Sealed.Refused(MEMO_ATTACH_ERR_MEMORY, detail = e.javaClass.simpleName)
         } catch (e: Exception) {
-            Sealed.Refused(MEMO_ATTACH_ERR_READ)
+            Sealed.Refused(MEMO_ATTACH_ERR_READ, detail = e.javaClass.simpleName)
         }
     }
 
@@ -552,15 +598,17 @@ internal class MemoSyncRunner(
      * sync (the screen left, the press limit) still goes up.
      */
     private suspend fun callOrNull(op: MemoOp): MemoResponse? = try {
-        transport.call(op)
+        transport.call(op).also { lastCallFailure = null }
     } catch (e: TimeoutCancellationException) {
         currentCoroutineContext().ensureActive()
         log("${op.op} 답 시간 초과")
+        lastCallFailure = "시간 초과"
         null
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         log("${op.op} 보내지 못함 (${e.javaClass.simpleName})")
+        lastCallFailure = "보내지 못함 ${e.javaClass.simpleName}"
         null
     }
 
