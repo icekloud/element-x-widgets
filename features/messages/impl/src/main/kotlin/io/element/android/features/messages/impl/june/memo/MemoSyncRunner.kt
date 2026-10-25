@@ -13,6 +13,9 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -107,8 +110,32 @@ internal class MemoSyncRunner(
 
     private fun device(): String = memoDeviceOf(db)
 
-    /** 앱28 진단: why the last call of [callOrNull] gave no answer (null when it got one). */
-    private var lastCallFailure: String? = null
+    /** 앱28 진단 / 앱29 ③: why the last call of [callOrNull] gave no answer (null when it got one). */
+    private var lastCallFailure: MemoCallFailure? = null
+
+    /** 앱29: pulls started so far (under the lock), so a request that waited for the lock knows a newer pull answered it. */
+    @Volatile
+    private var pullsStarted = 0L
+
+    /** 앱29: how the last pull ended. */
+    @Volatile
+    private var lastPullOk = false
+
+    /** 앱29 ②: failed pulls in a row since the last good one (or since 받기 필요 was set). */
+    private var pullFailures = 0
+    private var retrySeq = 0L
+
+    private val _pullRetry = MutableStateFlow<MemoPullRetry?>(null)
+    private val _pullNeeded = MutableStateFlow(false)
+
+    /**
+     * 앱29 ②: the retry the screen should make after a failed pull (15 s, then 60 s), null when none is due — always
+     * null while pulls go well, so there is no timer then. The screen runs it only while it is shown ([retryPull]).
+     */
+    val pullRetry: StateFlow<MemoPullRetry?> = _pullRetry.asStateFlow()
+
+    /** 앱29 ②: both retries failed: the top bar says 받기 필요 until a pull goes well (open, back, the button). */
+    val pullNeeded: StateFlow<Boolean> = _pullNeeded.asStateFlow()
 
     /**
      * 앱28 진단: remembers [mark] under [key] (sync_state, no new column) and makes the settings text again. Only shows
@@ -153,21 +180,45 @@ internal class MemoSyncRunner(
             log("화면 동기화 끝 받기=$pulled 올리기=$pushed")
             pulled && (pushed || !push)
         }
-    } ?: false.also { log("화면 동기화 시간 초과") }
+    } ?: timedOut("화면 동기화")
 
     /**
-     * 앱19 ①: a review of [noteIds] ended with proposals ("검토 완료: 제안 N건"), so the cards go to the local table now:
-     * one pull (no push: the editor may be open again, 추가요청 2), which also copies the waiting proposals. The server
-     * publishes the index only after it answers `sync_pull` (june_memo.py `handle`: answer, then `publish`; the review
-     * process itself does not wake it), so the copy can still read the index of before the review. When no new card of
-     * [noteIds] came, the proposals are read once more after [REVIEW_INDEX_WAIT_MS] (one state read, no second pull,
-     * nothing repeated). Returns false when the server could not be reached.
+     * 앱29 ②: the retry [seq] of [pullRetry] is due (the screen waited for it while shown): one pull, nothing goes up (the
+     * editor may be open; the pull never touches what is typed). When another pull ran since that retry was asked for
+     * (the screen came back, the button, a review end), it answered it: nothing is sent and its result is returned.
      */
-    suspend fun syncAfterReview(noteIds: List<String>): Boolean {
-        log("검토 제안 받기 ${noteIds.size}건")
+    suspend fun retryPull(seq: Long): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+        mutex.withLock {
+            if (_pullRetry.value?.seq != seq) return@withLock lastPullOk.also { log("받기 재시도 생략(그 뒤 받기 있음)") }
+            log("받기 재시도 (실패 ${pullFailures}번 뒤)")
+            pullLocked()
+        }
+    } ?: timedOut("받기 재시도")
+
+    /**
+     * 앱19 ① / 앱29 ①: a review of [noteIds] ended (any result: a title changed by the review comes with no card), so what
+     * the server changed comes down now: one pull (no push: the editor may be open again, 추가요청 2), which also copies
+     * the waiting proposals. It does not follow the 10 s rule of the button (a pull just before the review end cannot
+     * hold what the review wrote), but a pull that started after this end was asked for and went well answers it (two
+     * review ends close together pull once).
+     *
+     * With proposals ([withCards]): the server publishes the index only after it answers `sync_pull` (june_memo.py
+     * `handle`: answer, then `publish`; the review process itself does not wake it), so the copy can still read the index
+     * of before the review. When no new card of [noteIds] came, the proposals are read once more after
+     * [REVIEW_INDEX_WAIT_MS] (one state read, no second pull, nothing repeated). Returns false when the server could not
+     * be reached (the pull retries of [pullRetry] then apply).
+     */
+    suspend fun syncAfterReview(noteIds: List<String>, withCards: Boolean = true): Boolean {
+        log("검토 끝 받기 ${noteIds.size}건${if (withCards) " · 제안 있음" else ""}")
+        val asked = pullsStarted
         val before = suggestionKeys()
-        if (!syncNow(push = false)) return false
-        if (memoReviewCardsArrived(noteIds, before, suggestionKeys())) return true
+        val pulled = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+            mutex.withLock {
+                if (pullsStarted > asked && lastPullOk) true.also { log("검토 끝 받기: 그 뒤 받은 것으로 갈음") } else pullLocked()
+            }
+        } ?: timedOut("검토 끝 받기")
+        if (!pulled) return false
+        if (!withCards || memoReviewCardsArrived(noteIds, before, suggestionKeys())) return true
         delay(REVIEW_INDEX_WAIT_MS)
         withTimeoutOrNull(AUTO_TIMEOUT_MS) { mutex.withLock { syncSuggestions() } }
         log("검토 제안 다시 읽음 ${if (memoReviewCardsArrived(noteIds, before, suggestionKeys())) "받음" else "아직 없음"}")
@@ -197,7 +248,9 @@ internal class MemoSyncRunner(
                     receivedInRound = 0
                     log("버튼 동기화 시작")
                     // The screen pulled a moment ago (it opens with one): one pull is enough (앱8 추가 점검).
-                    val pulled = if (clock() - lastPullOkMs < RECENT_PULL_MS) true.also { log("받기 생략(방금 받음)") } else pullLocked()
+                    // 앱29 ②: only when that last pull went well (after a failed one, 받기 필요, the press pulls again).
+                    val recent = lastPullOk && clock() - lastPullOkMs < RECENT_PULL_MS
+                    val pulled = if (recent) true.also { log("받기 생략(방금 받음)") } else pullLocked()
                     // What waits goes up even when the pull failed, like the automatic push after typing.
                     val notes = pushNotesLocked(force = true)
                     var sent = notes.sent
@@ -282,17 +335,57 @@ internal class MemoSyncRunner(
 
     // ---------------------------------------------------------------- pull
 
+    /**
+     * 앱29 ②: one pull round and what it means for the retries. A good one ends them (and 받기 필요); a failed one asks
+     * for the next retry of [MEMO_PULL_RETRY_MS], and after the last one sets 받기 필요 (the count starts again, so a
+     * failed open after it gets its own two retries). The diagnosis line tells why and what comes next (③).
+     */
     private suspend fun pullLocked(): Boolean {
+        pullsStarted++
+        pullFailure = null
+        val ok = try {
+            pullPagesLocked()
+        } catch (e: TimeoutCancellationException) {
+            // The time of the whole round ran out (screen round, press): a failed pull too; the cancel still goes up.
+            pullEnded(false, MemoCallFailure(MemoCallFailKind.Timeout))
+            throw e
+        }
+        pullEnded(ok, pullFailure)
+        return ok
+    }
+
+    private fun pullEnded(ok: Boolean, failure: MemoCallFailure?) {
+        lastPullOk = ok
+        if (ok) {
+            pullFailures = 0
+            _pullRetry.value = null
+            _pullNeeded.value = false
+            return
+        }
+        pullFailures++
+        val wait = MEMO_PULL_RETRY_MS.getOrNull(pullFailures - 1)
+        _pullRetry.value = wait?.let { MemoPullRetry(++retrySeq, it) }
+        if (wait == null) {
+            pullFailures = 0
+            _pullNeeded.value = true
+        }
+        val next = wait?.let { "${it / 1000}초 뒤 다시" } ?: MEMO_PULL_NEEDED_TEXT
+        val why = memoCallFailureText(failure ?: MemoCallFailure(MemoCallFailKind.Other))
+        log("받기 실패 ($why) · $next")
+        diagMark(MEMO_DIAG_PULL, MemoDiagMark(clock(), result = memoDiagReason("실패", "$why · $next")))
+    }
+
+    /** 앱29 ③: why the pull of this round failed (set by [pullPagesLocked]). */
+    private var pullFailure: MemoCallFailure? = null
+
+    private suspend fun pullPagesLocked(): Boolean {
         if (MemoSync.repairPhotosOnce(db)) log("사진 목록 복구: 한 번 전체 받기")
         var withSegments = true
         repeat(MAX_PULL_ROUNDS) {
             log("받기 요청")
             val content = when (val r = callOrNull(MemoOp("sync_pull", MemoSync.pullArgs(db, device(), withSegments).toArgs()))) {
                 is MemoResponse.Sync -> r.content
-                else -> return false.also {
-                    log("받기 실패(답 없음)")
-                    diagMark(MEMO_DIAG_PULL, MemoDiagMark(clock(), result = memoDiagReason("답 없음", lastCallFailure ?: r?.javaClass?.simpleName)))
-                }
+                else -> return false.also { pullFailure = failureOf(r) }
             }
             val result = MemoSync.applySync(db, content, clock())
             val gets = (result.truncatedIds + result.wantedIds).distinct().size
@@ -394,16 +487,18 @@ internal class MemoSyncRunner(
         // 앱15 F: the notes of this push show "동기화 중" from the request to the answer (or the failure).
         val sending = notes.map { it.target }
         MemoSendingNotes.start(sending)
-        val ack = try {
-            callOrNull(MemoOp("sync_push", args.toArgs())) as? MemoResponse.SyncAck
+        val answer = try {
+            callOrNull(MemoOp("sync_push", args.toArgs()))
         } finally {
             MemoSendingNotes.end(sending)
         }
+        val ack = answer as? MemoResponse.SyncAck
         if (ack == null) {
             log("올리기 실패(답 없음)")
             MemoSync.failUploads(db, notes + answers + icons, now, "서버에 닿지 못함")
             // 앱28 진단: the outbox reason is the same for both; this line tells a send failure from a missed answer.
-            diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, memoDiagReason("답 없음", lastCallFailure)))
+            // 앱29 ③: in the same words as the pull line (kind, HTTP code).
+            diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, memoDiagReason("실패", memoCallFailureText(failureOf(answer)))))
             return Pushed(false, 0)
         }
         diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, "답 받음 · 노트 ${notes.size}건 · 제안응답 ${answers.size}건"))
@@ -605,15 +700,31 @@ internal class MemoSyncRunner(
     } catch (e: TimeoutCancellationException) {
         currentCoroutineContext().ensureActive()
         log("${op.op} 답 시간 초과")
-        lastCallFailure = "시간 초과"
+        lastCallFailure = MemoCallFailure(MemoCallFailKind.Timeout)
         null
     } catch (e: CancellationException) {
         throw e
+    } catch (e: MemoSendException) {
+        log("${op.op} 보내지 못함 (${e.httpCode?.let { "HTTP $it" } ?: e.javaClass.simpleName})")
+        lastCallFailure = MemoCallFailure(MemoCallFailKind.Send, e.httpCode, e.detail)
+        null
     } catch (e: Exception) {
-        log("${op.op} 보내지 못함 (${e.javaClass.simpleName})")
-        lastCallFailure = "보내지 못함 ${e.javaClass.simpleName}"
+        log("${op.op} 실패 (${e.javaClass.simpleName})")
+        lastCallFailure = MemoCallFailure(MemoCallFailKind.Other, detail = e.javaClass.simpleName)
         null
     }
+
+    /**
+     * 앱29 ③: why [answer] (the result of the last [callOrNull]) is not the answer asked for: the failure of the call when
+     * there was no answer, the server's reason for an error answer, otherwise an answer of another shape (read failure).
+     */
+    private fun failureOf(answer: MemoResponse?): MemoCallFailure = when (answer) {
+        null -> lastCallFailure ?: MemoCallFailure(MemoCallFailKind.Other)
+        is MemoResponse.Error -> MemoCallFailure(MemoCallFailKind.Other, detail = answer.reason)
+        else -> MemoCallFailure(MemoCallFailKind.Read, detail = "답 모양 다름")
+    }
+
+    private fun timedOut(what: String): Boolean = false.also { log("$what 시간 초과") }
 
     companion object {
         /** Pages of one pull round at most (a first full download of a big archive goes on at the next open). */
@@ -643,6 +754,26 @@ internal class MemoSyncRunner(
 }
 
 private fun JSONObject.toArgs(): Map<String, Any?> = keys().asSequence().associateWith { opt(it) }
+
+/** 앱29 ②: the waits of the retries after a failed pull, in order; after the last one fails, 받기 필요. */
+internal val MEMO_PULL_RETRY_MS = listOf(15_000L, 60_000L)
+
+/** 앱29 ②: the short words beside the sync button when both retries failed. */
+internal const val MEMO_PULL_NEEDED_TEXT = "받기 필요"
+
+/** 앱29 ②: one retry the screen may make, [waitMs] after the failed pull; [seq] tells it from a later one. */
+internal data class MemoPullRetry(val seq: Long, val waitMs: Long)
+
+/**
+ * 앱29 ②: the screen side of one retry: only while [visible] and when one is asked for, it waits [MemoPullRetry.waitMs]
+ * ([sleep]: cancelled with the screen) and then pulls ([pull] with its seq). True when it pulled.
+ */
+internal suspend fun memoRetryPullWhenDue(visible: Boolean, retry: MemoPullRetry?, sleep: suspend (Long) -> Unit, pull: suspend (Long) -> Unit): Boolean {
+    if (!visible || retry == null) return false
+    sleep(retry.waitMs)
+    pull(retry.seq)
+    return true
+}
 
 /** The outbox kinds that go up with `sync_push` (앱15 A: the folder icons picked here too). */
 private val PUSHED_KINDS = setOf(MEMO_OUTBOX_NOTE, MEMO_OUTBOX_PROPOSAL, MEMO_OUTBOX_FOLDER_ICON)

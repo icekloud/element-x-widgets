@@ -190,6 +190,28 @@ internal object MemoReaderStatus {
     }
 }
 
+/**
+ * 앱29 ③: why a call to the memo bot room got no usable answer, in the words of the diagnosis line. [Send]: the request
+ * itself did not go out (HTTP refused, network, no session); [Timeout]: it went out and no answer came in time (an answer
+ * the SDK could not decrypt looks the same from here); [Read]: an answer came that is not the one asked for; [Other]: the
+ * server refused it (its reason) or another exception (its name).
+ */
+internal enum class MemoCallFailKind(val words: String) {
+    Send("보내기 실패"),
+    Timeout("응답 시간 초과"),
+    Read("복호화·읽기 실패"),
+    Other("기타"),
+}
+
+/** One failed call: its kind, the HTTP status when the send was refused, a short detail (exception name, reason). */
+internal data class MemoCallFailure(val kind: MemoCallFailKind, val httpCode: Int? = null, val detail: String? = null)
+
+/** 보내기 실패(HTTP 502) / 응답 시간 초과 / 기타(사유): one line, the detail cleaned of paths, addresses and ids. */
+internal fun memoCallFailureText(f: MemoCallFailure): String {
+    val inside = listOfNotNull(f.httpCode?.let { "HTTP $it" }, f.detail?.let(::memoDiagScrub)?.takeIf { it.isNotEmpty() })
+    return if (inside.isEmpty()) f.kind.words else "${f.kind.words}(${inside.joinToString(" · ")})"
+}
+
 /** 앱28 진단: the steps of one photo upload the last try line names. */
 internal const val MEMO_DIAG_STEP_READ = "읽기"
 internal const val MEMO_DIAG_STEP_ENCRYPT = "암호화"

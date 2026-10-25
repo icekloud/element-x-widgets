@@ -30,8 +30,11 @@ internal sealed interface MemoResult {
     data class Failed(val reason: String, val timedOut: Boolean = false) : MemoResult
 }
 
-/** The op could not be sent (no session, HTTP error, network): the message is shown as is. */
-internal class MemoSendException(message: String) : Exception(message)
+/**
+ * The op could not be sent (no session, HTTP error, network): the message is shown as is. 앱29: [httpCode] is the HTTP
+ * status of a refused send, [detail] a short word on another failure (망 오류 + the exception name), both only for the diagnosis.
+ */
+internal class MemoSendException(message: String, val httpCode: Int? = null, val detail: String? = null) : Exception(message)
 
 internal const val MEMO_PAGE_SIZE = 30
 internal const val MEMO_PREFETCH_DISTANCE = 5

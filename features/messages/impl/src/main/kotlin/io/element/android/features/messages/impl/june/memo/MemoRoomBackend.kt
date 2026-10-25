@@ -128,7 +128,7 @@ internal class MemoRoomBackend(
 
     /** Sends the op; returns the pagination token from which the answer is looked for (null: from the latest). */
     private suspend fun send(op: MemoOp, requestId: String): String? = withContext(Dispatchers.IO) {
-        val s = sessionStore.getLatestSession() ?: throw MemoSendException("세션이 없습니다")
+        val s = sessionStore.getLatestSession() ?: throw MemoSendException("세션이 없습니다", detail = "세션 없음")
         val since = runCatchingExceptions { latestToken(s.homeserverUrl, s.accessToken) }.getOrNull()
         val txn = UUID.randomUUID().toString().replace("-", "")
         val conn = open(s.homeserverUrl, "/_matrix/client/v3/rooms/$room/send/$MEMO_OP_TYPE/$txn", s.accessToken, "PUT")
@@ -136,12 +136,14 @@ internal class MemoRoomBackend(
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.outputStream.use { it.write(op.toJson(requestId).toString().toByteArray()) }
-            if (conn.responseCode !in 200..299) throw MemoSendException("보내지 못했습니다 (${conn.responseCode})")
+            val code = conn.responseCode
+            if (code !in 200..299) throw MemoSendException("보내지 못했습니다 ($code)", httpCode = code)
         } catch (e: MemoSendException) {
             throw e
         } catch (e: Exception) {
             Timber.d("June memo: send failed (%s)", e.javaClass.simpleName)
-            throw MemoSendException("네트워크 오류로 보내지 못했습니다")
+            // 앱29: the diagnosis line tells which network error it was (the name only, never its message).
+            throw MemoSendException("네트워크 오류로 보내지 못했습니다", detail = "망 오류 ${e.javaClass.simpleName}")
         } finally {
             conn.disconnect()
         }

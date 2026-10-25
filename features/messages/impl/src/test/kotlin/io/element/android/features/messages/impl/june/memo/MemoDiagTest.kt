@@ -269,7 +269,8 @@ class MemoDiagTest : RobolectricTest() {
         val r = MemoSyncRunner(db, room, clock = { now })
         assertFalse(r.syncNow())
         val d = memoProposalDiagOf(db)
-        assertEquals("답 없음: 보내지 못함 MemoSendException", d.pull?.result)
+        // 앱29 ③: readable words instead of the exception name, and the retry that comes next.
+        assertEquals("실패: 보내기 실패 · 15초 뒤 다시", d.pull?.result)
         assertNull(d.index)
         assertTrue(memoProposalDiagLines(d, null, now)[0].endsWith(MEMO_DIAG_NONE))
     }
@@ -298,7 +299,7 @@ class MemoDiagTest : RobolectricTest() {
         assertEquals("서버에 닿지 못함", off.reason)
         assertTrue(off.nextTryMs > now)
         // The push line tells which one it was: here the send itself failed (not a missed answer).
-        assertEquals("답 없음: 보내지 못함 MemoSendException", memoProposalDiagOf(db).push?.result)
+        assertEquals("실패: 보내기 실패", memoProposalDiagOf(db).push?.result)
     }
 
     @Test

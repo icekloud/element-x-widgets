@@ -68,7 +68,8 @@ class MemoReviewDirectiveTest : RobolectricTest() {
         assertEquals("검토를 요청했습니다 (1건)", memoReviewSentText(MemoReviewSent(listOf("n1"))))
         assertEquals("검토를 요청했습니다 (1건) · 지시 포함", memoReviewSentText(MemoReviewSent(listOf("n1"), directive = MemoDirectiveAnswer(true))))
         assertEquals(
-            "검토를 요청했습니다 (1건) · 지시문이 500자로 잘렸습니다",
+            // 앱29 ⑤: the phone sends 500 at most, so a cut is the server's 2000 of the directives added up for a note.
+            "검토를 요청했습니다 (1건) · 쌓인 지시가 2000자를 넘어 이번 지시가 잘렸습니다",
             memoReviewSentText(MemoReviewSent(listOf("n1"), directive = MemoDirectiveAnswer(true, cut = true))),
         )
         assertTrue(memoReviewSentText(MemoReviewSent(listOf("n1"), directive = MemoDirectiveAnswer(false))).contains("지시는 반영되지 않았습니다"))
