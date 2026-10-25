@@ -10,6 +10,7 @@ package io.element.android.features.messages.impl.june.memo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +36,7 @@ import timber.log.Timber
  * - shown (opened, back from the background): one `sync_pull` round, then what waits goes up
  * - a local change: `sync_push` once the input stopped for [MemoSyncRunner.PUSH_DELAY_MS]
  * - a failed send is tried again after its back-off, still only while visible
+ * - 앱29: a failed pull is tried again twice (15 s, 60 s), only while visible; then the top bar says 받기 필요
  * - hidden (ON_STOP) with attachments left to upload: one one-time job that runs when the network is there. It uploads
  *   the attachments only; the notes and the suggestion answers go up at the next screen open (관리자 결정 1-1 (가))
  *
@@ -118,6 +120,13 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
         // The first request waits (a short while) for the answer reader, so its answer is not missed.
         withTimeoutOrNull(MEMO_READER_WAIT_MS) { readerReady.await() }
         runner.syncNow(push = !editing)
+    }
+
+    // 앱29 ②: a failed pull is tried again after 15 s, then 60 s — only while the screen is shown (hidden: the wait is
+    // cancelled, the next open pulls anyway). Pulls going well ask for nothing, so nothing waits on a timer then.
+    val retry by runner.pullRetry.collectAsState()
+    LaunchedEffect(runner, visible, retry) {
+        memoRetryPullWhenDue(visible, retry, sleep = { delay(it) }) { seq -> runner.retryPull(seq) }
     }
 
     // A local change while visible: wait for the input to stop, then one push. A new change restarts the wait.

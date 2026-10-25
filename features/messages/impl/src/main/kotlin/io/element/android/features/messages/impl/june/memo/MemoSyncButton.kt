@@ -11,6 +11,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,12 +27,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import io.element.android.compound.theme.ElementTheme
 import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.designsystem.theme.components.CircularProgressIndicator
 import io.element.android.libraries.designsystem.theme.components.Icon
+import io.element.android.libraries.designsystem.theme.components.Text
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -40,6 +44,9 @@ import timber.log.Timber
 
 /** Test tag of the sync button. */
 internal const val MEMO_SYNC_BUTTON_TAG = "memo_sync_button"
+
+/** 앱29 ②: test tag of the 받기 필요 word beside it. */
+internal const val MEMO_PULL_NEEDED_TAG = "memo_pull_needed"
 
 /**
  * The sync button of the memo bot room top bar (앱6 항목 2), in place of the "중단" (/stop) icon of the other rooms.
@@ -54,13 +61,31 @@ internal fun MemoSyncButton(roomId: String, modifier: Modifier = Modifier) {
     }
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
-    Box(modifier.size(24.dp).testTag(MEMO_SYNC_BUTTON_TAG), contentAlignment = Alignment.Center) {
+    // 앱29 ②: both pull retries failed: a short word beside the button until a pull goes well (a press pulls again).
+    val pullNeeded by runner.pullNeeded.collectAsState()
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (pullNeeded && !running) {
+            Text(
+                text = MEMO_PULL_NEEDED_TEXT,
+                modifier = Modifier.padding(end = 4.dp).testTag(MEMO_PULL_NEEDED_TAG),
+                style = ElementTheme.typography.fontBodyXsMedium,
+                color = ElementTheme.colors.textCriticalPrimary,
+            )
+        }
+        MemoSyncButtonIcon(runner, running, onRunning = { running = it }, scope = scope)
+    }
+}
+
+@Composable
+private fun MemoSyncButtonIcon(runner: MemoSyncRunner, running: Boolean, onRunning: (Boolean) -> Unit, scope: CoroutineScope) {
+    val context = LocalContext.current.applicationContext
+    Box(Modifier.size(24.dp).testTag(MEMO_SYNC_BUTTON_TAG), contentAlignment = Alignment.Center) {
         if (running) {
             CircularProgressIndicator(modifier = Modifier.size(20.dp).padding(1.dp), strokeWidth = 2.dp)
         } else {
             Icon(
                 modifier = Modifier.clickable {
-                    running = true
+                    onRunning(true)
                     scope.launch {
                         // 앱8: the spinner always stops and a line is always shown, whatever ended the press.
                         val text = try {
@@ -74,7 +99,7 @@ internal fun MemoSyncButton(roomId: String, modifier: Modifier = Modifier) {
                             Timber.w("June memo: sync button failed (%s)", e.javaClass.simpleName)
                             memoSyncButtonText(MemoButtonSync.Failed)
                         } finally {
-                            running = false
+                            onRunning(false)
                         }
                         Toast.makeText(context, text, Toast.LENGTH_LONG).show()
                     }

@@ -78,6 +78,7 @@ import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -335,18 +336,19 @@ internal class MemoController(
     var notice by mutableStateOf<MemoNotice?>(null)
 
     /**
-     * 앱19 ①: brings the cards of the reviewed notes to the local table (the screen: [MemoSyncRunner.syncAfterReview], then
-     * the index). Null: nothing to sync (the fake data). Called at most once per review end, only with proposals.
+     * 앱19 ① / 앱29 ①: brings what the review of the notes changed to the local table, and its cards when `withCards`
+     * (the screen: [MemoSyncRunner.syncAfterReview], then the index). Null: nothing to sync (the fake data). Called once
+     * per review end, whatever the result.
      */
-    var reviewSync: (suspend (List<String>) -> Unit)? = null
+    var reviewSync: (suspend (ids: List<String>, withCards: Boolean) -> Unit)? = null
 
-    private val following = mutableListOf<Job>()
+    private val following = mutableMapOf<Job, MemoReviewFollow>()
 
     /**
      * 앱17 A·B·C: asks for the review of [ids] at once. A note asked for less than [MEMO_REVIEW_REPEAT_MS] ago is not sent
      * again. [before] runs first (C: the save of the editor ends). Then the notice says what was taken, and
      * `review_status` is asked until the reviews are done ("검토 완료: 제안 N건"); it stops quietly on a failed look-up,
-     * after two minutes, or when the screen goes away.
+     * after five minutes (앱29 ④), or when the screen goes away (picked up again when it comes back, [resumeFollowing]).
      */
     fun review(ids: List<String>, directive: String? = null, before: suspend () -> Unit = {}) {
         val r = reviewer ?: return
@@ -357,13 +359,22 @@ internal class MemoController(
             val sent = r.request(fresh, directive)
             notice = MemoNotice(memoReviewSentText(sent), memoReviewSentShowMs(sent))
             if (sent.accepted.isEmpty()) return@launch
-            // 앱19 ①: "검토 완료: 제안 N건" brings the new cards at once (one sync); 제안 없음 / 실패 sync nothing.
-            val job = scope.launch {
-                memoReviewFinish(r.follow(sent.accepted), sent.accepted, show = { notice = MemoNotice(it, MEMO_NOTICE_RESULT_SHOW_MS) }, sync = reviewSync)
-            }
-            following += job
-            job.invokeOnCompletion { following -= job }
+            startFollowing(r, r.followOf(sent.accepted), lookFirst = false)
         }
+    }
+
+    /**
+     * 앱19 ① / 앱29 ①·④: follows [f] to its end, then one pull whatever the result ("검토 완료: 제안 N건" also brings the new
+     * cards). Nothing is pulled when the follow-up ran out of its five minutes without an end or a look-up failed (the
+     * screen pulls at its next open), or when it was stopped.
+     */
+    private fun startFollowing(r: MemoReviewer, f: MemoReviewFollow, lookFirst: Boolean) {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            memoReviewFinish(r.follow(f.ids, f.startMs, lookFirst), f.ids, show = { notice = MemoNotice(it, MEMO_NOTICE_RESULT_SHOW_MS) }, sync = reviewSync)
+        }
+        following[job] = f
+        job.invokeOnCompletion { following -= job }
+        job.start()
     }
 
     /**
@@ -386,9 +397,21 @@ internal class MemoController(
         sheet = MemoSheet.ReviewDirective(id)
     }
 
-    /** 앱17: leaving the screen or the app stops the look-ups (the proposals still come to the proposal area). */
+    /**
+     * 앱17: leaving the screen or the app stops the look-ups (the proposals still come to the proposal area). 앱29 ④: the
+     * reviewer keeps them, so the next time the screen is shown each asks once ([resumeFollowing]).
+     */
     fun stopFollowing() {
-        following.toList().forEach { it.cancel() }
+        val stopped = following.toMap()
+        following.clear()
+        stopped.keys.forEach { it.cancel() }
+        reviewer?.pause(stopped.values.toList())
+    }
+
+    /** 앱29 ④: the screen is shown again: the follow-ups stopped before ask once at once, then go on in their 5 minutes. */
+    fun resumeFollowing() {
+        val r = reviewer ?: return
+        r.takePaused().forEach { startFollowing(r, it, lookFirst = true) }
     }
 }
 
@@ -425,16 +448,18 @@ internal fun MemoScreen(
         val reviewer = remember(roomId) {
             MemoSyncHub.reviewer(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
         }
-        LaunchedEffect(controller, reviewer) { controller.reviewer = reviewer }
-        // 앱19 ①: the cards a review made come to the local table (and the open proposal area) right after its notice.
+        // 앱19 ① / 앱29 ①: what a review changed (and its cards) comes to the local table right after its notice.
         val reviewRunner = remember(roomId) {
             MemoSyncHub.runner(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
         }
-        LaunchedEffect(controller, reviewRunner) {
-            controller.reviewSync = { ids ->
-                reviewRunner.syncAfterReview(ids)
+        LaunchedEffect(controller, reviewRunner, reviewer) {
+            controller.reviewSync = { ids, withCards ->
+                reviewRunner.syncAfterReview(ids, withCards)
                 store.refreshIndex()
             }
+            controller.reviewer = reviewer
+            // 앱29 ④: the follow-ups stopped when this screen went away ask once now (after reviewSync is set).
+            controller.resumeFollowing()
             // 앱25: a card answer goes up at once, whatever the input pause or the editor (same lock as every sync).
             controller.answerPush = {
                 withContext(Dispatchers.IO) { reviewRunner.pushAnswers() }
@@ -444,7 +469,14 @@ internal fun MemoScreen(
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, controller) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) controller.stopFollowing() }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> controller.stopFollowing()
+                // 앱29 ④: back from the background: the stopped follow-ups ask once (nothing when none was stopped).
+                Lifecycle.Event.ON_START -> controller.resumeFollowing()
+                else -> Unit
+            }
+        }
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)

@@ -251,12 +251,14 @@ class MemoReviewTest : RobolectricTest() {
     }
 
     @Test
-    fun `the look-ups run every 3 s for at most 2 minutes`() {
+    fun `app29 - the look-ups run every 5 s for at most 5 minutes`() {
         val t0 = 1_000_000L
-        assertEquals(3_000L, memoReviewPollDelayMs(t0, t0))
-        assertEquals(3_000L, memoReviewPollDelayMs(t0, t0 + 117_000))
-        assertNull(memoReviewPollDelayMs(t0, t0 + 117_001))
-        assertNull(memoReviewPollDelayMs(t0, t0 + 200_000))
+        assertEquals(5_000L, memoReviewPollDelayMs(t0, t0))
+        assertEquals(5_000L, memoReviewPollDelayMs(t0, t0 + 295_000))
+        assertNull(memoReviewPollDelayMs(t0, t0 + 295_001))
+        assertNull(memoReviewPollDelayMs(t0, t0 + 400_000))
+        // At most 60 look-ups (300 s / 5 s), against 40 before (120 s / 3 s).
+        assertEquals(60L, MEMO_REVIEW_FOLLOW_MS / MEMO_REVIEW_POLL_MS)
     }
 
     // ---------------------------------------------------------------- the sends (fake server)
@@ -291,7 +293,7 @@ class MemoReviewTest : RobolectricTest() {
     }
 
     @Test
-    fun `after the request the status is asked every 3 s until the review is done`() = runBlocking {
+    fun `after the request the status is asked every 5 s until the review is done`() = runBlocking {
         var now = 0L
         var asked = 0
         val room = Room { op ->
@@ -306,12 +308,12 @@ class MemoReviewTest : RobolectricTest() {
         }
         val r = MemoReviewer(room, clock = { now }, dispatcher = Dispatchers.Unconfined, sleep = sleep)
         assertEquals("검토 완료: 제안 2건", r.follow(listOf("n1")))
-        assertEquals(listOf(3_000L, 3_000L, 3_000L), waits)
+        assertEquals(listOf(5_000L, 5_000L, 5_000L), waits)
         assertTrue(room.ops.all { it.op == MEMO_OP_REVIEW_STATUS && ids(it) == listOf("n1") })
     }
 
     @Test
-    fun `a failed look-up or two minutes without an end stop quietly`() = runBlocking {
+    fun `a failed look-up or five minutes without an end stop quietly`() = runBlocking {
         var now = 0L
         val room = Room().apply { offline = true }
         val r = MemoReviewer(room, clock = { now }, dispatcher = Dispatchers.Unconfined, sleep = { now += it })
@@ -322,8 +324,44 @@ class MemoReviewTest : RobolectricTest() {
         room.answer = { op -> ok(op, states(Triple("n1", "대기", ""))) }
         now = 0L
         assertNull(r.follow(listOf("n1")))
-        // 3, 6, … 120 s: 40 look-ups in the 2 minutes.
-        assertEquals(40, room.ops.size)
+        // 앱29 ④: 5, 10, … 300 s: 60 look-ups in the 5 minutes (before: 3 s for 2 minutes, 40).
+        assertEquals(60, room.ops.size)
+        assertEquals(300_000L, now)
+    }
+
+    @Test
+    fun `app29 - a follow-up picked up again asks at once, then keeps its own five minutes`() = runBlocking {
+        var now = 0L
+        val room = Room { op -> ok(op, states(Triple("n1", "검토중", ""))) }
+        val waits = mutableListOf<Long>()
+        val r = MemoReviewer(room, clock = { now }, dispatcher = Dispatchers.Unconfined, sleep = { waits += it; now += it })
+        // Stopped at 100 s, the screen is back at 200 s: one look-up now, then every 5 s until 300 s from its start.
+        now = 200_000L
+        assertNull(r.follow(listOf("n1"), startMs = 0L, lookFirst = true))
+        assertEquals(21, room.ops.size)
+        assertTrue(waits.all { it == 5_000L })
+        // Picked up after its five minutes: still one look-up (the screen checks once), and nothing more.
+        room.ops.clear()
+        now = 400_000L
+        room.answer = { op -> ok(op, states(Triple("n1", "완료", "제안 없음"))) }
+        assertEquals("검토 완료: 제안 없음", r.follow(listOf("n1"), startMs = 0L, lookFirst = true))
+        assertEquals(1, room.ops.size)
+    }
+
+    @Test
+    fun `app29 - the reviewer keeps the stopped follow-ups once, the newest ten, not older than 30 minutes`() {
+        var now = 0L
+        val r = MemoReviewer(Room(), clock = { now }, dispatcher = Dispatchers.Unconfined)
+        assertTrue(r.takePaused().isEmpty())
+        r.pause(listOf(MemoReviewFollow(listOf("old"), startMs = 0L)))
+        now = 10 * 60_000L
+        r.pause((1..10).map { MemoReviewFollow(listOf("n$it"), startMs = now) })
+        // Ten kept: the oldest went.
+        now = 31 * 60_000L
+        assertEquals((1..10).map { listOf("n$it") }, r.takePaused().map { it.ids })
+        assertTrue(r.takePaused().isEmpty())
+        r.pause(listOf(MemoReviewFollow(listOf("n1"), startMs = 0L)))
+        assertTrue(r.takePaused().isEmpty())
     }
 
     @Test
@@ -378,30 +416,32 @@ class MemoReviewTest : RobolectricTest() {
     }
 
     @Test
-    fun `app19 - a review end with proposals syncs once, none or a failure syncs nothing`() = runBlocking {
+    fun `app29 - every review end syncs once, with cards only when the notice tells proposals`() = runBlocking {
         val shown = mutableListOf<String>()
-        val synced = mutableListOf<List<String>>()
-        val sync: suspend (List<String>) -> Unit = { synced += it }
+        val synced = mutableListOf<Pair<List<String>, Boolean>>()
+        val sync: suspend (List<String>, Boolean) -> Unit = { ids, cards -> synced += ids to cards }
         memoReviewFinish("검토 완료: 제안 2건", listOf("n1", "n2"), show = { shown += it }, sync = sync)
         assertEquals(listOf("검토 완료: 제안 2건"), shown)
-        assertEquals(listOf(listOf("n1", "n2")), synced)
+        assertEquals(listOf(listOf("n1", "n2") to true), synced)
+        // 앱29 ①: 제안 없음 (a title changed by the review comes with no card) and 실패 pull too, without waiting for cards.
         memoReviewFinish("검토 완료: 제안 없음", listOf("n3"), show = { shown += it }, sync = sync)
         memoReviewFinish("검토 실패", listOf("n4"), show = { shown += it }, sync = sync)
-        // No notice (a failed look-up, two minutes without an end): nothing shown, nothing synced.
+        assertEquals(listOf(listOf("n3") to false, listOf("n4") to false), synced.drop(1))
+        // No notice (a failed look-up, five minutes without an end): nothing shown, nothing synced (the next open pulls).
         memoReviewFinish(null, listOf("n5"), show = { shown += it }, sync = sync)
         assertEquals(listOf("검토 완료: 제안 2건", "검토 완료: 제안 없음", "검토 실패"), shown)
-        assertEquals(1, synced.size)
+        assertEquals(3, synced.size)
         // The fake data (no sync): the notice still shows.
         memoReviewFinish("검토 완료: 제안 1건", listOf("n6"), show = { shown += it }, sync = null)
         assertEquals("검토 완료: 제안 1건", shown.last())
-        assertEquals(1, synced.size)
+        assertEquals(3, synced.size)
     }
 
     @Test
     fun `app19 - a sync that fails leaves the notice as it is and throws nothing`() = runBlocking {
         val shown = mutableListOf<String>()
         var calls = 0
-        memoReviewFinish("검토 완료: 제안 3건", listOf("n1"), show = { shown += it }) {
+        memoReviewFinish("검토 완료: 제안 3건", listOf("n1"), show = { shown += it }) { _, _ ->
             calls++
             throw MemoSendException("off")
         }

@@ -45,11 +45,15 @@ class MemoReviewSyncTest : RobolectricTest() {
     }
 
     /** Runs one review of [ids] to its end and returns the ids each sync was asked for, and the last notice. */
-    private fun reviewOnce(room: Room, ids: List<String>, sync: (suspend (List<String>) -> Unit)? = null): Pair<List<List<String>>, String?> = runBlocking {
-        val synced = mutableListOf<List<String>>()
+    private fun reviewOnce(
+        room: Room,
+        ids: List<String>,
+        sync: (suspend (List<String>, Boolean) -> Unit)? = null,
+    ): Pair<List<Pair<List<String>, Boolean>>, String?> = runBlocking {
+        val synced = mutableListOf<Pair<List<String>, Boolean>>()
         val c = MemoController(MemoStore(FakeMemoBackend()), this, mutableStateOf(MemoLocation()))
         c.reviewer = MemoReviewer(room, dispatcher = Dispatchers.Unconfined, sleep = {})
-        c.reviewSync = sync ?: { synced += it }
+        c.reviewSync = sync ?: { ids, cards -> synced += ids to cards }
         c.review(ids)
         withTimeout(5_000) {
             while (c.notice?.text?.startsWith("검토를 요청했습니다") != false) yield()
@@ -64,17 +68,17 @@ class MemoReviewSyncTest : RobolectricTest() {
     fun `a review ending with proposals syncs once for the reviewed notes`() {
         val (synced, notice) = reviewOnce(Room("제안 2건"), listOf("n1", "n2"))
         assertEquals("검토 완료: 제안 4건", notice)
-        assertEquals(listOf(listOf("n1", "n2")), synced)
+        assertEquals(listOf(listOf("n1", "n2") to true), synced)
     }
 
     @Test
-    fun `no proposal or a failed review syncs nothing`() {
+    fun `app29 - no proposal or a failed review syncs once too, without waiting for cards`() {
         val (none, noneText) = reviewOnce(Room("제안 없음"), listOf("n1"))
         assertEquals("검토 완료: 제안 없음", noneText)
-        assertTrue(none.isEmpty())
+        assertEquals(listOf(listOf("n1") to false), none)
         val (failed, failedText) = reviewOnce(Room("실패"), listOf("n1"))
         assertEquals("검토 실패", failedText)
-        assertTrue(failed.isEmpty())
+        assertEquals(listOf(listOf("n1") to false), failed)
     }
 
     @Test
@@ -82,7 +86,7 @@ class MemoReviewSyncTest : RobolectricTest() {
         val synced = mutableListOf<List<String>>()
         val c = MemoController(MemoStore(FakeMemoBackend()), this, mutableStateOf(MemoLocation()))
         c.reviewer = MemoReviewer(Room("제안 2건", lookUpFails = true), dispatcher = Dispatchers.Unconfined, sleep = {})
-        c.reviewSync = { synced += it }
+        c.reviewSync = { ids, _ -> synced += ids }
         c.review(listOf("n1"))
         repeat(50) { yield() }
         c.stopFollowing()
@@ -93,7 +97,7 @@ class MemoReviewSyncTest : RobolectricTest() {
     @Test
     fun `a sync that fails keeps the notice and the controller goes on`() {
         var calls = 0
-        val (_, notice) = reviewOnce(Room("제안 1건"), listOf("n1")) {
+        val (_, notice) = reviewOnce(Room("제안 1건"), listOf("n1")) { _, _ ->
             calls++
             throw MemoSendException("off")
         }

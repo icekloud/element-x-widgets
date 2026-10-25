@@ -34,9 +34,21 @@ internal const val MEMO_REVIEW_MAX = 30
 /** A second press for the same note within this time sends nothing (연타). */
 internal const val MEMO_REVIEW_REPEAT_MS = 3_000L
 
-/** After a `review`, `review_status` is asked every [MEMO_REVIEW_POLL_MS] for at most [MEMO_REVIEW_FOLLOW_MS]. */
-internal const val MEMO_REVIEW_POLL_MS = 3_000L
-internal const val MEMO_REVIEW_FOLLOW_MS = 120_000L
+/**
+ * After a `review`, `review_status` is asked every [MEMO_REVIEW_POLL_MS] for at most [MEMO_REVIEW_FOLLOW_MS]. 앱29 ④: 5 s
+ * for 5 minutes (60 look-ups at most; before 3 s for 2 minutes, 40), so a long review still ends with its pull.
+ */
+internal const val MEMO_REVIEW_POLL_MS = 5_000L
+internal const val MEMO_REVIEW_FOLLOW_MS = 300_000L
+
+/** 앱29 ④: one follow-up of a review: the notes and when it started (its 5 minutes count from there). */
+internal data class MemoReviewFollow(val ids: List<String>, val startMs: Long)
+
+/** 앱29 ④: a follow-up stopped by the screen going away is picked up again only this long after its start. */
+internal const val MEMO_REVIEW_PAUSED_KEEP_MS = 30 * 60_000L
+
+/** 앱29 ④: at most this many stopped follow-ups are kept for the next screen open. */
+internal const val MEMO_REVIEW_PAUSED_MAX = 10
 
 /** A card pushed to the left this part of its width or more asks for its review when let go. */
 internal const val MEMO_REVIEW_SWIPE_FRACTION = 0.3f
@@ -67,6 +79,9 @@ internal fun memoReviewOp(ids: List<String>, directive: String? = null): MemoOp 
 /** 앱21 ①: the argument name of the directive and its longest length (규약: the server keeps the first 500 too). */
 internal const val MEMO_ARG_DIRECTIVE = "지시"
 internal const val MEMO_REVIEW_DIRECTIVE_MAX = 500
+
+/** 앱29 ⑤: the server's limit of the directives it adds up for one note (서버 24차); `잘림` of an answer means this one. */
+internal const val MEMO_REVIEW_DIRECTIVE_MERGED_MAX = 2000
 
 /**
  * 앱21 ①: the directive as it is sent: spaces and empty lines around it taken away, at most [MEMO_REVIEW_DIRECTIVE_MAX]
@@ -181,7 +196,9 @@ internal fun memoReviewAnswer(sent: List<String>, content: JSONObject, directive
 internal fun memoReviewDirectiveText(d: MemoDirectiveAnswer?): String = when {
     d == null -> ""
     !d.taken -> " · 지시는 반영되지 않았습니다(서버가 지시를 모릅니다)"
-    d.cut -> " · 지시문이 ${MEMO_REVIEW_DIRECTIVE_MAX}자로 잘렸습니다"
+    // 앱29 ⑤: the phone never sends more than 500 characters, so a cut is the server's limit of the directives it adds up
+    // for the same note (서버 24차: 2000): the new one went in shortened or not at all, the older ones stay.
+    d.cut -> " · 쌓인 지시가 ${MEMO_REVIEW_DIRECTIVE_MERGED_MAX}자를 넘어 이번 지시가 잘렸습니다"
     else -> " · 지시 포함"
 }
 
@@ -291,16 +308,23 @@ internal fun memoReviewSyncWanted(notice: String?): Boolean =
     notice?.let { DONE_WITH_PROPOSALS.find(it) }?.groupValues?.get(1)?.toIntOrNull()?.let { it > 0 } ?: false
 
 /**
- * 앱19 ①: the end of one review follow-up. The notice is shown first; then, only when it tells proposals, [sync] runs
- * once for the reviewed [ids] (the screen: one sync that brings the new cards to the local table). A sync that fails or
- * throws changes nothing of the notice or the screen; a cancel (the screen went away) still ends the follow-up.
+ * 앱19 ① / 앱29 ①: the end of one review follow-up. The notice is shown first; then [sync] runs once for the reviewed
+ * [ids], whatever the result (관리자 2026-10-26: a title the review changed comes with no card and stayed old on the
+ * phone) — `withCards` true when the notice tells proposals (the screen then also waits for the new cards, 앱19 ①).
+ * No notice (the follow-up ran out of time or a look-up failed): nothing, the next screen open pulls. A sync that fails
+ * or throws changes nothing of the notice or the screen; a cancel (the screen went away) ends the follow-up without it.
  */
-internal suspend fun memoReviewFinish(notice: String?, ids: List<String>, show: (String) -> Unit, sync: (suspend (List<String>) -> Unit)?) {
+internal suspend fun memoReviewFinish(
+    notice: String?,
+    ids: List<String>,
+    show: (String) -> Unit,
+    sync: (suspend (ids: List<String>, withCards: Boolean) -> Unit)?,
+) {
     notice ?: return
     show(notice)
-    if (sync == null || !memoReviewSyncWanted(notice)) return
+    if (sync == null || ids.isEmpty()) return
     try {
-        sync(ids)
+        sync(ids, memoReviewSyncWanted(notice))
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -350,6 +374,29 @@ internal class MemoReviewer(
 ) {
     val repeat = MemoReviewRepeat(clock)
 
+    /** 앱29 ④: a follow-up of [ids] starting now. */
+    fun followOf(ids: List<String>): MemoReviewFollow = MemoReviewFollow(ids, clock())
+
+    /** 앱29 ④: the follow-ups the screen stopped when it went away (this reviewer lives as long as the process). */
+    private val paused = mutableListOf<MemoReviewFollow>()
+
+    /** 앱29 ④: keeps [follows] for the next time the screen is shown (the newest [MEMO_REVIEW_PAUSED_MAX]). */
+    @Synchronized
+    fun pause(follows: List<MemoReviewFollow>) {
+        paused += follows
+        while (paused.size > MEMO_REVIEW_PAUSED_MAX) paused.removeAt(0)
+    }
+
+    /**
+     * 앱29 ④: the stopped follow-ups to pick up again (each once), without those stopped more than
+     * [MEMO_REVIEW_PAUSED_KEEP_MS] after their start: the pull of the screen open brings what they changed anyway.
+     */
+    @Synchronized
+    fun takePaused(): List<MemoReviewFollow> {
+        val now = clock()
+        return paused.filter { now - it.startMs <= MEMO_REVIEW_PAUSED_KEEP_MS }.also { paused.clear() }
+    }
+
     /**
      * Sends [ids] (already let through by [repeat]) in turns of [MEMO_REVIEW_MAX], one after the other. 앱21 ①: a
      * [directive] goes with every turn ([memoReviewOp]); it is kept nowhere. The log tells only its length.
@@ -386,14 +433,19 @@ internal class MemoReviewer(
 
     /**
      * Asks `review_status` for [ids] every [MEMO_REVIEW_POLL_MS] until all are done; returns the notice then. Null when a
-     * look-up fails or [MEMO_REVIEW_FOLLOW_MS] runs out: it stops quietly (the proposals still come to the proposal area).
+     * look-up fails or [MEMO_REVIEW_FOLLOW_MS] (from [startMs]) runs out: it stops quietly (the proposals still come to
+     * the proposal area). [lookFirst]: one look-up before the first wait, even when the time is already out (앱29 ④).
      */
-    suspend fun follow(ids: List<String>): String? {
+    suspend fun follow(ids: List<String>, startMs: Long = clock(), lookFirst: Boolean = false): String? {
         if (ids.isEmpty()) return null
-        val start = clock()
+        // 앱29 ④: a follow-up picked up again after the screen came back asks once at once, then goes on in its own time.
+        var first = lookFirst
         while (true) {
-            val wait = memoReviewPollDelayMs(start, clock()) ?: return null.also { log("검토 결과 기다림 끝(시간)") }
-            sleep(wait)
+            if (!first) {
+                val wait = memoReviewPollDelayMs(startMs, clock()) ?: return null.also { log("검토 결과 기다림 끝(시간)") }
+                sleep(wait)
+            }
+            first = false
             val states = mutableListOf<MemoReviewProgress>()
             for (chunk in ids.chunked(MEMO_REVIEW_MAX)) {
                 val r = callOrNull(memoReviewStatusOp(chunk)) as? MemoResponse.Ok ?: return null.also { log("검토 결과 조회 실패") }
