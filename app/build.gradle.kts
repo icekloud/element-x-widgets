@@ -78,8 +78,6 @@ android {
 
         androidResources {
             localeFilters += locales
-            // Element June: the model of the built-in Korean voice is read straight from the package, so it must stay uncompressed
-            noCompress += listOf("onnx")
         }
     }
 

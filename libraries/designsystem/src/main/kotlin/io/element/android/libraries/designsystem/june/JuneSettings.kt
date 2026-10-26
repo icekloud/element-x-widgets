@@ -355,8 +355,8 @@ object JuneSettings {
     }
 
     /**
-     * 앱27: which voice reads the 🔊 lines (observable). The phone engine by default: the built-in voice is only used once it has been
-     * chosen in the settings.
+     * 앱27: which voice reads the 🔊 lines (observable). The phone engine by default: the Samsung voice of the app is only used once it
+     * has been chosen in the settings. A saved choice of the Supertonic voice, taken out of the app, reads as the Samsung voice.
      */
     fun btSpeakEngine(context: Context): JuneVoiceEngineChoice {
         ensureLoaded(context)
@@ -385,7 +385,7 @@ object JuneSettings {
     }
 
     /**
-     * 앱27: what the built-in voice did with the last line, for instance "내장 · 42자 · 생성 6.1초 · 재생 5.8초" or
+     * 앱27: what the voice of the app did with the last line, for instance "삼성 · 42자 · 생성 6.1초 · 재생 5.8초" or
      * "폰 기본 대체(시간 초과)" (observable, null when none yet). Never the message text.
      */
     fun btSpeakVoiceNote(context: Context): String? {
