@@ -8,6 +8,8 @@
 
 # Element X Android
 
+> **Element June (개인용 포크 안내)** — 이 포크에는 개인용으로만 쓰는 삼성 한국어 음성 파일(`libraries/push/impl/src/main/assets/samsung_tts/`, `libraries/push/impl/src/main/jniLibs/arm64-v8a/libsamsungtts.so`)이 들어 있습니다. 삼성전자의 저작물이며 **재배포·공개 배포 대상이 아닙니다**(고지: `assets/samsung_tts/NOTICE-202012211.txt`).
+
 Element X Android is the next-generation [Matrix](https://matrix.org/) client provided by [Element](https://element.io/).
 
 Compared to the previous-generation [Element Classic](https://github.com/element-hq/element-android), the application is a total rewrite, using the [Matrix Rust SDK](https://github.com/matrix-org/matrix-rust-sdk) underneath and targeting devices running Android 7+. The UI layer is written using [Jetpack Compose](https://developer.android.com/jetpack/compose), and the navigation is managed using [Appyx](https://github.com/bumble-tech/appyx).

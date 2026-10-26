@@ -22,11 +22,13 @@ class JuneVoiceFallbackEngineTest {
         phone: FakeJuneSpeechEngine = FakeJuneSpeechEngine(),
         chosen: JuneVoiceEngineChoice = JuneVoiceEngineChoice.BuiltIn,
         notes: MutableList<String> = mutableListOf(),
+        samsung: FakeJuneSpeechEngine? = null,
     ) = JuneVoiceFallbackEngine(
         builtIn = builtIn,
         phone = phone,
         chosenEngine = { chosen },
         onNote = { notes += it },
+        samsung = samsung,
     )
 
     @Test
@@ -198,5 +200,76 @@ class JuneVoiceFallbackEngineTest {
         engine.speak("안녕하세요")
         assertThat(notes).hasSize(1)
         assertThat(notes.first()).contains("내장")
+    }
+
+    // 앱30: the Samsung voice is a third choice, read and reported the same way as the built-in one
+
+    @Test
+    fun `the Samsung engine reads everything when it is the chosen one`() = runTest {
+        val builtIn = FakeJuneSpeechEngine()
+        val samsung = FakeJuneSpeechEngine()
+        val phone = FakeJuneSpeechEngine()
+        val engine = createEngine(builtIn = builtIn, phone = phone, chosen = JuneVoiceEngineChoice.Samsung, samsung = samsung)
+        assertThat(engine.open()).isNull()
+        assertThat(engine.speak("안녕하세요")).isTrue()
+        assertThat(samsung.spoken).containsExactly("안녕하세요")
+        assertThat(builtIn.spoken).isEmpty()
+        assertThat(builtIn.openCount).isEqualTo(0)
+        assertThat(phone.spoken).isEmpty()
+    }
+
+    @Test
+    fun `a line the Samsung engine cannot read is read by the phone engine`() = runTest {
+        val samsung = FakeJuneSpeechEngine(speakResult = false)
+        val phone = FakeJuneSpeechEngine()
+        val engine = createEngine(phone = phone, chosen = JuneVoiceEngineChoice.Samsung, samsung = samsung)
+        assertThat(engine.open()).isNull()
+        assertThat(engine.speak("안녕하세요")).isTrue()
+        assertThat(samsung.spoken).containsExactly("안녕하세요")
+        assertThat(phone.spoken).containsExactly("안녕하세요")
+    }
+
+    @Test
+    fun `the note says why the Samsung voice could not be opened`() = runTest {
+        val samsung = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady).apply {
+            lastLoadFailure = "라이브러리 적재 실패 · UnsatisfiedLinkError"
+        }
+        val notes = mutableListOf<String>()
+        val engine = createEngine(chosen = JuneVoiceEngineChoice.Samsung, notes = notes, samsung = samsung)
+        assertThat(engine.open()).isNull()
+        assertThat(notes).containsExactly("폰 기본 대체 · 삼성 준비 실패: 라이브러리 적재 실패 · UnsatisfiedLinkError")
+    }
+
+    @Test
+    fun `the note of a line read by the Samsung voice says which voice read it`() = runTest {
+        val notes = mutableListOf<String>()
+        val engine = createEngine(chosen = JuneVoiceEngineChoice.Samsung, notes = notes, samsung = FakeJuneSpeechEngine())
+        engine.open()
+        engine.speak("안녕하세요")
+        assertThat(notes).hasSize(1)
+        assertThat(notes.first()).startsWith("삼성 · 5자")
+    }
+
+    @Test
+    fun `the phone engine reads when the Samsung voice is chosen but not available`() = runTest {
+        val phone = FakeJuneSpeechEngine()
+        val notes = mutableListOf<String>()
+        val engine = createEngine(phone = phone, chosen = JuneVoiceEngineChoice.Samsung, notes = notes, samsung = null)
+        assertThat(engine.open()).isNull()
+        assertThat(engine.speak("안녕하세요")).isTrue()
+        assertThat(phone.spoken).containsExactly("안녕하세요")
+        assertThat(notes).containsExactly("폰 기본 대체(삼성 없음)")
+    }
+
+    @Test
+    fun `closing releases the Samsung engine too`() = runTest {
+        val samsung = FakeJuneSpeechEngine()
+        val builtIn = FakeJuneSpeechEngine()
+        val engine = createEngine(builtIn = builtIn, chosen = JuneVoiceEngineChoice.Samsung, samsung = samsung)
+        engine.open()
+        engine.speak("안녕하세요")
+        engine.close()
+        assertThat(samsung.closeCount).isEqualTo(1)
+        assertThat(builtIn.closeCount).isEqualTo(1)
     }
 }
