@@ -8,6 +8,15 @@
 package io.element.android.libraries.push.impl.june
 
 /**
+ * 앱31: what the engine answers for one text: the code of [SamsungTtsNative.inputText] and the pieces the audio callback gives,
+ * each with its result type (0 plain audio, 2 end of a sentence, [SAMSUNG_AUDIO_STOPPED] a sentence that was skipped).
+ */
+internal data class SamsungFakeRead(
+    val code: Int = SAMSUNG_TTS_OK,
+    val pieces: List<Pair<ShortArray, Int>> = emptyList(),
+)
+
+/**
  * 앱30: the Samsung engine as the tests see it. Nothing native is loaded, so the order of the calls, what is given to them and what
  * is done with a failure can be checked on any machine.
  */
@@ -22,6 +31,9 @@ internal class FakeSamsungTtsNative(
     var audio: ShortArray = ShortArray(240),
     var audioResultType: Int = 0,
 ) : SamsungTtsNative {
+    /** 앱31: an answer for each text in order; [audio] is used for the texts this does not cover. */
+    val answers = mutableListOf<SamsungFakeRead>()
+
     val calls = mutableListOf<String>()
     var dataDir: String? = null
     var voice: SamsungVoice? = null
@@ -56,6 +68,11 @@ internal class FakeSamsungTtsNative(
     override fun inputText(text: String, onAudio: (ShortArray, Int) -> Unit): Int {
         calls += "inputText"
         spoken += text
+        val answer = answers.getOrNull(spoken.size - 1)
+        if (answer != null) {
+            answer.pieces.forEach { (samples, resultType) -> onAudio(samples, resultType) }
+            return answer.code
+        }
         if (audio.isNotEmpty()) onAudio(audio, audioResultType)
         return inputTextCode
     }

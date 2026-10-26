@@ -16,8 +16,15 @@ internal const val SAMSUNG_TTS_OK = 0
 /** Sample rate used when the engine does not say which one it reads at (its configuration says 24000). */
 internal const val SAMSUNG_TTS_DEFAULT_SAMPLE_RATE = 24_000
 
-/** The kind of result given to the audio callback: 0 plain audio, 1 the whole text is done, 2 end of a sentence, 6 last chunk, 8 stopped or failed. */
-internal const val SAMSUNG_AUDIO_FAILED = 8
+/**
+ * The kind of result given to the audio callback: 0 plain audio, 1 the whole text is done, 2 end of a sentence, 6 last chunk,
+ * 8 the sentence was stopped.
+ *
+ * 앱31: 8 does **not** mean the engine failed. It is sent from one single place of the library
+ * (`CDiphoneTTS::SynthesizeDiphoneTTS`, right after `ILanguage::Process()` answered 0), the sentence is then skipped and the next
+ * one is read as usual; `SMTInputText` still answers 0. So it is only written down, and a line is a failure when no sample came.
+ */
+internal const val SAMSUNG_AUDIO_STOPPED = 8
 
 /**
  * 앱30: what the app uses of the Samsung engine. The real one is [JnaSamsungTtsNative]; the tests use their own, so the order of

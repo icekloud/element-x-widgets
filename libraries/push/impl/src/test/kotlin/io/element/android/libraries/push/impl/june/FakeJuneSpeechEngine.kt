@@ -20,9 +20,13 @@ class FakeJuneSpeechEngine(
     var speakResult: Boolean = true,
     var speakFailure: Exception? = null,
     private val onSpeak: (String) -> Unit = {},
-) : JuneSpeechEngine, JuneVoiceLoadReport {
+) : JuneSpeechEngine, JuneVoiceLoadReport, JuneVoiceSpeakReport {
     override var lastLoadFailure: String? = null
     override var lastLoadNote: String? = null
+
+    /** 앱31: left null unless a test wants the reason of a failed line to be shown. */
+    override var lastSpeakFailure: String? = null
+    override var lastSpeakTrace: String? = null
 
     val spoken = mutableListOf<String>()
     var openCount = 0

@@ -49,7 +49,7 @@ private const val STALLED_POLLS = 40
 @SingleIn(AppScope::class)
 class SamsungJuneSpeechEngine(
     @ApplicationContext private val context: Context,
-) : JuneSpeechEngine, JuneVoiceStatsSource, JuneVoiceLoadReport {
+) : JuneSpeechEngine, JuneVoiceStatsSource, JuneVoiceLoadReport, JuneVoiceSpeakReport {
     private val native: SamsungTtsNative = JnaSamsungTtsNative()
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 
@@ -73,6 +73,12 @@ class SamsungJuneSpeechEngine(
         private set
 
     @Volatile override var lastLoadNote: String? = null
+        private set
+
+    @Volatile override var lastSpeakFailure: String? = null
+        private set
+
+    @Volatile override var lastSpeakTrace: String? = null
         private set
 
     /** The phone engine answers this: both voices play on the same output, with the same settings. */
@@ -130,35 +136,35 @@ class SamsungJuneSpeechEngine(
     private suspend fun play(chunks: List<String>, characters: Int): Boolean {
         val rate = sampleRate
         val start = System.currentTimeMillis()
-        var generationMillis = 0L
         var audioMillis = 0L
         var writtenFrames = 0
         var track: AudioTrack? = null
         lastLineStats = null
+        // 앱31: what the reading did, so the settings of the phone can say where it stopped
+        val trace = SamsungSpeakTrace(voice = SAMSUNG_VOICE_KO_L08.folderName, sampleRate = rate, chunks = chunks.size)
         try {
-            chunks.forEach { chunk ->
-                coroutineContext.ensureActive()
-                val chunkStart = System.currentTimeMillis()
-                val samples = read(chunk) ?: return false
-                generationMillis += System.currentTimeMillis() - chunkStart
+            val read = samsungReadChunks(native, chunks, trace) { samples ->
                 audioMillis += 1000L * samples.size / rate
-                if (samples.isEmpty()) return@forEach
-                val current = track ?: (createTrack(rate) ?: return false).also {
+                val current = track ?: createTrack(rate)?.also {
                     track = it
                     // The first chunk is played while the next one is still being made
                     it.play()
-                }
+                } ?: return@samsungReadChunks false
                 if (writtenFrames > 0) writtenFrames += writeSilence(current, rate)
                 writtenFrames += write(current, samples)
+                true
             }
-            if (writtenFrames == 0) return false
+            if (!read) return failed(trace)
+            if (writtenFrames == 0) {
+                trace.failure = "오디오 트랙 쓰기 0"
+                return failed(trace)
+            }
             track?.let { waitUntilPlayed(it, writtenFrames) }
-            lastLineStats = JuneVoiceLineStats(characters, generationMillis, audioMillis)
-            Timber.tag(TAG).d("Read %d characters in %d chunks: %d ms made, %d ms played", characters, chunks.size, generationMillis, audioMillis)
+            lastSpeakFailure = null
+            lastSpeakTrace = trace.line()
+            lastLineStats = JuneVoiceLineStats(characters, trace.generationMillis, audioMillis)
+            Timber.tag(TAG).d("Read %d characters in %d chunks: %s", characters, chunks.size, trace.line())
             return true
-        } catch (error: OutOfMemoryError) {
-            Timber.tag(TAG).e(error, "Not enough memory for the Samsung voice")
-            return false
         } finally {
             track?.let { stop(it) }
             if (lastLineStats == null) {
@@ -167,26 +173,12 @@ class SamsungJuneSpeechEngine(
         }
     }
 
-    /** The samples of one chunk, or null when the engine failed on it. The engine gives them while [SamsungTtsNative.inputText] lasts. */
-    private fun read(chunk: String): ShortArray? {
-        val parts = mutableListOf<ShortArray>()
-        var failed = false
-        val code = native.inputText(chunk) { samples, resultType ->
-            if (resultType == SAMSUNG_AUDIO_FAILED) failed = true
-            if (samples.isNotEmpty()) parts += samples
-        }
-        if (code != SAMSUNG_TTS_OK || failed) {
-            Timber.tag(TAG).w("The Samsung voice could not read a chunk: %s", samsungTtsErrorText(code))
-            return null
-        }
-        val total = parts.sumOf { it.size }
-        val samples = ShortArray(total)
-        var offset = 0
-        parts.forEach { part ->
-            part.copyInto(samples, offset)
-            offset += part.size
-        }
-        return samples
+    /** Keeps why the line gave no sound, so [JuneVoiceFallbackEngine] can show it, and answers false. */
+    private fun failed(trace: SamsungSpeakTrace): Boolean {
+        lastSpeakFailure = trace.failure
+        lastSpeakTrace = trace.line()
+        Timber.tag(TAG).w("The Samsung voice gave no sound: %s · %s", trace.failure, trace.line())
+        return false
     }
 
     private fun createTrack(sampleRate: Int): AudioTrack? = runCatchingExceptions {
