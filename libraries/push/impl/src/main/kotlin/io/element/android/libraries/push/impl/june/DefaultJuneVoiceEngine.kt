@@ -16,18 +16,16 @@ import io.element.android.libraries.di.annotations.ApplicationContext
 
 /**
  * Element June: the [JuneSpeechEngine] the reader uses. It reads with the voice chosen in the settings (the phone engine by default,
- * or one of the two Korean voices built into the app) and falls back to the phone engine for the lines that voice cannot read.
+ * or the Samsung Korean voice built into the app) and falls back to the phone engine for the lines that voice cannot read.
  */
 @ContributesBinding(AppScope::class)
 @SingleIn(AppScope::class)
 class DefaultJuneVoiceEngine(
     @ApplicationContext context: Context,
     phone: DefaultJuneSpeechEngine,
-    builtIn: SupertonicJuneSpeechEngine,
     samsung: SamsungJuneSpeechEngine,
     noteStore: JuneSpeakNoteStore,
 ) : JuneSpeechEngine by JuneVoiceFallbackEngine(
-    builtIn = builtIn,
     phone = phone,
     chosenEngine = { JuneSettings.btSpeakEngine(context) },
     onNote = { note -> noteStore.note(note) },

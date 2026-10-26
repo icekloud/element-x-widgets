@@ -235,7 +235,7 @@ class SamsungJuneSpeechEngine(
         null
     }
 
-    /** The short silence left between two chunks, like the built-in voice does. Returns the number of frames written. */
+    /** The short silence left between two chunks. Returns the number of frames written. */
     private suspend fun writeSilence(track: AudioTrack, sampleRate: Int): Int =
         write(track, ShortArray((sampleRate * JUNE_VOICE_CHUNK_SILENCE_SECONDS).toInt()))
 

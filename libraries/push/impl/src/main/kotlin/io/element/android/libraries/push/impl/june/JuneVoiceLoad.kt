@@ -7,7 +7,6 @@
 
 package io.element.android.libraries.push.impl.june
 
-import java.io.Closeable
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -16,46 +15,39 @@ import kotlin.coroutines.cancellation.CancellationException
 /** Longest text kept from what went wrong (the exception and its message), so the reason fits on one line of the settings. */
 internal const val JUNE_VOICE_REASON_MAX_LENGTH = 80
 
-/** Room asked for a copy whose size is not known (the biggest model file is about 250 MB), and room always left on the phone. */
+/** Room asked for a copy whose size is not known (more than any voice file), and room always left on the phone. */
 internal const val JUNE_VOICE_UNKNOWN_COPY_BYTES = 400L * 1024 * 1024
 internal const val JUNE_VOICE_COPY_MARGIN_BYTES = 100L * 1024 * 1024
 
 /** Suffix of a copy being written: it only gets its real name once it is complete. */
 internal const val JUNE_VOICE_PARTIAL_SUFFIX = ".part"
 
-/** Where the loading of the built-in voice stopped, as shown on the phone. */
+/** Where the loading of the voice of the app stopped, as shown on the phone. */
 internal enum class JuneVoiceLoadStep(val label: String) {
     Environment("환경 생성"),
-    OpenFile("파일 열기"),
     Copy("복사"),
-    CreateSession("세션 생성"),
-    ReadConfig("설정 읽기"),
     Memory("메모리"),
 }
 
-/**
- * Why the built-in voice could not be loaded: the [step], the model [file] and the [error]. [fallback] is what went wrong when the
- * file was then copied, if that was tried too.
- */
+/** Why the voice of the app could not be loaded: the [step], the [file] and the [error]. */
 internal class JuneVoiceLoadFailure(
     val step: JuneVoiceLoadStep,
     val file: String?,
     val error: Throwable,
-    val fallback: JuneVoiceLoadFailure? = null,
 ) {
-    /** For instance "세션 생성 vocoder.onnx · IOException: fstat failed", never a path nor a user id. */
+    /** For instance "복사 regular.ivc.smt · IOException: broken asset", never a path nor a user id. */
     val reason: String get() = juneVoiceLoadReason(this)
 }
 
 internal class JuneVoiceLoadException(val failure: JuneVoiceLoadFailure) : Exception(failure.reason, failure.error)
 
-/** There is not enough room on the phone to copy a model file. */
+/** There is not enough room on the phone to copy a voice file. */
 internal class JuneVoiceStorageException(val neededBytes: Long, val availableBytes: Long) :
     IOException("Not enough storage: $neededBytes bytes needed, $availableBytes available")
 
 /**
  * True for what the loading can be stopped on and reported, the app going on with the phone engine: any exception but a cancellation,
- * a failed big allocation (the model is then dropped), and a native library or class of ONNX Runtime that cannot be used.
+ * a failed big allocation (the voice is then dropped), and a native library or class that cannot be used.
  * Every other error is let through.
  */
 internal fun juneVoiceIsRecoverable(error: Throwable): Boolean = when (error) {
@@ -78,72 +70,9 @@ internal inline fun <T> juneVoiceStep(step: JuneVoiceLoadStep, file: String?, bl
 internal fun juneVoiceLoadException(step: JuneVoiceLoadStep, file: String?, error: Throwable): Throwable =
     if (juneVoiceIsRecoverable(error)) JuneVoiceLoadException(JuneVoiceLoadFailure(step, file, error)) else error
 
-/** A model file opened one way or the other, with its session, and whether it had to be copied. */
-internal class JuneVoiceOpened<S : Closeable, T>(val source: S, val session: T, val copied: Boolean)
-
-/**
- * Opens the session of the model [file]: first straight from the package ([openMapped]); if opening it or creating its session fails,
- * the file is copied ([openCopied]) and the session is created from the copy. When both fail, the failure of the first way is thrown
- * with the one of the copy attached. A source whose session could not be created is closed.
- */
-internal fun <S : Closeable, T> juneVoiceOpenSession(
-    file: String,
-    openMapped: () -> S,
-    openCopied: () -> S,
-    createSession: (S) -> T,
-): JuneVoiceOpened<S, T> {
-    val mappedFailure = when (val mapped = juneVoiceAttempt(file, JuneVoiceLoadStep.OpenFile, openMapped, createSession)) {
-        is JuneVoiceAttempt.Opened -> return JuneVoiceOpened(mapped.source, mapped.session, copied = false)
-        is JuneVoiceAttempt.Failed -> mapped.failure
-    }
-    return when (val copied = juneVoiceAttempt(file, JuneVoiceLoadStep.Copy, openCopied, createSession)) {
-        is JuneVoiceAttempt.Opened -> JuneVoiceOpened(copied.source, copied.session, copied = true)
-        is JuneVoiceAttempt.Failed -> throw JuneVoiceLoadException(
-            JuneVoiceLoadFailure(mappedFailure.step, mappedFailure.file, mappedFailure.error, fallback = copied.failure)
-        )
-    }
-}
-
-private sealed interface JuneVoiceAttempt<out S, out T> {
-    class Opened<S, T>(val source: S, val session: T) : JuneVoiceAttempt<S, T>
-    class Failed(val failure: JuneVoiceLoadFailure) : JuneVoiceAttempt<Nothing, Nothing>
-}
-
-private fun <S : Closeable, T> juneVoiceAttempt(
-    file: String,
-    openStep: JuneVoiceLoadStep,
-    open: () -> S,
-    createSession: (S) -> T,
-): JuneVoiceAttempt<S, T> {
-    val source = try {
-        open()
-    } catch (error: Throwable) {
-        if (!juneVoiceIsRecoverable(error)) throw error
-        return JuneVoiceAttempt.Failed(JuneVoiceLoadFailure(openStep, file, error))
-    }
-    return try {
-        JuneVoiceAttempt.Opened(source, createSession(source))
-    } catch (error: Throwable) {
-        juneVoiceCloseQuietly(source)
-        if (!juneVoiceIsRecoverable(error)) throw error
-        JuneVoiceAttempt.Failed(JuneVoiceLoadFailure(JuneVoiceLoadStep.CreateSession, file, error))
-    }
-}
-
-internal fun juneVoiceCloseQuietly(closeable: Closeable) {
-    try {
-        closeable.close()
-    } catch (_: Exception) {
-        // Nothing more can be done with it
-    }
-}
-
-/** The line that says why the voice could not be loaded, for instance "세션 생성 vocoder.onnx · IOException: fstat failed". */
-internal fun juneVoiceLoadReason(failure: JuneVoiceLoadFailure): String {
-    val text = "${juneVoiceStepText(failure)} · ${juneVoiceErrorText(failure.error)}"
-    val fallback = failure.fallback ?: return text
-    return "$text / ${fallback.stepOrMemory().label}: ${juneVoiceErrorText(fallback.error)}"
-}
+/** The line that says why the voice could not be loaded, for instance "복사 regular.ivc.smt · IOException: broken asset". */
+internal fun juneVoiceLoadReason(failure: JuneVoiceLoadFailure): String =
+    "${juneVoiceStepText(failure)} · ${juneVoiceErrorText(failure.error)}"
 
 private fun JuneVoiceLoadFailure.stepOrMemory(): JuneVoiceLoadStep = if (error is OutOfMemoryError) JuneVoiceLoadStep.Memory else step
 
@@ -180,15 +109,12 @@ internal fun juneVoiceCleanMessage(message: String?): String {
         .trim()
 }
 
-/** What the settings say about how the model was opened, or null when it was read straight from the package as it should be. */
-internal fun juneVoiceOpenNote(copiedFiles: List<String>): String? = if (copiedFiles.isEmpty()) null else "복사 방식"
-
 /** Room asked before copying a file of [expectedLength] bytes (unknown when null). */
 internal fun juneVoiceCopyNeededBytes(expectedLength: Long?): Long =
     (expectedLength?.takeIf { it > 0 } ?: JUNE_VOICE_UNKNOWN_COPY_BYTES) + JUNE_VOICE_COPY_MARGIN_BYTES
 
 /**
- * Copies a model file into [target] and returns it, unless a complete copy is already there. The copy is written under a temporary
+ * Copies a voice file into [target] and returns it, unless a complete copy is already there. The copy is written under a temporary
  * name and only renamed once it is complete (and of [expectedLength] when it is known), so a copy cut in the middle is never used.
  * [usableSpace] is the room left where [target] is; there must be [juneVoiceCopyNeededBytes] of it, else [JuneVoiceStorageException].
  */

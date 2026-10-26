@@ -172,7 +172,6 @@ class SamsungSpeakDiagnosisTest {
             lastSpeakTrace = "열기 OK · ko_KR_l08 · 1/1청크 5자 · 입력 OK · 콜백 0회 · 샘플 0개 · 트랙 없음 · 24000Hz"
         }
         val engine = JuneVoiceFallbackEngine(
-            builtIn = FakeJuneSpeechEngine(),
             phone = FakeJuneSpeechEngine(),
             chosenEngine = { io.element.android.libraries.designsystem.june.JuneVoiceEngineChoice.Samsung },
             onNote = { notes += it },
@@ -189,7 +188,6 @@ class SamsungSpeakDiagnosisTest {
     fun `an engine that says nothing keeps the old note`() = runTest {
         val notes = mutableListOf<String>()
         val engine = JuneVoiceFallbackEngine(
-            builtIn = FakeJuneSpeechEngine(),
             phone = FakeJuneSpeechEngine(),
             chosenEngine = { io.element.android.libraries.designsystem.june.JuneVoiceEngineChoice.Samsung },
             onNote = { notes += it },
