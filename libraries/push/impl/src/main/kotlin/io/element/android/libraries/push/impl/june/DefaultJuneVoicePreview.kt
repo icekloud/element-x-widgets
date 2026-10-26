@@ -24,10 +24,10 @@ import timber.log.Timber
 
 private const val TAG = "JuneVoicePreview"
 
-/** The sentence read by the "내장 음성 미리듣기" button: it has a time and a percentage, so the Korean reading can be heard too. */
+/** The sentence read by the "음성 미리듣기" button: it has a time and a percentage, so the Korean reading can be heard too. */
 internal const val JUNE_VOICE_PREVIEW_TEXT = "좋은 아침입니다. 오늘 오후 3시에 회의가 있고, 비가 올 확률은 20%입니다."
 
-/** Element June: reads a fixed sentence with the built-in voice, to hear it and see how long it takes on this phone. */
+/** Element June: reads a fixed sentence with the Samsung voice of the app, to hear it and see how long it takes on this phone. */
 fun interface JuneVoicePreview {
     fun play()
 }
@@ -36,7 +36,7 @@ fun interface JuneVoicePreview {
 @SingleIn(AppScope::class)
 class DefaultJuneVoicePreview(
     @ApplicationContext private val context: Context,
-    private val engine: SupertonicJuneSpeechEngine,
+    private val samsungEngine: SamsungJuneSpeechEngine,
     private val phoneEngine: DefaultJuneSpeechEngine,
     private val noteStore: JuneSpeakNoteStore,
     @AppCoroutineScope
@@ -63,11 +63,13 @@ class DefaultJuneVoicePreview(
     private suspend fun read() {
         // The preview keeps the audio focus like a read line does, so the music of other apps is lowered while it plays
         val focused = runCatchingExceptions { phoneEngine.requestFocus() }.getOrDefault(false)
+        // The preview is read with the Samsung voice, the voice of the app, whichever is chosen: the phone engine has nothing to
+        // preview (the Supertonic voice that was read before when the phone engine was chosen has been taken out of the app).
         val fallback = JuneVoiceFallbackEngine(
-            builtIn = engine,
             phone = phoneEngine,
-            chosenEngine = { JuneVoiceEngineChoice.BuiltIn },
+            chosenEngine = { JuneVoiceEngineChoice.Samsung },
             onNote = { note -> noteStore.note("미리듣기 · $note") },
+            samsung = samsungEngine,
         )
         try {
             val failure = fallback.open()

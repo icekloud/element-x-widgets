@@ -33,6 +33,7 @@ object JuneSettings {
     private const val KEY_BT_SPEAK = "bt_speak"
     private const val KEY_BT_SPEAK_STATUS = "bt_speak_status"
     private const val KEY_BT_SPEAK_ENGINE = "bt_speak_engine"
+    private const val KEY_BT_SPEAK_SAMSUNG_VOICE = "bt_speak_samsung_voice"
     private const val KEY_BT_SPEAK_VOICE_NOTE = "bt_speak_voice_note"
     private const val KEY_MEMO_ROOM = "memo_room_id"
     private const val KEY_MEMO_FAKE = "memo_fake_data"
@@ -129,6 +130,7 @@ object JuneSettings {
     private val btSpeak = mutableStateOf(true)
     private val btSpeakStatus = mutableStateOf<String?>(null)
     private val btSpeakEngine = mutableStateOf(JuneVoiceEngineChoice.Phone)
+    private val btSpeakSamsungVoice = mutableStateOf(JuneSamsungVoiceChoice.Voice1)
     private val btSpeakVoiceNote = mutableStateOf<String?>(null)
     private val memoRoomId = mutableStateOf<String?>(null)
     private val memoFake = mutableStateOf(false)
@@ -162,6 +164,7 @@ object JuneSettings {
             btSpeak.value = tryOrNull { p.getBoolean(KEY_BT_SPEAK, true) } ?: true
             btSpeakStatus.value = tryOrNull { p.getString(KEY_BT_SPEAK_STATUS, null) }
             btSpeakEngine.value = JuneVoiceEngineChoice.parse(tryOrNull { p.getString(KEY_BT_SPEAK_ENGINE, null) })
+            btSpeakSamsungVoice.value = JuneSamsungVoiceChoice.parse(tryOrNull { p.getString(KEY_BT_SPEAK_SAMSUNG_VOICE, null) })
             btSpeakVoiceNote.value = tryOrNull { p.getString(KEY_BT_SPEAK_VOICE_NOTE, null) }
             memoRoomId.value = tryOrNull { p.getString(KEY_MEMO_ROOM, null) }?.takeIf { it.isNotBlank() }
             memoFake.value = tryOrNull { p.getBoolean(KEY_MEMO_FAKE, false) } ?: false
@@ -352,8 +355,8 @@ object JuneSettings {
     }
 
     /**
-     * 앱27: which voice reads the 🔊 lines (observable). The phone engine by default: the built-in voice is only used once it has been
-     * chosen in the settings.
+     * 앱27: which voice reads the 🔊 lines (observable). The phone engine by default: the Samsung voice of the app is only used once it
+     * has been chosen in the settings. A saved choice of the Supertonic voice, taken out of the app, reads as the Samsung voice.
      */
     fun btSpeakEngine(context: Context): JuneVoiceEngineChoice {
         ensureLoaded(context)
@@ -367,7 +370,22 @@ object JuneSettings {
     }
 
     /**
-     * 앱27: what the built-in voice did with the last line, for instance "내장 · 42자 · 생성 6.1초 · 재생 5.8초" or
+     * 앱32: which of the four Korean voices of the Samsung engine reads the 🔊 lines (observable), used when that engine is the
+     * chosen one. The first voice (the one the app read with before) by default.
+     */
+    fun samsungVoice(context: Context): JuneSamsungVoiceChoice {
+        ensureLoaded(context)
+        return btSpeakSamsungVoice.value
+    }
+
+    fun setSamsungVoice(context: Context, choice: JuneSamsungVoiceChoice) {
+        ensureLoaded(context)
+        btSpeakSamsungVoice.value = choice
+        prefs(context).edit().putString(KEY_BT_SPEAK_SAMSUNG_VOICE, choice.key).apply()
+    }
+
+    /**
+     * 앱27: what the voice of the app did with the last line, for instance "삼성 · 42자 · 생성 6.1초 · 재생 5.8초" or
      * "폰 기본 대체(시간 초과)" (observable, null when none yet). Never the message text.
      */
     fun btSpeakVoiceNote(context: Context): String? {

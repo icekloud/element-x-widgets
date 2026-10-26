@@ -16,7 +16,7 @@ import dev.zacsweers.metro.Inject
 import io.element.android.libraries.architecture.bindings
 
 /**
- * Element June: the "내장 음성 미리듣기" button of the settings. The settings screen cannot call the reader itself (it is in another
+ * Element June: the "음성 미리듣기" button of the settings. The settings screen cannot call the reader itself (it is in another
  * module), so it sends this broadcast; the time the voice took is then shown under the setting.
  */
 class JuneVoicePreviewReceiver : BroadcastReceiver() {

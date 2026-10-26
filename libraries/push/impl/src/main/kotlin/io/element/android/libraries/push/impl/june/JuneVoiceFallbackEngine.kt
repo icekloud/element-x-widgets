@@ -16,12 +16,12 @@ import kotlin.time.Duration.Companion.seconds
 private const val TAG = "JuneVoice"
 
 /**
- * Longest time the built-in voice may spend on one line. The line timeout of the reader is 60 seconds, so what is left after this is
+ * Longest time the voice of the app may spend on one line. The line timeout of the reader is 60 seconds, so what is left after this is
  * enough for the phone engine to read the same line.
  */
 internal val JUNE_VOICE_LINE_TIMEOUT = 45.seconds
 
-/** What the built-in voice did with the last line, to show the speed on the phone. */
+/** What the voice of the app did with the last line, to show the speed on the phone. */
 data class JuneVoiceLineStats(
     val characters: Int,
     val generationMillis: Long,
@@ -33,53 +33,83 @@ interface JuneVoiceStatsSource {
     val lastLineStats: JuneVoiceLineStats?
 }
 
-/** 앱28: an engine that can tell how its model was opened, so a failure can be understood from the settings of the phone. */
+/** 앱28: an engine that can tell how its voice was made ready, so a failure can be understood from the settings of the phone. */
 interface JuneVoiceLoadReport {
-    /** Why the last [JuneSpeechEngine.open] gave [JuneSpeakResult.EngineNotReady], for instance "세션 생성 vocoder.onnx · IOException". */
+    /** Why the last [JuneSpeechEngine.open] gave [JuneSpeakResult.EngineNotReady], for instance "라이브러리 적재 실패 · UnsatisfiedLinkError". */
     val lastLoadFailure: String?
 
-    /** What is worth knowing about how the model was opened when it worked (for instance "복사 방식"), or null. */
+    /** What is worth knowing about how the voice was made ready when it worked (for instance "음성 파일 4개 설치"), or null. */
     val lastLoadNote: String?
 }
 
 /**
+ * 앱31: an engine that can tell why the last line gave no sound, so a failure can be told apart from the settings of the phone
+ * alone. An engine that does not report anything keeps the old note ("폰 기본 대체(생성 실패)").
+ */
+interface JuneVoiceSpeakReport {
+    /** Why the last [JuneSpeechEngine.speak] gave false, for instance "샘플 0개" or "입력 코드 7(중단됨)", or null. */
+    val lastSpeakFailure: String?
+
+    /** How far the last line got, for instance "열기 OK · ko_KR_l08 · 1/2청크 18자 · 입력 OK · 콜백 4회 · 샘플 0개 · 트랙 없음 · 24000Hz". */
+    val lastSpeakTrace: String?
+}
+
+/**
  * Element June: reads the 🔊 lines with the engine chosen in the settings, and falls back to the phone engine for the lines the
- * built-in voice cannot read (model missing, out of memory, failure, too slow). A failure never changes the setting: the built-in
+ * chosen voice cannot read (files missing, out of memory, failure, too slow). A failure never changes the setting: the chosen
  * voice is tried again on the next line.
+ *
+ * 앱30: [samsung] is the voice shipped in the app (the Supertonic one has been taken out). It is left out (null) where it is not
+ * available, and the chosen voice then falls back to the phone engine as any other failure does.
  */
 internal class JuneVoiceFallbackEngine(
-    private val builtIn: JuneSpeechEngine,
     private val phone: JuneSpeechEngine,
     private val chosenEngine: () -> JuneVoiceEngineChoice,
     private val onNote: (String) -> Unit,
+    private val samsung: JuneSpeechEngine? = null,
 ) : JuneSpeechEngine {
-    /** True while the built-in voice is the chosen one and its model could be opened. */
-    private var builtInOpen = false
+    /** The voice of the app that is being read with (the chosen one, opened), or null while the phone engine reads. */
+    private var voice: JuneSpeechEngine? = null
+
+    /** The short name of [voice], for the notes shown in the settings. */
+    private var voiceLabel = JuneVoiceEngineChoice.Samsung.shortLabel
     private var phoneOpen = false
 
-    /** The audio state and the audio focus are the ones of the phone: both engines play on the same output. */
+    /** The voice of the app for [choice], or null when it is the phone engine or when that voice is not available. */
+    private fun engineOf(choice: JuneVoiceEngineChoice): JuneSpeechEngine? = when (choice) {
+        JuneVoiceEngineChoice.Phone -> null
+        JuneVoiceEngineChoice.Samsung -> samsung
+    }
+
+    /** The audio state and the audio focus are the ones of the phone: every engine plays on the same output. */
     override fun currentBlock(): JuneSpeakBlock? = phone.currentBlock()
 
     override fun requestFocus(): Boolean = phone.requestFocus()
 
     override suspend fun open(): JuneSpeakResult? {
-        if (chosenEngine() == JuneVoiceEngineChoice.BuiltIn) {
+        val choice = chosenEngine()
+        val chosen = engineOf(choice)
+        if (chosen != null) {
+            voiceLabel = choice.shortLabel
             var reason: String? = null
-            val failure = runCatchingExceptions { builtIn.open() }.getOrElse { error ->
-                Timber.tag(TAG).e(error, "The built-in voice could not be opened")
+            val failure = runCatchingExceptions { chosen.open() }.getOrElse { error ->
+                Timber.tag(TAG).e(error, "The %s voice could not be opened", choice.key)
                 reason = juneVoiceErrorText(error)
                 JuneSpeakResult.EngineNotReady
             }
-            val report = builtIn as? JuneVoiceLoadReport
+            val report = chosen as? JuneVoiceLoadReport
             if (failure == null) {
-                builtInOpen = true
-                report?.lastLoadNote?.let { note("내장 준비: $it") }
+                voice = chosen
+                report?.lastLoadNote?.let { note("$voiceLabel 준비: $it") }
                 return null
             }
             // The phone engine reads everything until the next time the lines are read. The reason is shown, so a failure on the phone
             // can be understood without its logs.
             val shown = reason ?: report?.lastLoadFailure
-            note(if (shown == null) "폰 기본 대체(내장 준비 실패)" else "폰 기본 대체 · 내장 준비 실패: $shown")
+            note(if (shown == null) "폰 기본 대체($voiceLabel 준비 실패)" else "폰 기본 대체 · $voiceLabel 준비 실패: $shown")
+        } else if (choice != JuneVoiceEngineChoice.Phone) {
+            // The chosen voice is not available in this build
+            note("폰 기본 대체(${choice.shortLabel} 없음)")
         }
         return openPhone()
     }
@@ -95,11 +125,12 @@ internal class JuneVoiceFallbackEngine(
     }
 
     override suspend fun speak(text: String): Boolean {
-        if (builtInOpen) {
+        val voice = voice
+        if (voice != null) {
             val start = System.currentTimeMillis()
             val spoken = withTimeoutOrNull(JUNE_VOICE_LINE_TIMEOUT) {
-                runCatchingExceptions { builtIn.speak(text) }.getOrElse { error ->
-                    Timber.tag(TAG).e(error, "The built-in voice could not read the line")
+                runCatchingExceptions { voice.speak(text) }.getOrElse { error ->
+                    Timber.tag(TAG).e(error, "The %s voice could not read the line", voiceLabel)
                     false
                 }
             }
@@ -107,19 +138,32 @@ internal class JuneVoiceFallbackEngine(
                 note(readNote(text, System.currentTimeMillis() - start))
                 return true
             }
-            note(if (spoken == null) "폰 기본 대체(시간 초과)" else "폰 기본 대체(생성 실패)")
+            note(if (spoken == null) "폰 기본 대체(시간 초과)" else speakFailureNote(voice))
         }
         // The line is never lost: the phone engine reads it
         if (openPhone() != null) return false
         return runCatchingExceptions { phone.speak(text) }.getOrDefault(false)
     }
 
-    /** For instance "내장 · 42자 · 생성 6.1초 · 재생 5.8초", or the same without the audio length when the engine does not give it. */
+    /**
+     * 앱31: why the chosen voice gave no sound, and how far it got, for instance
+     * "폰 기본 대체(삼성 생성 실패: 샘플 0개) · 열기 OK · ko_KR_l08 · 1/1청크 5자 · 입력 OK · 콜백 0회 · 샘플 0개 · 트랙 없음 · 24000Hz".
+     * An engine that reports nothing keeps the old note, so the line of a failure stays the same as before.
+     */
+    private fun speakFailureNote(voice: JuneSpeechEngine): String {
+        val report = voice as? JuneVoiceSpeakReport
+        val reason = report?.lastSpeakFailure ?: return "폰 기본 대체(생성 실패)"
+        val head = "폰 기본 대체($voiceLabel 생성 실패: $reason)"
+        return report.lastSpeakTrace?.let { "$head · $it" } ?: head
+    }
+
+    /** For instance "삼성 · 42자 · 생성 6.1초 · 재생 5.8초", or the same without the audio length when the engine does not give it. */
     private fun readNote(text: String, elapsedMillis: Long): String {
-        val stats = (builtIn as? JuneVoiceStatsSource)?.lastLineStats
+        val voice = voice
+        val stats = (voice as? JuneVoiceStatsSource)?.lastLineStats
         val generation = stats?.generationMillis ?: elapsedMillis
-        val head = "내장 · ${text.length}자 · 생성 ${seconds(generation)}초"
-        val loadNote = (builtIn as? JuneVoiceLoadReport)?.lastLoadNote?.let { " · $it" }.orEmpty()
+        val head = "$voiceLabel · ${text.length}자 · 생성 ${seconds(generation)}초"
+        val loadNote = (voice as? JuneVoiceLoadReport)?.lastLoadNote?.let { " · $it" }.orEmpty()
         val audioMillis = stats?.audioMillis ?: return head + loadNote
         val slower = if (generation > audioMillis) " · 실시간보다 느림" else ""
         return "$head · 재생 ${seconds(audioMillis)}초$slower$loadNote"
@@ -133,9 +177,9 @@ internal class JuneVoiceFallbackEngine(
     }
 
     override fun close() {
-        builtInOpen = false
+        voice = null
         phoneOpen = false
-        runCatchingExceptions { builtIn.close() }.onFailure { Timber.tag(TAG).e(it, "Cannot close the built-in voice") }
+        samsung?.let { runCatchingExceptions { it.close() }.onFailure { error -> Timber.tag(TAG).e(error, "Cannot close the Samsung voice") } }
         runCatchingExceptions { phone.close() }.onFailure { Timber.tag(TAG).e(it, "Cannot close the phone engine") }
     }
 }
