@@ -119,8 +119,14 @@ internal fun memoReviewSwipeOffset(current: Float, delta: Float, widthPx: Float)
 internal fun memoReviewSwipeReached(offsetPx: Float, widthPx: Float, fraction: Float = MEMO_REVIEW_SWIPE_FRACTION): Boolean =
     widthPx > 0f && -offsetPx >= widthPx * fraction
 
-/** The words behind a pushed card. */
-internal fun memoReviewSwipeHint(reached: Boolean): String = if (reached) "$MEMO_REVIEW_MARK 놓으면 검토" else "$MEMO_REVIEW_MARK 검토"
+/**
+ * The words behind a pushed card. 앱31 추가요청 1: letting go now opens the directive sheet instead of sending at once,
+ * so the words say that ("놓으면 검토" would promise a send that no longer happens).
+ */
+internal fun memoReviewSwipeHint(reached: Boolean): String = if (reached) "$MEMO_REVIEW_MARK 놓으면 지시 입력" else "$MEMO_REVIEW_MARK 검토"
+
+/** 앱31 추가요청 1 ②: a card pushed for a note asked for less than [MEMO_REVIEW_REPEAT_MS] ago opens nothing and says this. */
+internal const val MEMO_REVIEW_RECENT_NOTICE = "방금 검토를 요청한 노트입니다"
 
 // ---------------------------------------------------------------- C: the review button of an open note
 
@@ -192,14 +198,48 @@ internal fun memoReviewAnswer(sent: List<String>, content: JSONObject, directive
     return MemoReviewSent(sent.filter { it !in out }, skipped, directive = directive)
 }
 
-/** 앱21 ①: the words a directive adds to the notice after a press (empty: nothing to say). */
-internal fun memoReviewDirectiveText(d: MemoDirectiveAnswer?): String = when {
+/**
+ * 앱21 ①: the words a directive adds to the notice after a press (empty: nothing to say). 앱31: with [accepted] notes
+ * taken and the directive on fewer of them (one turn of 30 answered by a server that does not know `지시`), the notice
+ * says how many it missed instead of telling the whole press failed. Said once for every turn together (앱31 ③).
+ */
+internal fun memoReviewDirectiveText(d: MemoDirectiveAnswer?, accepted: Int = 0): String = when {
     d == null -> ""
-    !d.taken -> " · 지시는 반영되지 않았습니다(서버가 지시를 모릅니다)"
+    !d.taken && d.applied == 0 -> " · 지시는 반영되지 않았습니다(서버가 지시를 모릅니다)"
     // 앱29 ⑤: the phone never sends more than 500 characters, so a cut is the server's limit of the directives it adds up
     // for the same note (서버 24차: 2000): the new one went in shortened or not at all, the older ones stay.
     d.cut -> " · 쌓인 지시가 ${MEMO_REVIEW_DIRECTIVE_MERGED_MAX}자를 넘어 이번 지시가 잘렸습니다"
+    d.applied in 1 until accepted -> " · 지시 포함(${d.applied}건) · ${accepted - d.applied}건에는 지시가 닿지 않았습니다"
     else -> " · 지시 포함"
+}
+
+// ---------------------------------------------------------------- 앱31 B: the review of the selected notes
+
+/**
+ * 앱31 (관리자: "노트 여러개 선택 후 검토 시에도 지시 입력 가능하게끔"): the notes the 검토 button of the selection bar
+ * sends, or null when nothing opens: no server (the review controls are not drawn then) or nothing selected (the button
+ * is dimmed). Empty ids are dropped; the rest keep the order of the selection ([memoReviewBatches] splits them later).
+ */
+internal fun memoBulkReviewIds(ids: List<String>, hasReviewer: Boolean): List<String>? {
+    if (!hasReviewer) return null
+    return ids.map { it.trim() }.filter { it.isNotEmpty() }.takeIf { it.isNotEmpty() }
+}
+
+/** 앱31 ①: the line of the directive sheet that tells how many notes it goes to; empty for a single note (앱21 ① sheet). */
+internal fun memoBulkReviewTargetText(count: Int): String = if (count > 1) "선택한 ${count}개 노트에 함께 적용됩니다" else ""
+
+/** 앱31 ④: the notes of one press, each once, the empty ones dropped (what [MemoReviewRepeat.admit] may let through). */
+internal fun memoReviewAskedCount(ids: List<String>): Int = ids.map { it.trim() }.filter { it.isNotEmpty() }.distinct().size
+
+/**
+ * 앱31 ④: the words for the notes the 연타 guard held back ([MemoReviewRepeat.admit]): only when more than one note was
+ * asked for — a single note (the button of an open note, a card pushed to the left) says nothing, exactly as before.
+ * A directive goes only to the notes that were sent, so it is said when one came with the press.
+ */
+internal fun memoReviewHeldBackText(asked: Int, fresh: Int, withDirective: Boolean): String {
+    val held = asked - fresh
+    if (asked <= 1 || held <= 0) return ""
+    return " · 방금 보낸 ${held}건은 빼고 보냈습니다" + if (withDirective) "(지시도 가지 않습니다)" else ""
 }
 
 /** "휴지통 1건, 이미 대기 중 2건": the reasons of [skipped] in the order they first came. */
@@ -213,7 +253,7 @@ internal fun memoReviewSentText(r: MemoReviewSent): String {
         r.failure != null && r.accepted.isEmpty() -> "검토 요청 실패: ${r.failure}$skips"
         r.failure != null -> "검토를 요청했습니다 (${r.accepted.size}건) · 나머지는 보내지 못했습니다$skips"
         r.accepted.isEmpty() -> "검토를 요청하지 않았습니다$skips"
-        else -> "검토를 요청했습니다 (${r.accepted.size}건)${memoReviewDirectiveText(r.directive)}$skips"
+        else -> "검토를 요청했습니다 (${r.accepted.size}건)${memoReviewDirectiveText(r.directive, r.accepted.size)}$skips"
     }
 }
 

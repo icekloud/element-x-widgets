@@ -66,6 +66,9 @@ internal object MemoReviewTags {
     const val BULK = "memo_review_bulk"
     const val DIRECTIVE_INPUT = "memo_review_directive_input"
     const val DIRECTIVE_COUNT = "memo_review_directive_count"
+
+    /** 앱31 ①: the line of the sheet that tells how many selected notes the directive goes to. */
+    const val DIRECTIVE_TARGET = "memo_review_directive_target"
     const val DIRECTIVE_SEND = "memo_review_directive_send"
     const val DIRECTIVE_CANCEL = "memo_review_directive_cancel"
 }
@@ -105,7 +108,9 @@ internal fun MemoReviewSwipe(controller: MemoController, id: String, folder: Str
                 onDragStopped = {
                     val go = currentAllowed && memoReviewSwipeReached(offset, width)
                     wasReached = false
-                    if (go) controller.review(listOf(id))
+                    // 앱31 추가요청 1: the directive sheet opens first (as the button of an open note); the card comes
+                    // back to its place either way, so a 취소 leaves the list exactly as it was.
+                    if (go) controller.askReviewNote(id)
                     scope.launch { state.settleTo(offset) { offset = it } }
                 },
             )
@@ -190,9 +195,13 @@ private const val MEMO_REVIEW_DISABLED_ALPHA = 0.4f
  * the sheet the review button of an open note opens. A field of a few lines (at most [MEMO_REVIEW_DIRECTIVE_MAX]
  * characters, the count under it), 취소 and 검토. 검토 with an empty field is the review of before. What was typed is
  * given to [onReview] once and kept nowhere: the sheet opens empty every time.
+ *
+ * 앱31 ① (관리자: "노트 여러개 선택 후 검토 시에도 지시 입력 가능하게끔"): the 검토 button of the selection bar opens the
+ * very same sheet with [count] notes; above the field it then says they all get this one directive
+ * ([memoBulkReviewTargetText]). With one note nothing is added, so the sheet of 앱21 ① is unchanged.
  */
 @Composable
-internal fun MemoReviewDirectiveSheet(onReview: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+internal fun MemoReviewDirectiveSheet(onReview: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier, count: Int = 1) {
     var text by remember { mutableStateOf("") }
     Column(modifier.padding(16.dp)) {
         Text("$MEMO_REVIEW_MARK AI 검토", style = ElementTheme.typography.fontHeadingSmMedium)
@@ -201,6 +210,14 @@ internal fun MemoReviewDirectiveSheet(onReview: (String) -> Unit, onCancel: () -
             style = ElementTheme.typography.fontBodySmRegular,
             color = ElementTheme.colors.textSecondary,
         )
+        memoBulkReviewTargetText(count).takeIf { it.isNotEmpty() }?.let { target ->
+            Text(
+                target,
+                style = ElementTheme.typography.fontBodySmMedium,
+                color = ElementTheme.colors.textActionAccent,
+                modifier = Modifier.padding(top = 4.dp).testTag(MemoReviewTags.DIRECTIVE_TARGET),
+            )
+        }
         TextField(
             value = text,
             onValueChange = { text = memoReviewDirectiveInput(it) },

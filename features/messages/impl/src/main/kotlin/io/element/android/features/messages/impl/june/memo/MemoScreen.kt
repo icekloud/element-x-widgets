@@ -196,6 +196,9 @@ internal sealed interface MemoSheet {
 
     /** 앱21 ①: the review of the open note [id], with what the user wants the bot to look at this time. */
     data class ReviewDirective(val id: String) : MemoSheet
+
+    /** 앱31 ①: the review of the selected notes [ids]; what is typed goes to all of them at once. */
+    data class ReviewDirectiveMany(val ids: List<String>) : MemoSheet
 }
 
 /** Everything the memo tabs share: the store, the navigation, the sheets and the error banner. */
@@ -284,11 +287,24 @@ internal class MemoController(
 
     fun bulkTrash() = runBulk(memoBulkTrash(select.ids))
 
-    /** 앱17 B: every selected note goes to the review (in turns of [MEMO_REVIEW_MAX]); the selection mode ends. */
-    fun bulkReview() {
-        val ids = select.ids
+    /**
+     * 앱31 ① (관리자: "노트 여러개 선택 후 검토 시에도 지시 입력 가능하게끔"): the 검토 button of the selection bar opens the
+     * directive sheet of 앱21 ① first, with the notes selected right now. Nothing is sent yet and the selection stays as
+     * it is (a 취소 leaves everything untouched).
+     */
+    fun askBulkReview() {
+        val ids = memoBulkReviewIds(select.ids, reviewer != null) ?: return
+        sheet = MemoSheet.ReviewDirectiveMany(ids)
+    }
+
+    /**
+     * 앱17 B / 앱31 ②: every note of [ids] goes to the review (in turns of [MEMO_REVIEW_MAX], every turn with the same
+     * [directive]); then the selection mode ends. [ids] are the notes the sheet was opened with, so the count it showed
+     * and what is sent cannot drift apart.
+     */
+    fun bulkReview(ids: List<String>, directive: String? = null) {
         if (ids.isEmpty() || reviewer == null) return
-        review(ids)
+        review(ids, directive)
         endSelect()
     }
 
@@ -352,12 +368,18 @@ internal class MemoController(
      */
     fun review(ids: List<String>, directive: String? = null, before: suspend () -> Unit = {}) {
         val r = reviewer ?: return
+        val asked = memoReviewAskedCount(ids)
         val fresh = r.repeat.admit(ids)
-        if (fresh.isEmpty()) return
+        // 앱31 ④: with more than one note the notice tells how many the 연타 guard held back (a directive misses those).
+        val held = memoReviewHeldBackText(asked, fresh.size, withDirective = memoReviewDirective(directive) != null)
+        if (fresh.isEmpty()) {
+            if (held.isNotEmpty()) notice = MemoNotice(memoReviewSentText(MemoReviewSent(emptyList())) + held)
+            return
+        }
         scope.launch {
             before()
             val sent = r.request(fresh, directive)
-            notice = MemoNotice(memoReviewSentText(sent), memoReviewSentShowMs(sent))
+            notice = MemoNotice(memoReviewSentText(sent) + held, memoReviewSentShowMs(sent))
             if (sent.accepted.isEmpty()) return@launch
             startFollowing(r, r.followOf(sent.accepted), lookFirst = false)
         }
@@ -388,12 +410,16 @@ internal class MemoController(
 
     /**
      * 앱21 ①: the review button of the open note opens the directive sheet first. A note asked for a moment ago opens
-     * nothing (the press did nothing before either, 연타).
+     * nothing (the press did nothing before either, 연타). 앱31 추가요청 1: a card pushed to the left comes here too, and
+     * a press that opens nothing now says why ([MEMO_REVIEW_RECENT_NOTICE]) instead of looking broken.
      */
     fun askReviewNote(id: String) {
         if (select.active) return
         val r = reviewer ?: return
-        if (r.repeat.recent(id)) return
+        if (r.repeat.recent(id)) {
+            notice = MemoNotice(MEMO_REVIEW_RECENT_NOTICE)
+            return
+        }
         sheet = MemoSheet.ReviewDirective(id)
     }
 
@@ -1009,6 +1035,17 @@ private fun MemoSheetHost(controller: MemoController) {
                     controller.reviewNote(sheet.id, text)
                 },
                 onCancel = close,
+            )
+        }
+        // 앱31 ①: the same sheet for the selected notes; 취소 (or a swipe down) only closes it, the selection stays.
+        is MemoSheet.ReviewDirectiveMany -> ModalBottomSheet(onDismissRequest = close, scrollable = false) {
+            MemoReviewDirectiveSheet(
+                onReview = { text ->
+                    close()
+                    controller.bulkReview(sheet.ids, text)
+                },
+                onCancel = close,
+                count = sheet.ids.size,
             )
         }
     }

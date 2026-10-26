@@ -214,7 +214,8 @@ internal fun MemoSelectBar(controller: MemoController, visible: ImmutableList<St
                 Triple("🗑 휴지통", { askTrash = true }, null),
                 Triple("# 태그", { controller.bulkTags() }, null),
                 Triple("📁 폴더 이동", { controller.bulkMove() }, null),
-                Triple("$MEMO_REVIEW_MARK 검토", { controller.bulkReview() }, MemoReviewTags.BULK).takeIf { controller.reviewer != null },
+                // 앱31 ①: the press opens the directive sheet first; it sends and ends the selection only on 검토.
+                Triple("$MEMO_REVIEW_MARK 검토", { controller.askBulkReview() }, MemoReviewTags.BULK).takeIf { controller.reviewer != null },
             ).forEach { (label, action, tag) ->
                 Text(
                     label,

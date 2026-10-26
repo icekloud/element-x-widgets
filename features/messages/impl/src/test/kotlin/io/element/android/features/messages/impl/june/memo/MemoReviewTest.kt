@@ -67,7 +67,8 @@ class MemoReviewTest : RobolectricTest() {
         assertFalse(memoReviewSwipeReached(-300f, 0f))
         assertEquals(0.3f, MEMO_REVIEW_SWIPE_FRACTION)
         assertEquals("✨ 검토", memoReviewSwipeHint(reached = false))
-        assertEquals("✨ 놓으면 검토", memoReviewSwipeHint(reached = true))
+        // 앱31 추가요청 1: letting go opens the directive sheet now, so the words no longer promise a send.
+        assertEquals("✨ 놓으면 지시 입력", memoReviewSwipeHint(reached = true))
     }
 
     @Test

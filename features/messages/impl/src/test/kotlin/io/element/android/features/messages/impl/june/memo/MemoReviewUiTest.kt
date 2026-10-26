@@ -10,6 +10,7 @@
 package io.element.android.features.messages.impl.june.memo
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,9 +22,11 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.AndroidComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
@@ -97,7 +100,7 @@ class MemoReviewUiTest : RobolectricTest() {
     }
 
     @Test
-    fun `a card pushed far to the left asks for its review once and stays, short or to the right it does not`() = runAndroidComposeUiTest<ComponentActivity> {
+    fun `a card pushed far to the left opens the directive sheet and stays, short or to the right it does not`() = runAndroidComposeUiTest<ComponentActivity> {
         val backend = backend()
         val id = runBlocking { backend.create("교토 빵집 메모") }
         val room = Room()
@@ -106,6 +109,7 @@ class MemoReviewUiTest : RobolectricTest() {
         onNodeWithTag(MemoReviewTags.SWIPE).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.2f) }
         waitForIdle()
         assertTrue(room.reviewed().isEmpty())
+        assertEquals(null, controller.sheet)
         // To the right: nothing.
         onNodeWithTag(MemoReviewTags.SWIPE).performTouchInput { swipeRight(startX = left + 1f, endX = right - 1f) }
         waitForIdle()
@@ -114,18 +118,30 @@ class MemoReviewUiTest : RobolectricTest() {
         onNodeWithTag(MemoReviewTags.SWIPE).performTouchInput { swipeUp() }
         waitForIdle()
         assertTrue(room.reviewed().isEmpty())
-        // 70 %: the review of this one note, and the card is still there, back in its place.
+        assertEquals(null, controller.sheet)
+        // 앱31 추가요청 1: 70 % opens the directive sheet of this one note; nothing is sent yet and the card is still
+        // there, back in its place.
         onNodeWithTag(MemoReviewTags.SWIPE).performTouchInput { swipeLeft(startX = right - 1f, endX = right - 1f - width * 0.7f) }
-        waitUntil(timeoutMillis = 5_000) { room.reviewed().isNotEmpty() }
-        assertEquals(listOf(listOf(id)), room.reviewed())
+        waitUntil(timeoutMillis = 5_000) { controller.sheet != null }
+        assertEquals(MemoSheet.ReviewDirective(id), controller.sheet)
+        assertTrue(room.reviewed().isEmpty())
         waitForIdle()
         assertEquals(1, onAllNodesWithTag(MemoTags.RECORD_ROW).fetchSemanticsNodes().size)
         assertTrue(onAllNodesWithTag(MemoReviewTags.SWIPE_HINT).fetchSemanticsNodes().isEmpty())
-        // The notice says it was asked, then the look-up tells the result.
-        waitUntil(timeoutMillis = 10_000) { controller.notice?.text == "검토 완료: 제안 2건" }
-        // A second push right away: the same note is not sent again within 3 s.
-        onNodeWithTag(MemoReviewTags.SWIPE).performTouchInput { swipeLeft(startX = right - 1f, endX = left + 1f) }
+        // 취소: nothing was sent, the card is back, the note is untouched (a push can be repeated at once).
+        controller.sheet = null
         waitForIdle()
+        assertTrue(room.ops.isEmpty())
+        // 검토 with an empty field: the review of before, then the look-up tells the result.
+        controller.reviewNote(id, "")
+        waitUntil(timeoutMillis = 5_000) { room.reviewed().isNotEmpty() }
+        assertEquals(listOf(listOf(id)), room.reviewed())
+        assertFalse(room.ops.first { it.op == MEMO_OP_REVIEW }.args.containsKey(MEMO_ARG_DIRECTIVE))
+        waitUntil(timeoutMillis = 10_000) { controller.notice?.text == "검토 완료: 제안 2건" }
+        // A second push right away: the same note opens nothing within 3 s and says why; nothing is sent again.
+        onNodeWithTag(MemoReviewTags.SWIPE).performTouchInput { swipeLeft(startX = right - 1f, endX = left + 1f) }
+        waitUntil(timeoutMillis = 5_000) { controller.notice?.text == MEMO_REVIEW_RECENT_NOTICE }
+        assertEquals(null, controller.sheet)
         assertEquals(1, room.reviewed().size)
     }
 
@@ -149,7 +165,46 @@ class MemoReviewUiTest : RobolectricTest() {
     }
 
     @Test
-    fun `the selection bar sends the selected notes to the review and ends the selection`() = runAndroidComposeUiTest<ComponentActivity> {
+    fun `app31 - the selection bar opens the directive sheet, 검토 sends the selected notes and ends the selection`() =
+        runAndroidComposeUiTest<ComponentActivity> {
+            val room = Room()
+            var controller: MemoController? = null
+            setContent {
+                ElementTheme {
+                    val scope = rememberCoroutineScope()
+                    val c = remember {
+                        MemoController(MemoStore(FakeMemoBackend()), scope, mutableStateOf(MemoLocation())).also {
+                            it.reviewer = MemoReviewer(room, dispatcher = Dispatchers.Unconfined)
+                        }
+                    }
+                    controller = c
+                    MemoSelectBar(c, listOf("a", "b", "c").toImmutableList())
+                }
+            }
+            val c = controller!!
+            c.select = c.select.start()
+            waitForIdle()
+            // Nothing selected: the button is there but does nothing.
+            onNodeWithTag(MemoReviewTags.BULK).assertIsNotEnabled()
+            c.select = c.select.toggle("a").toggle("c")
+            waitForIdle()
+            // 앱31 ①: the press opens the sheet with the two selected notes; nothing is sent and the selection stays.
+            onNodeWithTag(MemoReviewTags.BULK).performClick()
+            waitForIdle()
+            assertEquals(MemoSheet.ReviewDirectiveMany(listOf("a", "c")), c.sheet)
+            assertTrue(room.reviewed().isEmpty())
+            assertTrue(c.select.active)
+            // 검토 with the written directive (what the sheet hands over): both notes, one request, the selection ends.
+            c.sheet = null
+            c.bulkReview(listOf("a", "c"), " 사진 속 간판을 읽어줘 ")
+            waitUntil(timeoutMillis = 5_000) { room.reviewed().isNotEmpty() }
+            assertEquals(listOf(listOf("a", "c")), room.reviewed())
+            assertEquals("사진 속 간판을 읽어줘", room.ops.first { it.op == MEMO_OP_REVIEW }.args[MEMO_ARG_DIRECTIVE])
+            assertFalse(c.select.active)
+        }
+
+    @Test
+    fun `app31 - 취소 of the bulk sheet sends nothing and keeps the selection`() = runAndroidComposeUiTest<ComponentActivity> {
         val room = Room()
         var controller: MemoController? = null
         setContent {
@@ -161,20 +216,69 @@ class MemoReviewUiTest : RobolectricTest() {
                     }
                 }
                 controller = c
-                MemoSelectBar(c, listOf("a", "b", "c").toImmutableList())
+                MemoSelectBar(c, listOf("a", "b").toImmutableList())
+                MemoSheetHostForTest(c)
             }
         }
         val c = controller!!
-        c.select = c.select.start()
-        waitForIdle()
-        // Nothing selected: the button is there but does nothing.
-        onNodeWithTag(MemoReviewTags.BULK).assertIsNotEnabled()
-        c.select = c.select.toggle("a").toggle("c")
+        c.select = c.select.start().toggle("a").toggle("b")
         waitForIdle()
         onNodeWithTag(MemoReviewTags.BULK).performClick()
+        waitForIdle()
+        // The sheet says the directive goes to both notes.
+        onNodeWithTag(MemoReviewTags.DIRECTIVE_TARGET).assertTextEquals("선택한 2개 노트에 함께 적용됩니다")
+        onNodeWithTag(MemoReviewTags.DIRECTIVE_INPUT).performTextInput("간판을 읽어줘")
+        onNodeWithTag(MemoReviewTags.DIRECTIVE_CANCEL).performClick()
+        waitForIdle()
+        assertEquals(null, c.sheet)
+        assertTrue(room.ops.isEmpty())
+        assertTrue(c.select.active)
+        assertEquals(listOf("a", "b"), c.select.ids)
+    }
+
+    @Test
+    fun `app31 - 검토 with an empty field is the review of before - no 지시 key`() = runAndroidComposeUiTest<ComponentActivity> {
+        val room = Room()
+        var controller: MemoController? = null
+        setContent {
+            ElementTheme {
+                val scope = rememberCoroutineScope()
+                val c = remember {
+                    MemoController(MemoStore(FakeMemoBackend()), scope, mutableStateOf(MemoLocation())).also {
+                        it.reviewer = MemoReviewer(room, dispatcher = Dispatchers.Unconfined)
+                    }
+                }
+                controller = c
+                MemoSelectBar(c, listOf("a", "b").toImmutableList())
+                MemoSheetHostForTest(c)
+            }
+        }
+        val c = controller!!
+        c.select = c.select.start().toggle("a").toggle("b")
+        waitForIdle()
+        onNodeWithTag(MemoReviewTags.BULK).performClick()
+        waitForIdle()
+        onNodeWithTag(MemoReviewTags.DIRECTIVE_SEND).performClick()
         waitUntil(timeoutMillis = 5_000) { room.reviewed().isNotEmpty() }
-        assertEquals(listOf(listOf("a", "c")), room.reviewed())
+        assertEquals(listOf(listOf("a", "b")), room.reviewed())
+        assertFalse(room.ops.first { it.op == MEMO_OP_REVIEW }.args.containsKey(MEMO_ARG_DIRECTIVE))
         assertFalse(c.select.active)
+    }
+
+    /** 앱31: the sheet host of MemoScreen, for the tests that press 취소 / 검토 in the sheet itself. */
+    @Composable
+    private fun MemoSheetHostForTest(controller: MemoController) {
+        val sheet = controller.sheet
+        if (sheet is MemoSheet.ReviewDirectiveMany) {
+            MemoReviewDirectiveSheet(
+                onReview = { text ->
+                    controller.sheet = null
+                    controller.bulkReview(sheet.ids, text)
+                },
+                onCancel = { controller.sheet = null },
+                count = sheet.ids.size,
+            )
+        }
     }
 
     @Test
