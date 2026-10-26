@@ -13,18 +13,16 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 /**
- * Element June: the engine that reads with the built-in voice when it is chosen, and falls back to the phone engine line by line when
- * the built-in one cannot read. The setting is never changed by a failure.
+ * Element June: the engine that reads with the Samsung voice of the app when it is chosen, and falls back to the phone engine line by
+ * line when that voice cannot read. The setting is never changed by a failure.
  */
 class JuneVoiceFallbackEngineTest {
     private fun createEngine(
-        builtIn: FakeJuneSpeechEngine = FakeJuneSpeechEngine(),
         phone: FakeJuneSpeechEngine = FakeJuneSpeechEngine(),
-        chosen: JuneVoiceEngineChoice = JuneVoiceEngineChoice.BuiltIn,
+        chosen: JuneVoiceEngineChoice = JuneVoiceEngineChoice.Samsung,
         notes: MutableList<String> = mutableListOf(),
-        samsung: FakeJuneSpeechEngine? = null,
+        samsung: FakeJuneSpeechEngine? = FakeJuneSpeechEngine(),
     ) = JuneVoiceFallbackEngine(
-        builtIn = builtIn,
         phone = phone,
         chosenEngine = { chosen },
         onNote = { notes += it },
@@ -33,188 +31,37 @@ class JuneVoiceFallbackEngineTest {
 
     @Test
     fun `the phone engine reads everything when it is the chosen one`() = runTest {
-        val builtIn = FakeJuneSpeechEngine()
+        val samsung = FakeJuneSpeechEngine()
         val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, phone = phone, chosen = JuneVoiceEngineChoice.Phone)
+        val engine = createEngine(phone = phone, chosen = JuneVoiceEngineChoice.Phone, samsung = samsung)
         assertThat(engine.open()).isNull()
         assertThat(engine.speak("안녕하세요")).isTrue()
         engine.close()
         assertThat(phone.spoken).containsExactly("안녕하세요")
-        assertThat(builtIn.spoken).isEmpty()
-        assertThat(builtIn.openCount).isEqualTo(0)
+        assertThat(samsung.spoken).isEmpty()
+        assertThat(samsung.openCount).isEqualTo(0)
     }
 
     @Test
-    fun `the built-in engine reads everything when it works`() = runTest {
-        val builtIn = FakeJuneSpeechEngine()
+    fun `the Samsung engine reads everything when it is the chosen one`() = runTest {
+        val samsung = FakeJuneSpeechEngine()
         val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, phone = phone)
+        val engine = createEngine(phone = phone, samsung = samsung)
         assertThat(engine.open()).isNull()
         assertThat(engine.speak("안녕하세요")).isTrue()
         engine.close()
-        assertThat(builtIn.spoken).containsExactly("안녕하세요")
+        assertThat(samsung.spoken).containsExactly("안녕하세요")
         assertThat(phone.spoken).isEmpty()
     }
 
     @Test
-    fun `a line the built-in engine cannot read is read by the phone engine`() = runTest {
-        val builtIn = FakeJuneSpeechEngine(speakResult = false)
-        val phone = FakeJuneSpeechEngine()
-        val notes = mutableListOf<String>()
-        val engine = createEngine(builtIn = builtIn, phone = phone, notes = notes)
-        assertThat(engine.open()).isNull()
-        assertThat(engine.speak("안녕하세요")).isTrue()
-        assertThat(builtIn.spoken).containsExactly("안녕하세요")
-        assertThat(phone.spoken).containsExactly("안녕하세요")
-        assertThat(notes).isNotEmpty()
-    }
-
-    @Test
-    fun `a line that makes the built-in engine throw is read by the phone engine`() = runTest {
-        val builtIn = FakeJuneSpeechEngine(speakFailure = IllegalStateException("inference failed"))
-        val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, phone = phone)
-        assertThat(engine.open()).isNull()
-        assertThat(engine.speak("안녕하세요")).isTrue()
-        assertThat(phone.spoken).containsExactly("안녕하세요")
-    }
-
-    @Test
-    fun `the phone engine takes over when the built-in model cannot be opened`() = runTest {
-        val builtIn = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady)
-        val phone = FakeJuneSpeechEngine()
-        val notes = mutableListOf<String>()
-        val engine = createEngine(builtIn = builtIn, phone = phone, notes = notes)
-        assertThat(engine.open()).isNull()
-        assertThat(engine.speak("안녕하세요")).isTrue()
-        assertThat(builtIn.spoken).isEmpty()
-        assertThat(phone.spoken).containsExactly("안녕하세요")
-        assertThat(notes).isNotEmpty()
-    }
-
-    @Test
-    fun `the note says why the built-in model could not be opened`() = runTest {
-        val builtIn = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady).apply {
-            lastLoadFailure = "세션 생성 vocoder.onnx · IOException: fstat failed"
-        }
-        val notes = mutableListOf<String>()
-        val engine = createEngine(builtIn = builtIn, notes = notes)
-        assertThat(engine.open()).isNull()
-        assertThat(notes).containsExactly("폰 기본 대체 · 내장 준비 실패: 세션 생성 vocoder.onnx · IOException: fstat failed")
-    }
-
-    @Test
-    fun `the note gives the error when opening the built-in model throws`() = runTest {
-        val builtIn = object : JuneSpeechEngine by FakeJuneSpeechEngine() {
-            override suspend fun open(): JuneSpeakResult? = throw IllegalStateException("broken at /data/app/x")
-        }
-        val notes = mutableListOf<String>()
-        val engine = JuneVoiceFallbackEngine(builtIn, FakeJuneSpeechEngine(), { JuneVoiceEngineChoice.BuiltIn }, { notes += it })
-        assertThat(engine.open()).isNull()
-        assertThat(notes).containsExactly("폰 기본 대체 · 내장 준비 실패: IllegalStateException: broken at <경로>")
-    }
-
-    @Test
-    fun `the note keeps the old text when the built-in engine gives no reason`() = runTest {
-        val notes = mutableListOf<String>()
-        val engine = createEngine(builtIn = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady), notes = notes)
-        engine.open()
-        assertThat(notes).containsExactly("폰 기본 대체(내장 준비 실패)")
-    }
-
-    @Test
-    fun `the note says when the model files had to be copied`() = runTest {
-        val builtIn = FakeJuneSpeechEngine().apply { lastLoadNote = "복사 방식" }
-        val notes = mutableListOf<String>()
-        val engine = createEngine(builtIn = builtIn, notes = notes)
-        assertThat(engine.open()).isNull()
-        engine.speak("안녕하세요")
-        assertThat(notes.first()).isEqualTo("내장 준비: 복사 방식")
-        assertThat(notes.last()).startsWith("내장 · 5자")
-        assertThat(notes.last()).endsWith(" · 복사 방식")
-    }
-
-    @Test
-    fun `nothing can be read when both engines fail to open`() = runTest {
-        val builtIn = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady)
-        val phone = FakeJuneSpeechEngine(openResult = JuneSpeakResult.NoKoreanVoice)
-        val engine = createEngine(builtIn = builtIn, phone = phone)
-        assertThat(engine.open()).isEqualTo(JuneSpeakResult.NoKoreanVoice)
-    }
-
-    @Test
-    fun `the built-in engine is tried again on the next line after a failure`() = runTest {
-        val builtIn = FakeJuneSpeechEngine(speakResult = false)
-        val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, phone = phone)
-        engine.open()
-        engine.speak("첫 줄")
-        builtIn.speakResult = true
-        engine.speak("둘째 줄")
-        assertThat(builtIn.spoken).containsExactly("첫 줄", "둘째 줄").inOrder()
-        assertThat(phone.spoken).containsExactly("첫 줄")
-    }
-
-    @Test
-    fun `the block reason and the audio focus come from the phone engine`() = runTest {
-        val builtIn = FakeJuneSpeechEngine(block = null)
-        val phone = FakeJuneSpeechEngine(block = JuneSpeakBlock.NoBluetooth)
-        val engine = createEngine(builtIn = builtIn, phone = phone)
-        assertThat(engine.currentBlock()).isEqualTo(JuneSpeakBlock.NoBluetooth)
-        assertThat(engine.requestFocus()).isTrue()
-        assertThat(phone.focusRequestCount).isEqualTo(1)
-        assertThat(builtIn.focusRequestCount).isEqualTo(0)
-    }
-
-    @Test
-    fun `closing releases both engines`() = runTest {
-        val builtIn = FakeJuneSpeechEngine()
-        val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, phone = phone)
-        engine.open()
-        engine.speak("안녕하세요")
-        engine.close()
-        assertThat(builtIn.closeCount).isEqualTo(1)
-        assertThat(phone.closeCount).isEqualTo(1)
-    }
-
-    @Test
-    fun `the phone engine is only opened when it is needed`() = runTest {
-        val builtIn = FakeJuneSpeechEngine()
-        val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, phone = phone)
-        engine.open()
-        engine.speak("안녕하세요")
-        assertThat(phone.openCount).isEqualTo(0)
-        builtIn.speakResult = false
-        engine.speak("둘째 줄")
-        assertThat(phone.openCount).isEqualTo(1)
-    }
-
-    @Test
-    fun `the note of a line read by the built-in voice gives the time it took`() = runTest {
-        val notes = mutableListOf<String>()
-        val builtIn = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, notes = notes)
-        engine.open()
-        engine.speak("안녕하세요")
-        assertThat(notes).hasSize(1)
-        assertThat(notes.first()).contains("내장")
-    }
-
-    // 앱30: the Samsung voice is a third choice, read and reported the same way as the built-in one
-
-    @Test
-    fun `the Samsung engine reads everything when it is the chosen one`() = runTest {
-        val builtIn = FakeJuneSpeechEngine()
+    fun `an install that had chosen the removed Supertonic voice reads with the Samsung voice`() = runTest {
         val samsung = FakeJuneSpeechEngine()
         val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, phone = phone, chosen = JuneVoiceEngineChoice.Samsung, samsung = samsung)
+        val engine = createEngine(phone = phone, chosen = JuneVoiceEngineChoice.parse("builtin"), samsung = samsung)
         assertThat(engine.open()).isNull()
         assertThat(engine.speak("안녕하세요")).isTrue()
         assertThat(samsung.spoken).containsExactly("안녕하세요")
-        assertThat(builtIn.spoken).isEmpty()
-        assertThat(builtIn.openCount).isEqualTo(0)
         assertThat(phone.spoken).isEmpty()
     }
 
@@ -222,11 +69,36 @@ class JuneVoiceFallbackEngineTest {
     fun `a line the Samsung engine cannot read is read by the phone engine`() = runTest {
         val samsung = FakeJuneSpeechEngine(speakResult = false)
         val phone = FakeJuneSpeechEngine()
-        val engine = createEngine(phone = phone, chosen = JuneVoiceEngineChoice.Samsung, samsung = samsung)
+        val notes = mutableListOf<String>()
+        val engine = createEngine(phone = phone, notes = notes, samsung = samsung)
         assertThat(engine.open()).isNull()
         assertThat(engine.speak("안녕하세요")).isTrue()
         assertThat(samsung.spoken).containsExactly("안녕하세요")
         assertThat(phone.spoken).containsExactly("안녕하세요")
+        assertThat(notes).isNotEmpty()
+    }
+
+    @Test
+    fun `a line that makes the Samsung engine throw is read by the phone engine`() = runTest {
+        val samsung = FakeJuneSpeechEngine(speakFailure = IllegalStateException("synthesis failed"))
+        val phone = FakeJuneSpeechEngine()
+        val engine = createEngine(phone = phone, samsung = samsung)
+        assertThat(engine.open()).isNull()
+        assertThat(engine.speak("안녕하세요")).isTrue()
+        assertThat(phone.spoken).containsExactly("안녕하세요")
+    }
+
+    @Test
+    fun `the phone engine takes over when the Samsung voice cannot be opened`() = runTest {
+        val samsung = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady)
+        val phone = FakeJuneSpeechEngine()
+        val notes = mutableListOf<String>()
+        val engine = createEngine(phone = phone, notes = notes, samsung = samsung)
+        assertThat(engine.open()).isNull()
+        assertThat(engine.speak("안녕하세요")).isTrue()
+        assertThat(samsung.spoken).isEmpty()
+        assertThat(phone.spoken).containsExactly("안녕하세요")
+        assertThat(notes).isNotEmpty()
     }
 
     @Test
@@ -235,41 +107,117 @@ class JuneVoiceFallbackEngineTest {
             lastLoadFailure = "라이브러리 적재 실패 · UnsatisfiedLinkError"
         }
         val notes = mutableListOf<String>()
-        val engine = createEngine(chosen = JuneVoiceEngineChoice.Samsung, notes = notes, samsung = samsung)
+        val engine = createEngine(notes = notes, samsung = samsung)
         assertThat(engine.open()).isNull()
         assertThat(notes).containsExactly("폰 기본 대체 · 삼성 준비 실패: 라이브러리 적재 실패 · UnsatisfiedLinkError")
     }
 
     @Test
-    fun `the note of a line read by the Samsung voice says which voice read it`() = runTest {
+    fun `the note gives the error when opening the Samsung voice throws`() = runTest {
+        val samsung = object : JuneSpeechEngine by FakeJuneSpeechEngine() {
+            override suspend fun open(): JuneSpeakResult? = throw IllegalStateException("broken at /data/app/x")
+        }
         val notes = mutableListOf<String>()
-        val engine = createEngine(chosen = JuneVoiceEngineChoice.Samsung, notes = notes, samsung = FakeJuneSpeechEngine())
+        val engine = JuneVoiceFallbackEngine(FakeJuneSpeechEngine(), { JuneVoiceEngineChoice.Samsung }, { notes += it }, samsung)
+        assertThat(engine.open()).isNull()
+        assertThat(notes).containsExactly("폰 기본 대체 · 삼성 준비 실패: IllegalStateException: broken at <경로>")
+    }
+
+    @Test
+    fun `the note keeps the old text when the Samsung engine gives no reason`() = runTest {
+        val notes = mutableListOf<String>()
+        val engine = createEngine(notes = notes, samsung = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady))
+        engine.open()
+        assertThat(notes).containsExactly("폰 기본 대체(삼성 준비 실패)")
+    }
+
+    @Test
+    fun `the note says how the Samsung voice was made ready`() = runTest {
+        val samsung = FakeJuneSpeechEngine().apply { lastLoadNote = "음성 파일 4개 설치" }
+        val notes = mutableListOf<String>()
+        val engine = createEngine(notes = notes, samsung = samsung)
+        assertThat(engine.open()).isNull()
+        engine.speak("안녕하세요")
+        assertThat(notes.first()).isEqualTo("삼성 준비: 음성 파일 4개 설치")
+        assertThat(notes.last()).startsWith("삼성 · 5자")
+        assertThat(notes.last()).endsWith(" · 음성 파일 4개 설치")
+    }
+
+    @Test
+    fun `nothing can be read when both engines fail to open`() = runTest {
+        val samsung = FakeJuneSpeechEngine(openResult = JuneSpeakResult.EngineNotReady)
+        val phone = FakeJuneSpeechEngine(openResult = JuneSpeakResult.NoKoreanVoice)
+        val engine = createEngine(phone = phone, samsung = samsung)
+        assertThat(engine.open()).isEqualTo(JuneSpeakResult.NoKoreanVoice)
+    }
+
+    @Test
+    fun `the Samsung engine is tried again on the next line after a failure`() = runTest {
+        val samsung = FakeJuneSpeechEngine(speakResult = false)
+        val phone = FakeJuneSpeechEngine()
+        val engine = createEngine(phone = phone, samsung = samsung)
+        engine.open()
+        engine.speak("첫 줄")
+        samsung.speakResult = true
+        engine.speak("둘째 줄")
+        assertThat(samsung.spoken).containsExactly("첫 줄", "둘째 줄").inOrder()
+        assertThat(phone.spoken).containsExactly("첫 줄")
+    }
+
+    @Test
+    fun `the block reason and the audio focus come from the phone engine`() = runTest {
+        val samsung = FakeJuneSpeechEngine(block = null)
+        val phone = FakeJuneSpeechEngine(block = JuneSpeakBlock.NoBluetooth)
+        val engine = createEngine(phone = phone, samsung = samsung)
+        assertThat(engine.currentBlock()).isEqualTo(JuneSpeakBlock.NoBluetooth)
+        assertThat(engine.requestFocus()).isTrue()
+        assertThat(phone.focusRequestCount).isEqualTo(1)
+        assertThat(samsung.focusRequestCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `closing releases both engines`() = runTest {
+        val samsung = FakeJuneSpeechEngine()
+        val phone = FakeJuneSpeechEngine()
+        val engine = createEngine(phone = phone, samsung = samsung)
+        engine.open()
+        engine.speak("안녕하세요")
+        engine.close()
+        assertThat(samsung.closeCount).isEqualTo(1)
+        assertThat(phone.closeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `the phone engine is only opened when it is needed`() = runTest {
+        val samsung = FakeJuneSpeechEngine()
+        val phone = FakeJuneSpeechEngine()
+        val engine = createEngine(phone = phone, samsung = samsung)
+        engine.open()
+        engine.speak("안녕하세요")
+        assertThat(phone.openCount).isEqualTo(0)
+        samsung.speakResult = false
+        engine.speak("둘째 줄")
+        assertThat(phone.openCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `the note of a line read by the Samsung voice says which voice read it and the time it took`() = runTest {
+        val notes = mutableListOf<String>()
+        val engine = createEngine(notes = notes, samsung = FakeJuneSpeechEngine())
         engine.open()
         engine.speak("안녕하세요")
         assertThat(notes).hasSize(1)
-        assertThat(notes.first()).startsWith("삼성 · 5자")
+        assertThat(notes.first()).startsWith("삼성 · 5자 · 생성 ")
     }
 
     @Test
     fun `the phone engine reads when the Samsung voice is chosen but not available`() = runTest {
         val phone = FakeJuneSpeechEngine()
         val notes = mutableListOf<String>()
-        val engine = createEngine(phone = phone, chosen = JuneVoiceEngineChoice.Samsung, notes = notes, samsung = null)
+        val engine = createEngine(phone = phone, notes = notes, samsung = null)
         assertThat(engine.open()).isNull()
         assertThat(engine.speak("안녕하세요")).isTrue()
         assertThat(phone.spoken).containsExactly("안녕하세요")
         assertThat(notes).containsExactly("폰 기본 대체(삼성 없음)")
-    }
-
-    @Test
-    fun `closing releases the Samsung engine too`() = runTest {
-        val samsung = FakeJuneSpeechEngine()
-        val builtIn = FakeJuneSpeechEngine()
-        val engine = createEngine(builtIn = builtIn, chosen = JuneVoiceEngineChoice.Samsung, samsung = samsung)
-        engine.open()
-        engine.speak("안녕하세요")
-        engine.close()
-        assertThat(samsung.closeCount).isEqualTo(1)
-        assertThat(builtIn.closeCount).isEqualTo(1)
     }
 }
