@@ -30,6 +30,9 @@ internal const val MEMO_DIAG_PULL = "diag_pull"
 internal const val MEMO_DIAG_PUSH = "diag_push"
 internal const val MEMO_DIAG_RESULTS = "diag_results"
 
+/** 앱30 ③: the steps of the last answered card (`{"id", "a", "p", "s", "d", "r"}`), its own shape. */
+internal const val MEMO_DIAG_ANSWER = "diag_answer"
+
 /** One remembered event of the diagnosis: when, how many, and the short result. */
 internal data class MemoDiagMark(val atMs: Long, val count: Int? = null, val result: String? = null) {
     fun toJson(): String = JSONObject().put("at", atMs).apply {
@@ -43,6 +46,104 @@ internal data class MemoDiagMark(val atMs: Long, val count: Int? = null, val res
             val at = o.optLong("at", 0L).takeIf { it > 0 } ?: return null
             return MemoDiagMark(at, if (o.has("n")) o.optInt("n") else null, o.optString("r").takeIf { it.isNotEmpty() })
         }
+    }
+}
+
+/*
+ * 앱30 ③ (관리자 2026-10-26: 수락 카드가 "처리 중"에서 멈춤): the steps of one answered card, so the next stall says at
+ * once where it stopped. Times and the last four characters of the proposal id only — never a title or a body.
+ */
+
+/** The answer of the card reached the server and the server said so (`제안결과`). */
+internal const val MEMO_ANSWER_END_ANSWERED = "응답"
+
+/** No answer came, but the server's proposal list no longer has the card: it is done (앱30 ②). */
+internal const val MEMO_ANSWER_END_LISTED = "목록 확인"
+
+/** The request went out and no answer came in time (an answer that could not be decrypted looks the same). */
+internal const val MEMO_ANSWER_END_UNREAD = "응답 못 읽음"
+
+/** The request itself did not go out. */
+internal const val MEMO_ANSWER_END_FAILED = "보내기 실패"
+
+/** The screen went away while the answer was on its way: whether the server got it is unknown (결정기록 D5). */
+internal const val MEMO_ANSWER_END_CANCELLED = "취소"
+
+/** One answered card as the diagnosis remembers it. [answer]: 수락 / 거절 / 보류 ([result] null = still on its way). */
+internal data class MemoAnswerTrace(
+    val id: String,
+    val answer: String,
+    val pressedMs: Long,
+    val sentMs: Long? = null,
+    val doneMs: Long? = null,
+    val result: String? = null,
+) {
+    fun toJson(): String = JSONObject().put("id", id).put("a", answer).put("p", pressedMs).apply {
+        sentMs?.let { put("s", it) }
+        doneMs?.let { put("d", it) }
+        result?.let { put("r", it) }
+    }.toString()
+
+    companion object {
+        fun parse(raw: String?): MemoAnswerTrace? {
+            val o = raw?.let { tryOrNull { JSONObject(it) } } ?: return null
+            val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return null
+            val pressed = o.optLong("p", 0L).takeIf { it > 0 } ?: return null
+            return MemoAnswerTrace(
+                id = id,
+                answer = o.optString("a").ifEmpty { MEMO_SUGGESTION_ACCEPTED },
+                pressedMs = pressed,
+                sentMs = o.optLong("s", 0L).takeIf { it > 0 },
+                doneMs = o.optLong("d", 0L).takeIf { it > 0 },
+                result = o.optString("r").takeIf { it.isNotEmpty() },
+            )
+        }
+    }
+}
+
+/** The last four characters of a proposal id, without its file suffix: enough to tell two cards apart. */
+internal fun memoAnswerIdTail(id: String): String = id.substringBeforeLast('.').takeLast(4)
+
+private fun memoAnswerLabel(answer: String): String = when (answer) {
+    MEMO_SUGGESTION_DISMISSED -> "마지막 거절"
+    MEMO_SUGGESTION_DEFERRED -> "마지막 보류"
+    else -> "마지막 수락"
+}
+
+/** `마지막 수락: 눌림 09:10:12 · 올림 09:10:14 · 응답 09:38:45 (…ilps)`; "없음" when no card was answered yet. */
+internal fun memoAnswerTraceLine(t: MemoAnswerTrace?, nowMs: Long): String {
+    if (t == null) return "${memoAnswerLabel(MEMO_SUGGESTION_ACCEPTED)}: 없음"
+    val steps = mutableListOf("눌림 ${memoDiagTime(t.pressedMs, nowMs)}")
+    t.sentMs?.let { steps += "올림 ${memoDiagTime(it, nowMs)}" }
+    when {
+        t.doneMs != null -> steps += "${t.result ?: "끝"} ${memoDiagTime(t.doneMs, nowMs)}"
+        t.result != null -> steps += t.result
+        else -> steps += "기다리는 중"
+    }
+    return "${memoAnswerLabel(t.answer)}: ${steps.joinToString(" · ")} (…${memoAnswerIdTail(t.id)})"
+}
+
+/** The remembered answer steps, null when none. */
+internal fun memoAnswerTraceOf(db: MemoDb): MemoAnswerTrace? = MemoAnswerTrace.parse(db.state(MEMO_DIAG_ANSWER))
+
+/** 앱30 ③: a card was answered ([answer]) just now: the steps start again for it. Never throws. */
+internal fun memoAnswerPressed(db: MemoDb, id: String, answer: String, nowMs: Long) {
+    tryOrNull { db.setState(MEMO_DIAG_ANSWER, MemoAnswerTrace(id, answer, nowMs).toJson()) }
+}
+
+/** 앱30 ③: a `sync_push` carrying [ids] went out: the 올림 time of the remembered card when it is one of them. */
+internal fun memoAnswerSent(db: MemoDb, ids: Collection<String>, nowMs: Long) =
+    updateAnswerTrace(db, ids) { it.copy(sentMs = nowMs, doneMs = null, result = null) }
+
+/** 앱30 ③: how the remembered card ended ([result]), when it is one of [ids]. */
+internal fun memoAnswerEnded(db: MemoDb, ids: Collection<String>, result: String, nowMs: Long) =
+    updateAnswerTrace(db, ids) { it.copy(doneMs = nowMs, result = result) }
+
+private fun updateAnswerTrace(db: MemoDb, ids: Collection<String>, change: (MemoAnswerTrace) -> MemoAnswerTrace) {
+    tryOrNull {
+        val old = memoAnswerTraceOf(db) ?: return@tryOrNull
+        if (old.id !in ids) return@tryOrNull
+        db.setState(MEMO_DIAG_ANSWER, change(old).toJson())
     }
 }
 
@@ -68,6 +169,8 @@ internal data class MemoProposalDiag(
     /** The suggestion answers still in the outbox, oldest first: each one's next try and reason. */
     val unsent: List<MemoUnsentAnswer>,
     val results: MemoDiagMark?,
+    /** 앱30 ③: the steps of the last answered card (null: none answered on this phone yet). */
+    val answer: MemoAnswerTrace? = null,
 )
 
 /** One suggestion answer not confirmed by the server yet. [nextTryMs] 0 = now; [reason] null = never failed. */
@@ -138,7 +241,8 @@ internal fun memoProposalDiagLines(d: MemoProposalDiag, reader: MemoReaderDiag?,
     val readerLine = reader?.let { r ->
         "응답 읽기: ${r.state} ${memoDiagTime(r.atMs, nowMs)}" + (r.lastAnswerMs?.let { " · 마지막 응답 ${memoDiagTime(it, nowMs)}" } ?: " · 받은 응답 없음")
     } ?: "응답 읽기: 이번 실행에서 시작 안 함"
-    return listOf(index + indexFail, pull, push, local) + unsent + listOf(results, readerLine)
+    // 앱30 ③: last, so the lines before it keep their place (결정기록 D7).
+    return listOf(index + indexFail, pull, push, local) + unsent + listOf(results, readerLine, memoAnswerTraceLine(d.answer, nowMs))
 }
 
 /** The counts of the photo line, read from the existing attachment columns. */
@@ -157,7 +261,7 @@ internal fun memoPhotoDiagOf(db: MemoDb): MemoPhotoDiag {
 internal fun memoProposalDiagOf(db: MemoDb): MemoProposalDiag {
     val suggestions = db.suggestions()
     val answers = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }
-    val marks = db.states(listOf(MEMO_DIAG_INDEX, MEMO_DIAG_INDEX_FAIL, MEMO_DIAG_PULL, MEMO_DIAG_PUSH, MEMO_DIAG_RESULTS))
+    val marks = db.states(listOf(MEMO_DIAG_INDEX, MEMO_DIAG_INDEX_FAIL, MEMO_DIAG_PULL, MEMO_DIAG_PUSH, MEMO_DIAG_RESULTS, MEMO_DIAG_ANSWER))
     return MemoProposalDiag(
         index = MemoDiagMark.parse(marks[MEMO_DIAG_INDEX]),
         indexFail = MemoDiagMark.parse(marks[MEMO_DIAG_INDEX_FAIL]),
@@ -167,6 +271,7 @@ internal fun memoProposalDiagOf(db: MemoDb): MemoProposalDiag {
         localAnswered = suggestions.count { it.status != MEMO_SUGGESTION_WAITING },
         unsent = answers.map { MemoUnsentAnswer(it.nextTryMs, it.tries, it.lastError) },
         results = MemoDiagMark.parse(marks[MEMO_DIAG_RESULTS]),
+        answer = MemoAnswerTrace.parse(marks[MEMO_DIAG_ANSWER]),
     )
 }
 

@@ -137,6 +137,18 @@ internal class MemoSyncRunner(
     /** 앱29 ②: both retries failed: the top bar says 받기 필요 until a pull goes well (open, back, the button). */
     val pullNeeded: StateFlow<Boolean> = _pullNeeded.asStateFlow()
 
+    /** 앱30 ②: the confirm pulls asked for so far. */
+    private var confirmSeq = 0L
+
+    private val _answerConfirm = MutableStateFlow<MemoAnswerConfirm?>(null)
+
+    /**
+     * 앱30 ② (관리자 2026-10-26: 수락 카드가 "처리 중 · 메모봇에 전하는 중"에서 멈춤): the one confirm pull the screen should
+     * make after a `sync_push` that carried card answers and left them unconfirmed, null when none is due — always null
+     * while the answers go through, so there is no timer then. One per push round, never a chain of them (결정기록 D4).
+     */
+    val answerConfirm: StateFlow<MemoAnswerConfirm?> = _answerConfirm.asStateFlow()
+
     /**
      * 앱28 진단: remembers [mark] under [key] (sync_state, no new column) and makes the settings text again. Only shows
      * what happened: a failure here never reaches the sync.
@@ -194,6 +206,41 @@ internal class MemoSyncRunner(
             pullLocked()
         }
     } ?: timedOut("받기 재시도")
+
+    /**
+     * 앱30 ②: the confirm pull [seq] of [answerConfirm] is due (the screen waited for it while shown). A card answer went
+     * up and no result came for it, which in an encrypted room also happens when the server did the work and only its
+     * answer was missed (it can be read by the open screen alone). One pull, which reads the proposal list and settles
+     * every answer the server no longer lists ([settleAnswersNotListed]): the card then closes instead of staying
+     * "처리 중" until the next open. Nothing is sent again here (결정기록 D6) — a push answered meanwhile makes this a
+     * no-op. The request is cleared afterwards whatever happened, so no chain of confirms can build up.
+     */
+    suspend fun confirmAnswers(seq: Long): Boolean = withTimeoutOrNull(AUTO_TIMEOUT_MS) {
+        mutex.withLock {
+            if (_answerConfirm.value?.seq != seq) return@withLock true.also { log("수락 확인 생략(그 뒤 올리기 있음)") }
+            if (waitingAnswers().isEmpty()) {
+                _answerConfirm.value = null
+                return@withLock true.also { log("수락 확인 생략(기다리는 답 없음)") }
+            }
+            log("수락 확인 받기 (답 ${waitingAnswers().size}건)")
+            val ok = pullLocked()
+            _answerConfirm.value = null
+            ok
+        }
+    } ?: timedOut("수락 확인 받기")
+
+    /** The card answers still waiting for the server (the outbox rows). */
+    private fun waitingAnswers(): List<MemoOutboxRow> = db.outbox().filter { it.kind == MEMO_OUTBOX_PROPOSAL }
+
+    /** 앱30 ②: one confirm pull is due after this push round (a new number: an older one no longer counts). */
+    private fun askAnswerConfirm() {
+        _answerConfirm.value = MemoAnswerConfirm(++confirmSeq, MEMO_ANSWER_CONFIRM_MS)
+    }
+
+    /** 앱30 ②: nothing waits for the server any more: no confirm pull is due (the screen then waits for nothing). */
+    private fun clearAnswerConfirmIfDone() {
+        if (waitingAnswers().isEmpty()) _answerConfirm.value = null
+    }
 
     /**
      * 앱19 ① / 앱29 ①: a review of [noteIds] ended (any result: a title changed by the review comes with no card), so what
@@ -414,6 +461,8 @@ internal class MemoSyncRunner(
 
     /** Copies the waiting bot suggestions of the index into the local `suggestion` table (설계 §d-③). */
     private suspend fun syncSuggestions() {
+        // 앱30 ②: the list is about the moment the read started; an answer written after that is not judged by it (D8).
+        val readStartedMs = clock()
         val items = transport.fetchProposals()
         if (items == null) {
             diagMark(MEMO_DIAG_INDEX_FAIL, MemoDiagMark(clock()))
@@ -449,7 +498,43 @@ internal class MemoSyncRunner(
             // Gone from the index (answered elsewhere, expired): forgotten unless our answer still waits to be sent.
             local.values.filter { it.id !in seen && it.id !in answering }.forEach { db.deleteSuggestion(it.id) }
         }
+        settleAnswersNotListed(seen, readStartedMs)
         MemoLocalChanges.changed()
+    }
+
+    /**
+     * 앱30 ② (결정기록 D2·D3): the card answers the server no longer lists as waiting are over, whatever answer event
+     * this phone did or did not read. The server rewrites the whole list after every op that changes something, so an
+     * id missing from a list that was read well means it is not waiting there any more: it carried out our answer
+     * (`수락`/`거절`/`보류`), or the proposal went away (expired, its note trashed, already reflected). In both cases
+     * keeping the answer in the outbox only keeps the card locked, so it is dropped and the card closes.
+     *
+     * [listed] are the ids of the list that was just read ([readStartedMs] when that read started): an answer written
+     * after the read began is left alone — the list cannot say anything about it yet (D8). Nothing is sent here.
+     * Known limit: the server lists its newest 50 proposals, so an answer to a card pushed out of that list is dropped
+     * too (that card never comes back to this phone either).
+     */
+    private fun settleAnswersNotListed(listed: Set<String>, readStartedMs: Long) {
+        val rows = waitingAnswers().filter { it.target !in listed && it.updatedMs <= readStartedMs }
+        if (rows.isEmpty()) {
+            clearAnswerConfirmIfDone()
+            return
+        }
+        val ids = rows.map { it.target }
+        db.transaction {
+            rows.forEach { row ->
+                db.dropOutbox(row.seq)
+                db.deleteSuggestion(row.target)
+            }
+            // 앱9 C: an index written before the server had the answer still lists them; they must not come back.
+            memoRememberAnswered(db, ids)
+        }
+        // 앱25: nothing is on its way for them any more, so no "서버에 닿지 못함" line stays on a card.
+        MemoAnswerFailures.clear(ids)
+        memoAnswerEnded(db, ids, MEMO_ANSWER_END_LISTED, clock())
+        clearAnswerConfirmIfDone()
+        log("수락 확인: 서버 목록에 없는 답 ${rows.size}건 정리")
+        publishDiag()
     }
 
     // ---------------------------------------------------------------- push
@@ -486,9 +571,21 @@ internal class MemoSyncRunner(
         log("올리기 요청 노트 ${notes.size}건 · 제안응답 ${answers.size}건 · 폴더아이콘 ${icons.size}건")
         // 앱15 F: the notes of this push show "동기화 중" from the request to the answer (or the failure).
         val sending = notes.map { it.target }
+        val answerIds = answers.map { it.target }
         MemoSendingNotes.start(sending)
+        // 앱30 ③: the moment the request with these answers went out.
+        if (answerIds.isNotEmpty()) memoAnswerSent(db, answerIds, clock())
         val answer = try {
             callOrNull(MemoOp("sync_push", args.toArgs()))
+        } catch (e: CancellationException) {
+            // 앱30 ③ (결정기록 D5): the screen went away while the answer was on its way. Whether the server got it is
+            // unknown, so nothing says "서버에 닿지 못함"; the answer stays in the outbox and one confirm pull is due.
+            if (answerIds.isNotEmpty()) {
+                memoAnswerEnded(db, answerIds, MEMO_ANSWER_END_CANCELLED, clock())
+                diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, memoDiagReason(MEMO_ANSWER_END_CANCELLED, "화면 닫힘")))
+                askAnswerConfirm()
+            }
+            throw e
         } finally {
             MemoSendingNotes.end(sending)
         }
@@ -498,12 +595,25 @@ internal class MemoSyncRunner(
             MemoSync.failUploads(db, notes + answers + icons, now, "서버에 닿지 못함")
             // 앱28 진단: the outbox reason is the same for both; this line tells a send failure from a missed answer.
             // 앱29 ③: in the same words as the pull line (kind, HTTP code).
-            diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, memoDiagReason("실패", memoCallFailureText(failureOf(answer)))))
+            val failure = failureOf(answer)
+            diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, memoDiagReason("실패", memoCallFailureText(failure))))
+            if (answerIds.isNotEmpty()) {
+                // 앱30 ③: a request that went out and got no answer is not the same as one that never went out.
+                val how = if (failure.kind == MemoCallFailKind.Timeout) MEMO_ANSWER_END_UNREAD else MEMO_ANSWER_END_FAILED
+                memoAnswerEnded(db, answerIds, how, clock())
+                // 앱30 ②: the answer may well be done on the server; one confirm pull of the screen will tell.
+                askAnswerConfirm()
+            }
             return Pushed(false, 0)
         }
         diagMark(MEMO_DIAG_PUSH, MemoDiagMark(clock(), answers.size, "답 받음 · 노트 ${notes.size}건 · 제안응답 ${answers.size}건"))
         val result = MemoSync.applyAck(db, ack.content, notes, clock())
         applyProposalResults(ack.content.optJSONArray("제안결과"), answers)
+        if (answerIds.isNotEmpty()) {
+            // 앱30 ②: answers this round did not settle (the server answered without a result for them) may still be
+            // done on the server: one confirm pull of the screen tells. Everything settled: nothing is due.
+            if (waitingAnswers().any { it.target in answerIds }) askAnswerConfirm() else clearAnswerConfirmIfDone()
+        }
         fillPhotoLocations(notes)
         MemoSync.applyFolderIconAck(db, icons)
         log("올리기 응답 받음 ${result.accepted} · 합침 ${result.merged} · 거절 ${result.rejected}")
@@ -564,6 +674,8 @@ internal class MemoSyncRunner(
         }
         // 앱25: the server answered them: no "서버에 닿지 못함" line any more.
         MemoAnswerFailures.clear(answered.map { it.second.target })
+        // 앱30 ③: the answer of the card came back from the server (the step the stalled card never reached).
+        if (answered.isNotEmpty()) memoAnswerEnded(db, answered.map { it.second.target }, MEMO_ANSWER_END_ANSWERED, clock())
         if (answered.isNotEmpty()) log("제안결과 ${answered.size}건 정리")
         // 앱28 진단: the last answer of the server that carried proposal results (all of them, ours or not).
         if (count > 0) diagMark(MEMO_DIAG_RESULTS, MemoDiagMark(clock(), count, "이 폰 답과 맞음 ${answered.size}건"))
@@ -772,6 +884,33 @@ internal suspend fun memoRetryPullWhenDue(visible: Boolean, retry: MemoPullRetry
     if (!visible || retry == null) return false
     sleep(retry.waitMs)
     pull(retry.seq)
+    return true
+}
+
+/**
+ * 앱30 ②: how long after a push that left a card answer unconfirmed the screen checks the server's proposal list. Longer
+ * than the answer wait of one call ([MEMO_SYNC_TIMEOUT_MILLIS], 30 s), so a round that is still going is not cut into
+ * (결정기록 D4).
+ */
+internal const val MEMO_ANSWER_CONFIRM_MS = 40_000L
+
+/** 앱30 ②: one confirm pull the screen may make, [waitMs] after the push; [seq] tells it from a later one. */
+internal data class MemoAnswerConfirm(val seq: Long, val waitMs: Long)
+
+/**
+ * 앱30 ②: the screen side of one confirm: only while [visible] and when one is asked for, it waits
+ * [MemoAnswerConfirm.waitMs] ([sleep]: cancelled with the screen) and then checks ([check] with its seq). True when it
+ * checked. Nothing is asked for while the answers go through, so nothing waits then (no timer, 관리자 결정 10/12).
+ */
+internal suspend fun memoConfirmAnswersWhenDue(
+    visible: Boolean,
+    confirm: MemoAnswerConfirm?,
+    sleep: suspend (Long) -> Unit,
+    check: suspend (Long) -> Unit,
+): Boolean {
+    if (!visible || confirm == null) return false
+    sleep(confirm.waitMs)
+    check(confirm.seq)
     return true
 }
 
