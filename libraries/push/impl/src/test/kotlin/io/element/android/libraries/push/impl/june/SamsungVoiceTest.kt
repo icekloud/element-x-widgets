@@ -11,10 +11,7 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.ByteArrayInputStream
 import java.io.File
-import java.io.IOException
-import java.io.InputStream
 
 /**
  * 앱30: the files of the Samsung voice, put where the engine looks for them, and the order of the calls getting it ready.
@@ -26,6 +23,7 @@ class SamsungVoiceTest {
     @get:Rule val temporaryFolder = TemporaryFolder()
 
     private val assets = FakeSamsungVoiceAssets()
+    private val linker = FakeSamsungVoiceLinker()
 
     @Test
     fun `the folder name of a voice is the one the engine looks for`() {
@@ -51,46 +49,46 @@ class SamsungVoiceTest {
     @Test
     fun `installing puts the three files in the folder of the voice`() {
         val root = temporaryFolder.newFolder("files")
-        val copied = samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets)
+        val copied = samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat(copied).containsExactly("cfg", "lng", "regular.ivc").inOrder()
         val folder = File(root, "ko_KR_l08")
         assertThat(folder.list()?.toList()).containsExactly("cfg", "lng", "regular.ivc")
-        assertThat(File(folder, "cfg").readBytes()).isEqualTo(assets.content("cfg"))
+        assertThat(File(folder, "cfg").readBytes()).isEqualTo(assets.content("ko_KR_l08/cfg"))
     }
 
     @Test
     fun `installing again copies nothing`() {
         val root = temporaryFolder.newFolder("files")
-        samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets)
-        assertThat(samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets)).isEmpty()
-        assertThat(assets.opened).containsExactly("cfg", "lng", "regular.ivc")
+        samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets, linker)
+        assertThat(samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets, linker)).isEmpty()
+        assertThat(assets.opened).containsExactly("ko_KR_l08/cfg", "shared/lng", "ko_KR_l08/regular.ivc")
     }
 
     @Test
     fun `a file cut in the middle is copied again`() {
         val root = temporaryFolder.newFolder("files")
-        samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets)
-        File(root, "ko_KR_l08/lng").writeBytes(ByteArray(3))
-        assertThat(samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets)).containsExactly("lng")
-        assertThat(File(root, "ko_KR_l08/lng").readBytes()).isEqualTo(assets.content("lng"))
+        samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets, linker)
+        File(root, "ko_KR_l08/regular.ivc").writeBytes(ByteArray(3))
+        assertThat(samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets, linker)).containsExactly("regular.ivc")
+        assertThat(File(root, "ko_KR_l08/regular.ivc").readBytes()).isEqualTo(assets.content("ko_KR_l08/regular.ivc"))
     }
 
     @Test
     fun `a file that cannot be read says where it stopped`() {
         val root = temporaryFolder.newFolder("files")
-        assets.failing = "lng"
-        val error = runCatching { samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets) }.exceptionOrNull()
+        assets.failing = "ko_KR_l08/regular.ivc"
+        val error = runCatching { samsungVoiceInstall(root, SAMSUNG_VOICE_KO_L08, assets, linker) }.exceptionOrNull()
         assertThat(error).isInstanceOf(JuneVoiceLoadException::class.java)
-        assertThat((error as JuneVoiceLoadException).failure.reason).isEqualTo("복사 lng · IOException: broken asset")
+        assertThat((error as JuneVoiceLoadException).failure.reason).isEqualTo("복사 regular.ivc · IOException: broken asset")
         // The file is not left behind half written
-        assertThat(File(root, "ko_KR_l08").list()?.toList()).containsExactly("cfg")
+        assertThat(File(root, "ko_KR_l08").list()?.toList()).containsExactly("cfg", "lng")
     }
 
     @Test
     fun `the voice is ready once its files are there and the engine opened it`() {
         val root = temporaryFolder.newFolder("files")
         val native = FakeSamsungTtsNative(sampleRate = 24_000)
-        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets)
+        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat(ready).isInstanceOf(SamsungVoiceReady.Ready::class.java)
         assertThat((ready as SamsungVoiceReady.Ready).sampleRate).isEqualTo(24_000)
         assertThat(ready.copiedFiles).hasSize(3)
@@ -111,7 +109,7 @@ class SamsungVoiceTest {
                 return SAMSUNG_TTS_OK
             }
         }
-        samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets)
+        samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat(native.filesWhenAsked).containsExactly("cfg", "lng", "regular.ivc")
     }
 
@@ -119,7 +117,7 @@ class SamsungVoiceTest {
     fun `a library that cannot be loaded says so without any path`() {
         val root = temporaryFolder.newFolder("files")
         val native = FakeSamsungTtsNative(loadFailure = UnsatisfiedLinkError("dlopen failed: /data/app/lib.so has bad alignment"))
-        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets)
+        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat(ready).isInstanceOf(SamsungVoiceReady.Failed::class.java)
         val reason = (ready as SamsungVoiceReady.Failed).reason
         assertThat(reason).startsWith("라이브러리 적재 실패 · UnsatisfiedLinkError: dlopen failed:")
@@ -130,7 +128,7 @@ class SamsungVoiceTest {
     fun `a voice the engine refuses says what it answered`() {
         val root = temporaryFolder.newFolder("files")
         val native = FakeSamsungTtsNative(setVoiceCode = 11)
-        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets)
+        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat((ready as SamsungVoiceReady.Failed).reason).isEqualTo("음성 지정 실패(음성 파일 없음)")
         assertThat(native.calls).doesNotContain("initialize")
     }
@@ -139,16 +137,16 @@ class SamsungVoiceTest {
     fun `an engine that cannot be opened says what it answered`() {
         val root = temporaryFolder.newFolder("files")
         val native = FakeSamsungTtsNative(initializeCode = 227)
-        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets)
+        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat((ready as SamsungVoiceReady.Failed).reason).isEqualTo("엔진 열기 실패(cfg 열기 실패)")
     }
 
     @Test
     fun `files that cannot be copied stop before the library is loaded`() {
         val root = temporaryFolder.newFolder("files")
-        assets.failing = "cfg"
+        assets.failing = "ko_KR_l08/cfg"
         val native = FakeSamsungTtsNative()
-        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets)
+        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat((ready as SamsungVoiceReady.Failed).reason).isEqualTo("음성 파일 복사 cfg · IOException: broken asset")
         assertThat(native.loadCount).isEqualTo(0)
     }
@@ -157,7 +155,7 @@ class SamsungVoiceTest {
     fun `an engine that does not say its sample rate is read at the rate of the voice`() {
         val root = temporaryFolder.newFolder("files")
         val native = FakeSamsungTtsNative(sampleRate = 0)
-        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets)
+        val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, assets, linker)
         assertThat((ready as SamsungVoiceReady.Ready).sampleRate).isEqualTo(SAMSUNG_TTS_DEFAULT_SAMPLE_RATE)
     }
 
@@ -173,30 +171,5 @@ class SamsungVoiceTest {
         assertThat(samsungTtsErrorText(10)).isEqualTo("인자 이상(음성 이름)")
         assertThat(samsungTtsErrorText(1_000_493)).isEqualTo("신경망 엔진 초기화 실패")
         assertThat(samsungTtsErrorText(12_345)).isEqualTo("오류 12345")
-    }
-}
-
-/** The three files of a voice, small enough for a test, as they are in the assets. */
-private class FakeSamsungVoiceAssets : SamsungVoiceAssets {
-    /** The file whose reading throws, by its name in the voice folder. */
-    var failing: String? = null
-
-    val opened = mutableListOf<String>()
-
-    private val contents = SAMSUNG_VOICE_FILES.mapIndexed { index, name ->
-        name to ByteArray(16 * (index + 1)) { (it + index).toByte() }
-    }.toMap()
-
-    fun content(name: String): ByteArray = contents.getValue(name)
-
-    private fun nameOf(asset: String): String = asset.substringAfterLast('/').removeSuffix(SAMSUNG_VOICE_ASSET_SUFFIX)
-
-    override fun length(name: String): Long = content(nameOf(name)).size.toLong()
-
-    override fun open(name: String): InputStream {
-        val file = nameOf(name)
-        opened += file
-        if (file == failing) throw IOException("broken asset")
-        return ByteArrayInputStream(content(file))
     }
 }

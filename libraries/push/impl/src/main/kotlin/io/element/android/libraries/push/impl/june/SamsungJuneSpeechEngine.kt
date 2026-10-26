@@ -15,6 +15,8 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.element.android.libraries.core.extensions.runCatchingExceptions
+import io.element.android.libraries.designsystem.june.JuneSamsungVoiceChoice
+import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.di.annotations.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -34,8 +36,8 @@ private const val POLL_DELAY_MILLIS = 50L
 private const val STALLED_POLLS = 40
 
 /**
- * 앱30: reads a line aloud with the Korean voice of the Samsung engine shipped inside the app (voice l08), instead of the text to
- * speech engine of the phone.
+ * 앱30: reads a line aloud with a Korean voice of the Samsung engine shipped inside the app, instead of the text to speech engine
+ * of the phone. 앱32: which of the four voices is used is the one chosen in the settings.
  *
  * The line is written the way it is read in Korean ([juneKoreanSpeechText]) and cut into chunks ([juneVoiceChunks]); each chunk is
  * read by the engine, which gives back 16 bit mono samples, and is played as soon as it is made. The audio is played exactly like
@@ -62,6 +64,12 @@ class SamsungJuneSpeechEngine(
     private val lock = Mutex()
 
     @Volatile private var sampleRate = 0
+
+    /** 앱32: the voice the engine is open with, so another chosen voice is noticed and the engine opened again for it. */
+    @Volatile private var openedVoice: SamsungVoice? = null
+
+    /** 앱32: the number of the voice being read with, for the notes and the trace shown in the settings. */
+    @Volatile private var openedChoice: JuneSamsungVoiceChoice = JuneSamsungVoiceChoice.Voice1
 
     /** Set when [close] was asked for while a line was being read: the engine is then closed once that line is done. */
     @Volatile private var closeWhenDone = false
@@ -90,24 +98,47 @@ class SamsungJuneSpeechEngine(
         lock.withLock { prepare() }
     }
 
-    /** Gets the engine ready if it is not, and says whether it can read. Only called while [lock] is held. */
+    /**
+     * Gets the engine ready if it is not, and says whether it can read. Only called while [lock] is held.
+     *
+     * 앱32: the voice is the one chosen in the settings. The library holds one engine for the whole process and the voice is read
+     * when it is opened, so choosing another one closes it and opens it again (the next line is then read with the new voice).
+     */
     private fun prepare(): JuneSpeakResult? {
+        val choice = JuneSettings.samsungVoice(context)
+        val voice = samsungVoiceOf(choice)
+        if (samsungVoiceNeedsReopen(openedVoice, voice)) {
+            Timber.tag(TAG).d("Another Samsung voice was chosen: the engine is opened again")
+            closeEngine()
+        }
         if (sampleRate > 0) return null
         closeWhenDone = false
         val root = File(context.filesDir, SAMSUNG_VOICE_ASSETS)
-        return when (val ready = samsungVoicePrepare(native, root, SAMSUNG_VOICE_KO_L08, SamsungAndroidVoiceAssets(context.assets))) {
+        val ready = samsungVoicePrepare(
+            native = native,
+            root = root,
+            voice = voice,
+            assets = SamsungAndroidVoiceAssets(context.assets),
+            linker = SamsungOsVoiceLinker(),
+        )
+        return when (ready) {
             is SamsungVoiceReady.Ready -> {
                 sampleRate = ready.sampleRate
+                openedVoice = voice
+                openedChoice = choice
                 lastLoadFailure = null
                 lastLoadNote = samsungVoiceOpenNote(ready.copiedFiles)
-                Timber.tag(TAG).d("The Samsung voice is ready at %d Hz", ready.sampleRate)
+                Timber.tag(TAG).d("The Samsung voice %s is ready at %d Hz", choice.shortLabel, ready.sampleRate)
                 null
             }
             is SamsungVoiceReady.Failed -> {
                 sampleRate = 0
-                lastLoadFailure = ready.reason
+                openedVoice = null
+                openedChoice = choice
+                // The number of the voice is kept in the reason: the settings then say which one could not be opened
+                lastLoadFailure = samsungVoiceFailure(choice, ready.reason)
                 lastLoadNote = null
-                Timber.tag(TAG).w("The Samsung voice is not ready: %s", ready.reason)
+                Timber.tag(TAG).w("The Samsung voice %s is not ready: %s", choice.shortLabel, ready.reason)
                 JuneSpeakResult.EngineNotReady
             }
         }
@@ -140,8 +171,13 @@ class SamsungJuneSpeechEngine(
         var writtenFrames = 0
         var track: AudioTrack? = null
         lastLineStats = null
-        // 앱31: what the reading did, so the settings of the phone can say where it stopped
-        val trace = SamsungSpeakTrace(voice = SAMSUNG_VOICE_KO_L08.folderName, sampleRate = rate, chunks = chunks.size)
+        // 앱31: what the reading did, so the settings of the phone can say where it stopped. 앱32: with the number of the voice
+        val voice = openedVoice ?: samsungVoiceOf(openedChoice)
+        val trace = SamsungSpeakTrace(
+            voice = samsungVoiceTraceName(openedChoice, voice),
+            sampleRate = rate,
+            chunks = chunks.size,
+        )
         try {
             val read = samsungReadChunks(native, chunks, trace) { samples ->
                 audioMillis += 1000L * samples.size / rate
@@ -263,6 +299,7 @@ class SamsungJuneSpeechEngine(
 
     private fun closeEngine() {
         closeWhenDone = false
+        openedVoice = null
         if (sampleRate == 0) return
         sampleRate = 0
         runCatchingExceptions { native.close() }.onFailure { Timber.tag(TAG).e(it, "Cannot close the Samsung voice") }
