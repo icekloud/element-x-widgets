@@ -54,9 +54,11 @@ android {
         }
     }
 
-    // Element June: the model of the built-in voice is read straight from the package, so it must not be compressed
+    // Element June: the model of the built-in voice is read straight from the package, so it must not be compressed.
+    // 앱30: the files of the Samsung voice (".smt") are left uncompressed too, so their length is known before they are copied
+    // to the folder the engine reads them from.
     androidResources {
-        noCompress += listOf("onnx")
+        noCompress += listOf("onnx", "smt")
     }
 }
 
@@ -146,6 +148,10 @@ dependencies {
 
     // Element June: the Korean voice built into the app (Supertonic 3, voice F1) runs with it
     implementation(libs.onnxruntime.android)
+
+    // 앱30: the Samsung voice engine shipped in jniLibs is a plain C library, called straight from Kotlin with JNA (the same
+    // version the Matrix SDK already uses). It is only loaded once that voice is chosen.
+    implementation(variantOf(libs.jna) { artifactType("aar") })
 
     implementation(libs.sqldelight.driver.android)
     implementation(libs.sqlcipher)
