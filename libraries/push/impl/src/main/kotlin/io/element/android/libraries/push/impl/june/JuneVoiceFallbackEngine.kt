@@ -43,6 +43,18 @@ interface JuneVoiceLoadReport {
 }
 
 /**
+ * 앱31: an engine that can tell why the last line gave no sound, so a failure can be told apart from the settings of the phone
+ * alone. An engine that does not report anything keeps the old note ("폰 기본 대체(생성 실패)").
+ */
+interface JuneVoiceSpeakReport {
+    /** Why the last [JuneSpeechEngine.speak] gave false, for instance "샘플 0개" or "입력 코드 7(중단됨)", or null. */
+    val lastSpeakFailure: String?
+
+    /** How far the last line got, for instance "열기 OK · ko_KR_l08 · 1/2청크 18자 · 입력 OK · 콜백 4회 · 샘플 0개 · 트랙 없음 · 24000Hz". */
+    val lastSpeakTrace: String?
+}
+
+/**
  * Element June: reads the 🔊 lines with the engine chosen in the settings, and falls back to the phone engine for the lines the
  * chosen voice cannot read (model missing, out of memory, failure, too slow). A failure never changes the setting: the chosen
  * voice is tried again on the next line.
@@ -128,11 +140,23 @@ internal class JuneVoiceFallbackEngine(
                 note(readNote(text, System.currentTimeMillis() - start))
                 return true
             }
-            note(if (spoken == null) "폰 기본 대체(시간 초과)" else "폰 기본 대체(생성 실패)")
+            note(if (spoken == null) "폰 기본 대체(시간 초과)" else speakFailureNote(voice))
         }
         // The line is never lost: the phone engine reads it
         if (openPhone() != null) return false
         return runCatchingExceptions { phone.speak(text) }.getOrDefault(false)
+    }
+
+    /**
+     * 앱31: why the chosen voice gave no sound, and how far it got, for instance
+     * "폰 기본 대체(삼성 생성 실패: 샘플 0개) · 열기 OK · ko_KR_l08 · 1/1청크 5자 · 입력 OK · 콜백 0회 · 샘플 0개 · 트랙 없음 · 24000Hz".
+     * An engine that reports nothing keeps the old note, so the line of a failure stays the same as before.
+     */
+    private fun speakFailureNote(voice: JuneSpeechEngine): String {
+        val report = voice as? JuneVoiceSpeakReport
+        val reason = report?.lastSpeakFailure ?: return "폰 기본 대체(생성 실패)"
+        val head = "폰 기본 대체($voiceLabel 생성 실패: $reason)"
+        return report.lastSpeakTrace?.let { "$head · $it" } ?: head
     }
 
     /** For instance "내장 · 42자 · 생성 6.1초 · 재생 5.8초", or the same without the audio length when the engine does not give it. */
