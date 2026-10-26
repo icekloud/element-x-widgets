@@ -129,6 +129,15 @@ internal fun MemoSyncEffects(roomId: String, timelineItems: ImmutableList<Timeli
         memoRetryPullWhenDue(visible, retry, sleep = { delay(it) }) { seq -> runner.retryPull(seq) }
     }
 
+    // 앱30 ②: a card answer that went up without a result (an encrypted room hands the answer to the open screen only,
+    // so a missed one looks the same as a server that did nothing): one check of the server's proposal list 40 s later,
+    // only while the screen is shown. A card the server already did is then closed instead of staying "처리 중".
+    // One per push round and none while the answers go through, so nothing waits on a timer then.
+    val answerConfirm by runner.answerConfirm.collectAsState()
+    LaunchedEffect(runner, visible, answerConfirm) {
+        memoConfirmAnswersWhenDue(visible, answerConfirm, sleep = { delay(it) }) { seq -> runner.confirmAnswers(seq) }
+    }
+
     // A local change while visible: wait for the input to stop, then one push. A new change restarts the wait.
     // 추가요청 2: the auto save of the editor writes locally only; the push waits for the editing to end (editing
     // turning false runs this effect again, so what piled up goes up in one round).

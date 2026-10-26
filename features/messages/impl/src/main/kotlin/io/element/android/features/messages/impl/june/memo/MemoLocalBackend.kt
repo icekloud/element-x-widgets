@@ -293,6 +293,8 @@ internal class MemoLocalBackend(
                     // 규약 v2 제안응답 has no folder field yet (질문.md): sent anyway, a server that knows it can use it.
                     (a["folder"] as? String)?.let { payload.put("폴더", it) }
                     db.enqueue(MEMO_OUTBOX_PROPOSAL, id, payload.toString(), now)
+                    // 앱30 ③: when this answer was pressed, for the diagnosis line (id tail and times only).
+                    memoAnswerPressed(db, id, answer, now)
                     ok(s.noteId)
                 }
                 else -> err("모르는 op: ${op.op}")
