@@ -137,6 +137,21 @@ internal object MemoTags {
 
     /** 앱15 F·G: the small sync mark beside the dates, the 편집 box of the open note and the room kept for it. */
     const val SYNC_MARK = "memo_sync_mark"
+
+    /** 앱32 요구 ②: the second line of that mark area — where the review of the note stands (none: no second line). */
+    const val REVIEW_MARK = "memo_review_mark"
+
+    /** 앱32 요구 ③: the 검토 현황 area at the top of the proposal screen, its rows and its 새로고침. */
+    const val REVIEW_STATUS = "memo_review_status"
+    const val REVIEW_STATUS_HEAD = "memo_review_status_head"
+    const val REVIEW_STATUS_LIST = "memo_review_status_list"
+    const val REVIEW_STATUS_ROW = "memo_review_status_row"
+    const val REVIEW_STATUS_GROUP = "memo_review_status_group"
+    const val REVIEW_STATUS_REFRESH = "memo_review_status_refresh"
+
+    /** 앱32 (추가요청 3): the floating proposal button and its badge. */
+    const val PANEL_FAB = "memo_panel_fab"
+    const val PANEL_FAB_BADGE = "memo_panel_fab_badge"
     const val NOTE_EDIT = "memo_note_edit"
     const val NOTE_EDIT_ROOM = "memo_note_edit_room"
     const val NOTE_PLACE = "memo_note_place"
@@ -278,7 +293,13 @@ internal class MemoController(
 
     /** A tap on a card or a pinned note: opens it, or in the selection mode selects / unselects it (never opens). */
     fun openOrSelect(id: String) {
-        if (select.active) select = select.toggle(id) else go { it.openNote(id) }
+        if (select.active) {
+            select = select.toggle(id)
+        } else {
+            // 앱32 결정기록 D5: opening a note is seeing where its review ended (a running one keeps its mark).
+            reviewSeen(id)
+            go { it.openNote(id) }
+        }
     }
 
     fun endSelect() {
@@ -348,6 +369,18 @@ internal class MemoController(
     /** 앱17: the review requests of the room (null: no server, e.g. the fake data; the review controls are not shown). */
     var reviewer: MemoReviewer? by mutableStateOf(null)
 
+    /**
+     * 앱32 요구 ① (관리자: "검토요청 햇는데 … 대기중엔 알수가 없음"): what the phone remembers about the reviews it asked
+     * for. Null only before the screen sets it (or with no phone database). It is written on every press and look-up,
+     * and read by the card marks and the 검토 현황 area of the proposal screen.
+     */
+    var reviewLog: MemoReviewLogKeeper? by mutableStateOf(null)
+
+    /** 앱32 요구 ②·결정기록 D5: the user saw where the review of [id] stands (a finished one loses its card mark). */
+    fun reviewSeen(id: String) {
+        reviewLog?.seen(id)
+    }
+
     /** 앱17: the small notice of a review request and of its end. */
     var notice by mutableStateOf<MemoNotice?>(null)
 
@@ -376,9 +409,16 @@ internal class MemoController(
             if (held.isNotEmpty()) notice = MemoNotice(memoReviewSentText(MemoReviewSent(emptyList())) + held)
             return
         }
+        // 앱32 요구 ①·⑦: one press is one batch of the review log, written down before the send so the cards show it at
+        // once. Only that a directive came, never its words (요구 ①).
+        val log = reviewLog
+        val batch = memoReviewBatchId(System.currentTimeMillis())
+        log?.asked(fresh, batch, withDirective = memoReviewDirective(directive) != null)
         scope.launch {
             before()
             val sent = r.request(fresh, directive)
+            log?.sawBoot(sent.boot)
+            log?.sent(batch, sent.accepted, sent.skipped, sent.failure, sent.boot)
             notice = MemoNotice(memoReviewSentText(sent) + held, memoReviewSentShowMs(sent))
             if (sent.accepted.isEmpty()) return@launch
             startFollowing(r, r.followOf(sent.accepted), lookFirst = false)
@@ -392,7 +432,20 @@ internal class MemoController(
      */
     private fun startFollowing(r: MemoReviewer, f: MemoReviewFollow, lookFirst: Boolean) {
         val job = scope.launch(start = CoroutineStart.LAZY) {
-            memoReviewFinish(r.follow(f.ids, f.startMs, lookFirst), f.ids, show = { notice = MemoNotice(it, MEMO_NOTICE_RESULT_SHOW_MS) }, sync = reviewSync)
+            // 앱32 요구 ①·⑤ d: every look-up of the follow-up goes into the review log, and a follow-up that gives up
+            // (five minutes, or a failed look-up) leaves "확인을 멈췄습니다" on the notes instead of silence.
+            val log = reviewLog
+            val answer = r.follow(
+                ids = f.ids,
+                startMs = f.startMs,
+                lookFirst = lookFirst,
+                onLook = { look ->
+                    log?.sawBoot(look.boot)
+                    log?.looked(look.states, look.boot)
+                },
+                onGiveUp = { log?.gaveUp(f.ids) },
+            )
+            memoReviewFinish(answer, f.ids, show = { notice = MemoNotice(it, MEMO_NOTICE_RESULT_SHOW_MS) }, sync = reviewSync)
         }
         following[job] = f
         job.invokeOnCompletion { following -= job }
@@ -469,6 +522,15 @@ internal fun MemoScreen(
     val scope = rememberCoroutineScope()
     val nav = remember(roomId) { mutableStateOf(MemoLocation()) }
     val controller = remember(store) { MemoController(store, scope, nav) }
+    // 앱32 요구 ①: the review log lives in the phone database (the `sync_state` table, 결정기록 D1), so what the phone
+    // knows about a review outlives this screen. The fake data mode has no reviews to remember.
+    if (!useFakeData) {
+        val reviewLog = remember(roomId) { MemoReviewLogKeeper(MemoDbReviewLog(MemoDatabase.get(context))) }
+        LaunchedEffect(controller, reviewLog) {
+            reviewLog.load()
+            controller.reviewLog = reviewLog
+        }
+    }
     // 앱17: the review requests go to the memo bot room (not with the fake data of the developer setting).
     if (!useFakeData) {
         val reviewer = remember(roomId) {
@@ -540,6 +602,9 @@ internal fun MemoScreen(
     BackHandler(enabled = controller.select.active) { controller.endSelect() }
 
     val index by store.index.collectAsState()
+    // 앱32 (추가요청 3): the floating proposal button is drawn over the tab area, and hidden while something else has
+    // the screen (the editor, a sheet, a photo, the proposal screen itself).
+    val panelRoom by MemoPanelHub.openRoom.collectAsState()
     Column(modifier = modifier.fillMaxSize()) {
         controller.error?.let { (reason, retry) -> MemoErrorBanner(reason, retry, onClose = { controller.error = null }) }
         controller.undo?.let { MemoUndoBanner(controller, it) }
@@ -557,6 +622,18 @@ internal fun MemoScreen(
                 state.tab == MemoTab.Folders -> MemoFoldersTab(controller)
                 else -> MemoSearchTab(controller)
             }
+            // 앱32 (추가요청 3 ①·⑤): the floating proposal button over the tab area — never over the composer below,
+            // and gone while the editor, a sheet, a photo or the proposal screen has the screen. It stays in the
+            // selection mode (the proposals can still be opened from there).
+            if (memoPanelFabVisible(
+                    fullEditor = fullEditor,
+                    sheetOpen = controller.sheet != null,
+                    viewerOpen = controller.viewer != null,
+                    panelOpen = panelRoom == roomId,
+                )
+            ) {
+                MemoPanelFab(roomId)
+            }
         }
         if (controller.select.active && state.note == null) MemoSelectBar(controller, controller.visibleIds.toImmutableList())
         if (!fullEditor) {
@@ -570,7 +647,6 @@ internal fun MemoScreen(
     val waitingCards = remember(index) { memoPanelWaitingCount(index) }
     LaunchedEffect(roomId, waitingCards) { MemoPanelHub.setCount(roomId, waitingCards) }
     DisposableEffect(roomId) { onDispose { MemoPanelHub.leave(roomId) } }
-    val panelRoom by MemoPanelHub.openRoom.collectAsState()
     if (panelRoom == roomId) {
         val directives = if (useFakeData) {
             null
@@ -882,6 +958,7 @@ internal fun MemoRecordRow(controller: MemoController, item: MemoItem, modifier:
             MemoDateArea(
                 lines = memoItemDateLines(item).toImmutableList(),
                 mark = memoSyncMark(item.syncWaiting, item.id in sending),
+                review = memoReviewMarkFor(controller, item.id),
                 modifier = Modifier.padding(start = 6.dp).testTag(MemoTags.RECORD_DATE),
             )
         }

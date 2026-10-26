@@ -37,6 +37,9 @@ object JuneSettings {
     private const val KEY_MEMO_ROOM = "memo_room_id"
     private const val KEY_MEMO_FAKE = "memo_fake_data"
     private const val KEY_MEMO_BUTTON_SPOT = "memo_button_spot"
+
+    /** 앱32 (추가요청 3): where the floating proposal button of the memo screen sits. */
+    private const val KEY_MEMO_PANEL_FAB_SPOT = "memo_panel_fab_spot"
     private const val KEY_MEMO_DIAG = "memo_diag"
 
     /** Default room name keywords that get the Aperture (GLaDOS) chat theme. */
@@ -133,6 +136,7 @@ object JuneSettings {
     private val memoRoomId = mutableStateOf<String?>(null)
     private val memoFake = mutableStateOf(false)
     private val memoButtonSpot = mutableStateOf<JuneMemoButtonSpot?>(null)
+    private val memoPanelFabSpot = mutableStateOf<JuneMemoButtonSpot?>(null)
     private val memoDiag = mutableStateOf<String?>(null)
 
     private fun prefs(context: Context): SharedPreferences =
@@ -166,6 +170,7 @@ object JuneSettings {
             memoRoomId.value = tryOrNull { p.getString(KEY_MEMO_ROOM, null) }?.takeIf { it.isNotBlank() }
             memoFake.value = tryOrNull { p.getBoolean(KEY_MEMO_FAKE, false) } ?: false
             memoButtonSpot.value = JuneMemoButtonSpot.parse(tryOrNull { p.getString(KEY_MEMO_BUTTON_SPOT, null) })
+            memoPanelFabSpot.value = JuneMemoButtonSpot.parse(tryOrNull { p.getString(KEY_MEMO_PANEL_FAB_SPOT, null) })
             memoDiag.value = tryOrNull { p.getString(KEY_MEMO_DIAG, null) }
             loaded = true
         }
@@ -422,6 +427,23 @@ object JuneSettings {
         val kept = JuneMemoButtonSpot(spot.x.coerceIn(0f, 1f), spot.y.coerceIn(0f, 1f))
         memoButtonSpot.value = kept
         prefs(context).edit().putString(KEY_MEMO_BUTTON_SPOT, kept.encode()).apply()
+    }
+
+    /**
+     * 앱32 (추가요청 3): where the floating proposal button of the memo screen was moved to (observable), null = the
+     * default place. Kept as parts of the screen, like the home screen button, so it stays on the screen when the
+     * phone turns. A broken saved value reads as null.
+     */
+    fun memoPanelFabSpot(context: Context): JuneMemoButtonSpot? {
+        ensureLoaded(context)
+        return memoPanelFabSpot.value
+    }
+
+    fun setMemoPanelFabSpot(context: Context, spot: JuneMemoButtonSpot) {
+        ensureLoaded(context)
+        val kept = JuneMemoButtonSpot(spot.x.coerceIn(0f, 1f), spot.y.coerceIn(0f, 1f))
+        memoPanelFabSpot.value = kept
+        prefs(context).edit().putString(KEY_MEMO_PANEL_FAB_SPOT, kept.encode()).apply()
     }
 
     /** 추가요청 2: "메모 버튼 위치 초기화" of the settings screen: the saved spot goes, the button is back at the bottom centre. */

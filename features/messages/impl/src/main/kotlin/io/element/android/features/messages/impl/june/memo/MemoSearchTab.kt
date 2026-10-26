@@ -639,6 +639,7 @@ private fun MemoNoteHead(controller: MemoController, note: MemoNote?) {
                 lines = memoNoteDateLines(note).toImmutableList(),
                 mark = memoSyncMark(note.syncWaiting, note.id in sending),
                 modifier = Modifier.padding(start = 6.dp).testTag(MemoTags.NOTE_DATE),
+                review = memoReviewMarkFor(controller, note.id),
             )
         }
     }
@@ -665,12 +666,82 @@ internal fun MemoDateArea(
     lines: ImmutableList<String>,
     mark: MemoSyncMark?,
     modifier: Modifier = Modifier,
+    /**
+     * 앱32 요구 ② (관리자: "기존 체크아이콘 영역을 두줄로 활용"): the second line of the mark area — where the AI review of
+     * this note stands. Null (the usual case: no review was ever asked for, or the finished one was seen) leaves the
+     * area exactly as it was before 앱32: one line, the sync mark alone.
+     */
+    review: MemoReviewPhase? = null,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
-        if (mark != null) MemoSyncMarkIcon(mark, Modifier.padding(end = 4.dp))
+        if (mark != null || review != null) {
+            // The two marks share the room one mark had: the dates beside them are two lines high already, so a second
+            // small icon fits under the first without making the card any taller (결정기록 D4).
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(end = 4.dp)) {
+                if (mark != null) MemoSyncMarkIcon(mark)
+                if (review != null) MemoReviewMarkIcon(review)
+            }
+        }
         MemoDateLines(lines)
     }
 }
+
+/**
+ * 앱32 요구 ②: the small mark under the sync mark — 요청 보냄 = a paper plane, 서버 대기 = a clock, 검토 중 = a turning
+ * spinner, 검토 완료 = a check in the accent colour (the sync check is a quiet grey), 확인 필요 = an exclamation mark.
+ * No text: the meaning is in the content description and in the 검토 현황 list (결정기록 D4).
+ */
+@Composable
+private fun MemoReviewMarkIcon(phase: MemoReviewPhase, modifier: Modifier = Modifier) {
+    val tagged = modifier
+        .then(Modifier.size(MEMO_SYNC_MARK_DP.dp))
+        .testTag(memoReviewMarkTag(phase))
+    val description = "AI 검토 ${phase.mark}"
+    when (phase) {
+        MemoReviewPhase.Asked -> Icon(
+            imageVector = CompoundIcons.Send(),
+            contentDescription = description,
+            tint = ElementTheme.colors.iconSecondary,
+            modifier = tagged,
+        )
+        MemoReviewPhase.Queued -> Icon(
+            imageVector = CompoundIcons.Time(),
+            contentDescription = description,
+            tint = ElementTheme.colors.iconSecondary,
+            modifier = tagged,
+        )
+        MemoReviewPhase.Working -> {
+            val turn = rememberInfiniteTransition(label = "memoReviewTurn")
+            val angle by turn.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(tween(durationMillis = MEMO_SYNC_TURN_MS, easing = LinearEasing)),
+                label = "memoReviewAngle",
+            )
+            Icon(
+                imageVector = CompoundIcons.Spinner(),
+                contentDescription = description,
+                tint = ElementTheme.colors.iconAccentPrimary,
+                modifier = tagged.rotate(angle),
+            )
+        }
+        MemoReviewPhase.Done -> Icon(
+            imageVector = CompoundIcons.Check(),
+            contentDescription = description,
+            tint = ElementTheme.colors.iconAccentPrimary,
+            modifier = tagged,
+        )
+        MemoReviewPhase.Attention -> Icon(
+            imageVector = CompoundIcons.Error(),
+            contentDescription = description,
+            tint = ElementTheme.colors.iconCriticalPrimary,
+            modifier = tagged,
+        )
+    }
+}
+
+/** 앱32 요구 ②: the test tag of each review mark (the card shows no text for it). */
+internal fun memoReviewMarkTag(phase: MemoReviewPhase): String = "${MemoTags.REVIEW_MARK}_${phase.name}"
 
 /**
  * 앱15 F: 대기 = a clock, 동기화 중 = a turning spinner (it turns only while it is drawn, and a push takes a moment),

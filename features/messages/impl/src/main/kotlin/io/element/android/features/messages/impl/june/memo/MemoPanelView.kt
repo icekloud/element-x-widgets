@@ -242,6 +242,12 @@ internal fun MemoPanelContent(
                 }
             }
         }
+        // 앱32 요구 ③ (관리자: "검토현황 목록은 제안탭 상단부 활용"): the 검토 현황 area, fixed right under the header and
+        // outside the card list, so scrolling the proposals never takes it away (추가요청 2 ④). Hidden with no reviews.
+        MemoReviewStatusArea(controller) { id ->
+            onClose()
+            controller.go { it.openNote(id) }
+        }
         if (mode == MemoInputMode.Chat && requests.isNotEmpty()) MemoRequestCards(requests)
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth().testTag(MemoTags.PANEL_LIST),

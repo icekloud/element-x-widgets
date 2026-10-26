@@ -175,6 +175,8 @@ internal data class MemoReviewSent(
     val failure: String? = null,
     /** 앱21 ①: what became of a directive sent with the press (null: none was sent). */
     val directive: MemoDirectiveAnswer? = null,
+    /** 앱32: the `서버기동` of the answer — which run of the server took the request (결정기록 D8 c); empty: not told. */
+    val boot: String = "",
 )
 
 /**
@@ -261,7 +263,19 @@ internal fun memoReviewSentText(r: MemoReviewSent): String {
  * The state of one note in a `review_status` answer. 앱18 ③: [reason] is the server's one line on why a review ended
  * with "제안 없음" (서버 14차 `사유`); empty when the server does not send it (서버 13차) or for another result.
  */
-internal data class MemoReviewProgress(val id: String, val state: String, val result: String = "", val time: String = "", val reason: String = "")
+internal data class MemoReviewProgress(
+    val id: String,
+    val state: String,
+    val result: String = "",
+    val time: String = "",
+    val reason: String = "",
+    /** 서버26 `지시결과`: the one line on what became of a directive; empty when the server does not send it (옛 서버). */
+    val directiveResult: String = "",
+    /** 서버26 `대기순번`: 1.. while 대기, 0 while 검토중, null when the server does not send it. */
+    val queuePos: Int? = null,
+    /** 서버26 `마지막활동`: when the server last did something with this review (KST ISO); empty when not sent. */
+    val lastActivity: String = "",
+)
 
 internal object MemoReviewStates {
     const val WAITING = "대기"
@@ -276,10 +290,27 @@ internal fun memoReviewStates(content: JSONObject): List<MemoReviewProgress> {
     val rows = content.optJSONArray("상태") ?: JSONArray()
     return (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull { o ->
         o.optString("id").takeIf { it.isNotEmpty() }?.let {
-            MemoReviewProgress(it, o.optString("상태"), o.optString("결과"), o.optString("시각"), o.optString("사유"))
+            MemoReviewProgress(
+                id = it,
+                state = o.optString("상태"),
+                result = o.optString("결과"),
+                time = o.optString("시각"),
+                reason = o.optString("사유"),
+                // 앱32 (서버26 추가요청 1): the three progress fields. A server that does not send them (서버 25차 and
+                // before) leaves them empty/null here, and the screen says it does not know rather than making it up.
+                directiveResult = o.optString("지시결과"),
+                queuePos = if (o.has("대기순번") && !o.isNull("대기순번")) o.optInt("대기순번") else null,
+                lastActivity = o.optString("마지막활동"),
+            )
         }
     }
 }
+
+/** 서버25 도장 `서버기동`: which run of the server answered; empty when it does not send one (앱32 결정기록 D8 c). */
+internal fun memoReviewServerBoot(content: JSONObject): String = content.optString("서버기동")
+
+/** 앱32: what one `review_status` look-up got: the rows, and the server run that answered. */
+internal data class MemoReviewLook(val states: List<MemoReviewProgress>, val boot: String = "")
 
 /** True when every note of [ids] is done (완료) or has nothing to wait for (없음). A missing note is still waited for. */
 internal fun memoReviewFinished(ids: List<String>, states: List<MemoReviewProgress>): Boolean {
@@ -449,6 +480,8 @@ internal class MemoReviewer(
         val skipped = mutableListOf<MemoReviewSkip>()
         val sentDirective = memoReviewDirective(directive)
         var answer: MemoDirectiveAnswer? = null
+        // 앱32: which run of the server took the press, so a restart before the review ends can be told (결정기록 D8 c).
+        var boot = ""
         for (batch in batches) {
             log("검토 요청 ${batch.size}건" + (sentDirective?.let { " · 지시 있음(${it.length}자)" } ?: ""))
             val failure = when (val r = callOrNull(memoReviewOp(batch, sentDirective))) {
@@ -456,6 +489,7 @@ internal class MemoReviewer(
                     val a = memoReviewAnswer(batch, r.content, directiveSent = sentDirective != null)
                     accepted += a.accepted
                     skipped += a.skipped
+                    if (boot.isEmpty()) boot = memoReviewServerBoot(r.content)
                     answer = a.directive?.let { d -> answer?.let { MemoDirectiveAnswer(it.taken && d.taken, it.cut || d.cut, it.applied + d.applied) } ?: d }
                     null
                 }
@@ -464,11 +498,11 @@ internal class MemoReviewer(
             }
             if (failure != null) {
                 log("검토 요청 실패")
-                return MemoReviewSent(accepted, skipped, failure, answer)
+                return MemoReviewSent(accepted, skipped, failure, answer, boot)
             }
         }
         log("검토 접수 ${accepted.size}건 · 건너뜀 ${skipped.size}건")
-        return MemoReviewSent(accepted, skipped, directive = answer)
+        return MemoReviewSent(accepted, skipped, directive = answer, boot = boot)
     }
 
     /**
@@ -476,23 +510,50 @@ internal class MemoReviewer(
      * look-up fails or [MEMO_REVIEW_FOLLOW_MS] (from [startMs]) runs out: it stops quietly (the proposals still come to
      * the proposal area). [lookFirst]: one look-up before the first wait, even when the time is already out (앱29 ④).
      */
-    suspend fun follow(ids: List<String>, startMs: Long = clock(), lookFirst: Boolean = false): String? {
+    suspend fun follow(
+        ids: List<String>,
+        startMs: Long = clock(),
+        lookFirst: Boolean = false,
+        /** 앱32: every look-up, so the review log keeps what the phone last knew (null: nobody is writing it down). */
+        onLook: ((MemoReviewLook) -> Unit)? = null,
+        /** 앱32 요구 ⑤ d: the follow-up stopped without an answer (time out or a failed look-up). */
+        onGiveUp: (() -> Unit)? = null,
+    ): String? {
         if (ids.isEmpty()) return null
         // 앱29 ④: a follow-up picked up again after the screen came back asks once at once, then goes on in its own time.
         var first = lookFirst
         while (true) {
             if (!first) {
-                val wait = memoReviewPollDelayMs(startMs, clock()) ?: return null.also { log("검토 결과 기다림 끝(시간)") }
+                val wait = memoReviewPollDelayMs(startMs, clock()) ?: return null.also {
+                    log("검토 결과 기다림 끝(시간)")
+                    onGiveUp?.invoke()
+                }
                 sleep(wait)
             }
             first = false
-            val states = mutableListOf<MemoReviewProgress>()
-            for (chunk in ids.chunked(MEMO_REVIEW_MAX)) {
-                val r = callOrNull(memoReviewStatusOp(chunk)) as? MemoResponse.Ok ?: return null.also { log("검토 결과 조회 실패") }
-                states += memoReviewStates(r.content)
+            val look = lookUp(ids) ?: return null.also {
+                log("검토 결과 조회 실패")
+                onGiveUp?.invoke()
             }
-            if (memoReviewFinished(ids, states)) return memoReviewDoneText(ids, states).also { log("검토 결과 받음") }
+            onLook?.invoke(look)
+            if (memoReviewFinished(ids, look.states)) return memoReviewDoneText(ids, look.states).also { log("검토 결과 받음") }
         }
+    }
+
+    /**
+     * 앱32 요구 ⑥: asks `review_status` about [ids] **once** (in turns of [MEMO_REVIEW_MAX]); null when a turn fails.
+     * This is the only place a look-up is sent from: the 5 s follow-up and the 새로고침 both come here.
+     */
+    suspend fun lookUp(ids: List<String>): MemoReviewLook? {
+        if (ids.isEmpty()) return null
+        val states = mutableListOf<MemoReviewProgress>()
+        var boot = ""
+        for (chunk in ids.chunked(MEMO_REVIEW_MAX)) {
+            val r = callOrNull(memoReviewStatusOp(chunk)) as? MemoResponse.Ok ?: return null
+            states += memoReviewStates(r.content)
+            if (boot.isEmpty()) boot = memoReviewServerBoot(r.content)
+        }
+        return MemoReviewLook(states, boot)
     }
 
     private suspend fun callOrNull(op: MemoOp): MemoResponse? = try {
