@@ -20,7 +20,7 @@ package io.element.android.libraries.designsystem.june
 enum class JuneVoiceEngineChoice(val key: String, val label: String, val shortLabel: String) {
     Phone("phone", "폰 기본", "폰 기본"),
     BuiltIn("builtin", "내장 (슈퍼토닉3 F1)", "내장"),
-    Samsung("samsung", "삼성 음성 (한국어 l08)", "삼성");
+    Samsung("samsung", "삼성 음성 (한국어)", "삼성");
 
     /** The next choice when the setting is pressed: 폰 기본 → 내장 → 삼성 → 폰 기본. */
     fun next(): JuneVoiceEngineChoice = entries[(ordinal + 1) % entries.size]
