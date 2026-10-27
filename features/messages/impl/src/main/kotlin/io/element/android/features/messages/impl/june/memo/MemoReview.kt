@@ -445,6 +445,10 @@ internal class MemoReviewer(
 ) {
     val repeat = MemoReviewRepeat(clock)
 
+    /** 앱33 ⑤: why the last call brought nothing back ([MemoCheckResult.TIMEOUT] or [MemoCheckResult.FAILED]). */
+    @Volatile
+    private var lastFail = MemoCheckResult.TIMEOUT
+
     /** 앱29 ④: a follow-up of [ids] starting now. */
     fun followOf(ids: List<String>): MemoReviewFollow = MemoReviewFollow(ids, clock())
 
@@ -544,12 +548,25 @@ internal class MemoReviewer(
      * 앱32 요구 ⑥: asks `review_status` about [ids] **once** (in turns of [MEMO_REVIEW_MAX]); null when a turn fails.
      * This is the only place a look-up is sent from: the 5 s follow-up and the 새로고침 both come here.
      */
-    suspend fun lookUp(ids: List<String>): MemoReviewLook? {
+    suspend fun lookUp(ids: List<String>, cause: String = MemoCheckCause.AUTO): MemoReviewLook? {
         if (ids.isEmpty()) return null
         val states = mutableListOf<MemoReviewProgress>()
         var boot = ""
         for (chunk in ids.chunked(MEMO_REVIEW_MAX)) {
-            val r = callOrNull(memoReviewStatusOp(chunk)) as? MemoResponse.Ok ?: return null
+            val startMs = clock()
+            val answer = callOrNull(memoReviewStatusOp(chunk))
+            val r = answer as? MemoResponse.Ok
+            val now = clock()
+            // 앱33 ⑤: one line per look-up — the note ids and their titles are never written down.
+            MemoCheckLog.add(
+                kind = MemoCheckKind.REVIEW,
+                cause = cause,
+                result = if (r != null) MemoCheckResult.OK else lastFail,
+                elapsedMs = now - startMs,
+                requestId = r?.requestId.orEmpty(),
+                nowMs = now,
+            )
+            if (r == null) return null
             states += memoReviewStates(r.content)
             if (boot.isEmpty()) boot = memoReviewServerBoot(r.content)
         }
@@ -560,11 +577,13 @@ internal class MemoReviewer(
         transport.call(op)
     } catch (e: TimeoutCancellationException) {
         currentCoroutineContext().ensureActive()
+        lastFail = MemoCheckResult.TIMEOUT
         log("${op.op} 답 시간 초과")
         null
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        lastFail = MemoCheckResult.FAILED
         log("${op.op} 보내지 못함 (${e.javaClass.simpleName})")
         null
     }

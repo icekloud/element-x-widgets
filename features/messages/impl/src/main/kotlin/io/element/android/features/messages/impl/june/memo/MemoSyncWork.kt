@@ -23,6 +23,7 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.ContributesTo
 import dev.zacsweers.metro.binding
 import io.element.android.libraries.core.data.tryOrNull
+import io.element.android.libraries.designsystem.june.JuneMemoCheckLog
 import io.element.android.libraries.designsystem.june.JuneSettings
 import io.element.android.libraries.di.annotations.ApplicationContext
 import io.element.android.libraries.sessionstorage.api.SessionStore
@@ -60,6 +61,7 @@ internal object MemoSyncHub {
     @Synchronized
     private fun entry(context: Context, sessionStore: SessionStore, roomId: String): Pair<MemoRoomBackend, MemoSyncRunner> =
         runners.getOrPut(roomId) {
+            installCheckLog(context)
             val room = MemoRoomBackend(sessionStore, roomId)
             room to MemoSyncRunner(
                 MemoDatabase.get(context),
@@ -115,6 +117,26 @@ internal object MemoSyncHub {
             log = { Timber.i("June memo sync: %s", it) },
         )
     }
+
+    /**
+     * 앱33 추가요청 1 ⑤: the look-up lines go to a txt file of the app's own storage, off the screen thread. Put in
+     * once for the process; the memo code itself decides what a line says and how many are kept.
+     */
+    @Synchronized
+    private fun installCheckLog(context: Context) {
+        if (checkLogOn) return
+        checkLogOn = true
+        val app = context.applicationContext
+        MemoCheckLog.install { line ->
+            scope.launch {
+                tryOrNull(onException = { Timber.d("June memo: check line not written (%s)", it.javaClass.simpleName) }) {
+                    JuneMemoCheckLog.write(app, memoCheckLogTrim(JuneMemoCheckLog.read(app), line))
+                }
+            }
+        }
+    }
+
+    private var checkLogOn = false
 
     /** Leaving the screen with attachments still to upload: one job, run when the network is there (not a periodic one). */
     fun scheduleUpload(scheduler: WorkManagerScheduler) {

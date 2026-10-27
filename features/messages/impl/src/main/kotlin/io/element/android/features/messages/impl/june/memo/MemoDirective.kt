@@ -96,20 +96,63 @@ internal data class MemoDirective(
 }
 
 /**
- * The line under one instruction: the bot's message, or what the phone knows (never the word "제안"). 추가요청 3:
- * with [nowMs], an instruction still on its way shows how long it has been ("처리 중… (N초)"), and one older than the
- * automatic look-ups says that a refresh asks again.
+ * 앱33 추가요청 1 ④: what the phone last knew about its own look-ups. A value in memory only (no schema change): it
+ * starts again at every app start, which is right — a look-up of the run before says nothing about now.
  */
-internal fun memoDirectiveAnswerText(d: MemoDirective, nowMs: Long? = null): String {
+internal data class MemoCheckState(
+    /** When a look-up last came back with an answer; 0 = none has yet in this run. */
+    val lastOkMs: Long = 0L,
+    /** The look-up before this moment timed out or could not be sent. */
+    val failed: Boolean = false,
+)
+
+/** 앱33 ④: "방금" / "12초 전" / "3분 전" for the last look-up that worked; null when none did. */
+internal fun memoLastCheckText(lastOkMs: Long, nowMs: Long): String? {
+    if (lastOkMs <= 0L) return null
+    val span = (nowMs - lastOkMs).coerceAtLeast(0L)
+    return when {
+        span < 10_000L -> "방금"
+        span < 60_000L -> "${span / 1_000L}초 전"
+        span < 3_600_000L -> "${span / 60_000L}분 전"
+        else -> "${span / 3_600_000L}시간 전"
+    }
+}
+
+/** "(마지막 확인 3분 전)" after a line that asks for a refresh; empty while nothing was ever looked up. */
+private fun checkedSuffix(check: MemoCheckState, nowMs: Long): String =
+    memoLastCheckText(check.lastOkMs, nowMs)?.let { "(마지막 확인 $it)" }.orEmpty()
+
+/** " · 마지막 확인 12초 전" after the working line; empty while nothing was ever looked up. */
+private fun checkedTail(check: MemoCheckState, nowMs: Long): String =
+    memoLastCheckText(check.lastOkMs, nowMs)?.let { " · 마지막 확인 $it" }.orEmpty()
+
+/** 앱33 ④: the line that asks for a refresh once the automatic look-ups are over. */
+internal const val MEMO_CHECK_STOPPED_TEXT = "자동 확인을 멈췄어요 · 새로고침"
+
+/** 앱33 ④: the line when the look-up itself did not get through (never says where the work stands). */
+internal const val MEMO_CHECK_FAILED_TEXT = "상태를 확인하지 못했어요 · 새로고침"
+
+/**
+ * The line under one instruction: the bot's message, or what the phone knows (never the word "제안"). 추가요청 3:
+ * with [nowMs], an instruction still on its way shows how long it has been ("처리 중… (N초)").
+ *
+ * 앱33 추가요청 1 ④: what the phone has not checked is never said as a fact. [check] tells how the look-ups are
+ * going: while they work the line says when the last one was ("· 마지막 확인 12초 전"), a look-up that timed out or
+ * could not be sent says so ([MEMO_CHECK_FAILED_TEXT]), and once the automatic ones are over (3 min) the line asks
+ * for a refresh ([MEMO_CHECK_STOPPED_TEXT]) — coming back to the screen asks once on its own too. The old
+ * "오래 걸려요" line is gone: it said the bot was slow when the phone had simply stopped asking.
+ */
+internal fun memoDirectiveAnswerText(d: MemoDirective, nowMs: Long? = null, check: MemoCheckState = MemoCheckState()): String {
     val waiting = d.status == MemoDirectiveStatus.SENDING || d.isOpen
     if (nowMs == null || !waiting || d.sentMs <= 0) return memoDirectiveBaseText(d)
     val age = ((nowMs - d.sentMs).coerceAtLeast(0) / 1000).toInt()
     return when {
-        age * 1000L >= LAST_POLL_MS -> "오래 걸려요 (${age}초) · 새로고침을 누르면 다시 확인해요"
         d.status == MemoDirectiveStatus.SENDING -> "보내는 중… (${age}초)"
-        d.message.isNotEmpty() -> "${d.message} (${age}초)"
-        d.status == MemoDirectiveStatus.RECEIVED -> "메모봇이 받았어요 · 처리 중… (${age}초)"
-        else -> "처리 중… (${age}초)"
+        age * 1000L >= LAST_POLL_MS -> MEMO_CHECK_STOPPED_TEXT + checkedSuffix(check, nowMs)
+        check.failed -> MEMO_CHECK_FAILED_TEXT + checkedSuffix(check, nowMs)
+        d.message.isNotEmpty() -> "${d.message} (${age}초)" + checkedTail(check, nowMs)
+        d.status == MemoDirectiveStatus.RECEIVED -> "메모봇이 받았어요 · 처리 중… (${age}초)" + checkedTail(check, nowMs)
+        else -> "처리 중… (${age}초)" + checkedTail(check, nowMs)
     }
 }
 
@@ -152,6 +195,9 @@ private const val LAST_POLL_MS = 180_000L
 /** The server's answer for an id it never got (`지시조회`): the instruction did not arrive, it can go again. */
 private const val NOT_FOUND_WORDS = "찾지 못"
 
+/** 앱33 ②: the `op` a late `지시조회` answer carries (the server puts it in every answer it sends). */
+internal const val MEMO_OP_DIRECTIVE_POLL = "지시조회"
+
 private const val STATE_DIRECTIVES = "directives"
 
 /** 앱18 추가요청 1: the ids "지우기" took off, a JSON array of strings in the same state table (no schema change). */
@@ -181,7 +227,16 @@ internal class MemoDirectives(
     /** Oldest first (a conversation), at most [MEMO_DIRECTIVE_KEEP]. */
     val items: StateFlow<List<MemoDirective>> = _items.asStateFlow()
 
+    private val _check = MutableStateFlow(MemoCheckState())
+
+    /** 앱33 ④: how the look-ups themselves are going, for the line under an instruction. */
+    val check: StateFlow<MemoCheckState> = _check.asStateFlow()
+
     private var loaded = false
+
+    /** 앱33 ⑤: why the last call brought nothing back ([MemoCheckResult.TIMEOUT] or [MemoCheckResult.FAILED]). */
+    @Volatile
+    private var lastFail = MemoCheckResult.TIMEOUT
 
     /** 추가요청 3: ids whose send is running right now. Any other "보내는중" was cut short (screen closed). */
     private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -275,12 +330,62 @@ internal class MemoDirectives(
      * Asks for the open instructions (규약-지시 흐름 3). Returns how many became 완료 with this call, so the screen
      * syncs once to bring the changed notes down. Nothing is asked when nothing is open.
      */
-    suspend fun poll(): Int {
+    suspend fun poll(cause: String = MemoCheckCause.AUTO): Int {
         val open = withContext(dispatcher) { read() }.filter { it.asked() }.takeLast(MEMO_DIRECTIVE_KEEP)
         if (open.isEmpty()) return 0
         log("지시조회 ${open.size}건")
-        val r = callOrNull(MemoOp.directivePoll(open.map { it.id })) as? MemoResponse.Ok ?: return 0
-        val rows = r.content.optJSONArray("결과") ?: JSONArray()
+        val startMs = clock()
+        val answer = callOrNull(MemoOp.directivePoll(open.map { it.id }))
+        val ok = answer as? MemoResponse.Ok
+        val now = clock()
+        // 앱33 ⑤: one line per look-up, so a late answer and a look-up that never went out can be told apart later.
+        MemoCheckLog.add(
+            kind = MemoCheckKind.DIRECTIVE,
+            cause = cause,
+            result = if (ok != null) MemoCheckResult.OK else lastFail,
+            elapsedMs = now - startMs,
+            requestId = ok?.requestId.orEmpty(),
+            nowMs = now,
+        )
+        if (ok == null) {
+            // 앱33 ④: the look-up did not get through; the line says that, not where the work stands.
+            _check.value = _check.value.copy(failed = true)
+            return 0
+        }
+        _check.value = MemoCheckState(lastOkMs = now, failed = false)
+        return applyRows(ok.content.optJSONArray("결과") ?: JSONArray())
+    }
+
+    /**
+     * 앱33 추가요청 1 ②: an answer of the server that nobody was waiting for any more (its call had given up after
+     * [MEMO_SYNC_TIMEOUT_MILLIS]). `지시조회` asks the same question every time and gets the same answer, so a late one
+     * is still good: it is written down with the very same rules. Applying one twice changes nothing (the ids and the
+     * states are the same), and an instruction that is no longer open is left alone. Returns how many became 완료.
+     */
+    suspend fun applyLate(response: MemoResponse): Int {
+        val ok = response as? MemoResponse.Ok ?: return 0
+        if (ok.op != MEMO_OP_DIRECTIVE_POLL) return 0
+        val rows = ok.content.optJSONArray("결과") ?: return 0
+        val done = applyRows(rows)
+        val now = clock()
+        MemoCheckLog.add(
+            kind = MemoCheckKind.DIRECTIVE,
+            cause = MemoCheckCause.LATE,
+            result = MemoCheckResult.LATE_APPLIED,
+            requestId = ok.requestId,
+            nowMs = now,
+        )
+        _check.value = MemoCheckState(lastOkMs = now, failed = false)
+        return done
+    }
+
+    /**
+     * Writes down the rows of a `지시조회` answer: [poll] and [applyLate] both come here, so a late answer is taken in
+     * exactly the same way (앱33 ②). Returns how many became 완료 with it.
+     */
+    private suspend fun applyRows(rows: JSONArray): Int {
+        val open = withContext(dispatcher) { read() }.filter { it.asked() }.takeLast(MEMO_DIRECTIVE_KEEP)
+        if (open.isEmpty()) return 0
         val byId = open.associateBy { it.id }
         // 추가요청 1: an instruction cleared while this look-up was on its way does not come back.
         val cleared = withContext(dispatcher) { readCleared() }.toSet()
@@ -362,11 +467,13 @@ internal class MemoDirectives(
         transport.call(op)
     } catch (e: TimeoutCancellationException) {
         currentCoroutineContext().ensureActive()
+        lastFail = MemoCheckResult.TIMEOUT
         log("${op.op} 답 시간 초과")
         null
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        lastFail = MemoCheckResult.FAILED
         log("${op.op} 보내지 못함 (${e.javaClass.simpleName})")
         null
     }

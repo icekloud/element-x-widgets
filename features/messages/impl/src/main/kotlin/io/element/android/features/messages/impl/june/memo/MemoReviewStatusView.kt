@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -32,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.designsystem.theme.components.Text
 import kotlinx.coroutines.launch
@@ -74,7 +79,18 @@ internal fun MemoReviewStatusArea(controller: MemoController, onOpenNote: (Strin
     val titles = memoReviewTitles(controller)
     // 요구 ⑥·결정기록 D9: opening the proposal screen asks once about the reviews still running — the same kind of
     // moment as the pull the screen already does when it opens. Never a timer.
-    LaunchedEffect(keeper) { memoReviewRefresh(keeper, controller.reviewer) }
+    // 앱33 추가요청 1 ③: coming back to the screen is such a moment too ([visits] goes up on every later ON_START),
+    // so a review whose 5 minute follow-up is over is asked about once more without pressing 새로고침.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var visits by remember { mutableIntStateOf(0) }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_START) visits++ }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(keeper, visits) {
+        memoReviewRefresh(keeper, controller.reviewer, if (visits > 1) MemoCheckCause.BACK else MemoCheckCause.OPEN)
+    }
     Column(
         Modifier
             .fillMaxWidth()

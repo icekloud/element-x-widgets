@@ -554,6 +554,31 @@ internal fun MemoScreen(
                 store.refreshIndex()
             }
         }
+        // 앱33 추가요청 1 ②·③: a `review_status` answer that came back after its look-up had given up is written down
+        // all the same (the same rows, the same rules). Only while this screen is here: it goes away with it.
+        val reviewRoom = remember(roomId) {
+            MemoSyncHub.room(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+        }
+        DisposableEffect(reviewRoom, controller) {
+            val remove = reviewRoom.onLateAnswer { answer ->
+                val ok = answer as? MemoResponse.Ok
+                val keeper = controller.reviewLog
+                if (ok != null && keeper != null && ok.op == MEMO_OP_REVIEW_STATUS) {
+                    val states = memoReviewStates(ok.content)
+                    if (states.isNotEmpty()) {
+                        keeper.sawBoot(memoReviewServerBoot(ok.content))
+                        keeper.looked(states, keeper.boot)
+                        MemoCheckLog.add(
+                            kind = MemoCheckKind.REVIEW,
+                            cause = MemoCheckCause.LATE,
+                            result = MemoCheckResult.LATE_APPLIED,
+                            requestId = ok.requestId,
+                        )
+                    }
+                }
+            }
+            onDispose { remove() }
+        }
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, controller) {
@@ -670,10 +695,19 @@ internal fun MemoScreen(
                 MemoSyncHub.chat(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
             }
         }
+        // 앱33 ②: the room the answers come in through, so one that came back late is still taken (while this is open).
+        val panelRoomBackend = if (useFakeData) {
+            null
+        } else {
+            remember(roomId) {
+                MemoSyncHub.room(context.applicationContext, context.applicationContext.bindings<MemoSyncBindings>().memoSyncSessionStore(), roomId)
+            }
+        }
         MemoPanel(
             controller = controller,
             directives = directives,
             chat = chat,
+            room = panelRoomBackend,
             // A finished instruction changed notes or tags on the server: one sync brings them down.
             onSync = {
                 runner?.syncNow()

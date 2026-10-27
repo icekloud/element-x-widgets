@@ -27,9 +27,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +50,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.libraries.designsystem.components.dialogs.ConfirmationDialog
 import io.element.android.libraries.designsystem.theme.components.DropdownMenu
@@ -75,9 +80,10 @@ internal fun MemoPanel(
     onSync: suspend () -> Unit,
     onClose: () -> Unit,
     chat: MemoChat? = null,
+    room: MemoRoomBackend? = null,
 ) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        MemoPanelContent(controller, directives, onSync, onClose, chat)
+        MemoPanelContent(controller, directives, onSync, onClose, chat, room)
     }
 }
 
@@ -88,6 +94,8 @@ internal fun MemoPanelContent(
     onSync: suspend () -> Unit,
     onClose: () -> Unit,
     chat: MemoChat? = null,
+    /** 앱33 ②: where the answers come in, so a late one is taken while this screen is open (null: the fake data mode). */
+    room: MemoRoomBackend? = null,
 ) {
     val index by controller.store.index.collectAsState()
     val groups = remember(index) { memoPanelGroups(index) }
@@ -101,6 +109,10 @@ internal fun MemoPanelContent(
     val requests by (chat?.requests ?: noRequests).collectAsState()
     val noOff = remember { MutableStateFlow<String?>(null) }
     val chatOff by (chat?.off ?: noOff).collectAsState()
+    // 앱33 ④: how the look-ups themselves are going, for the line under an instruction and under a bubble.
+    val noCheck = remember { MutableStateFlow(MemoCheckState()) }
+    val directiveCheck by (directives?.check ?: noCheck).collectAsState()
+    val chatCheck by (chat?.check ?: noCheck).collectAsState()
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
@@ -115,25 +127,69 @@ internal fun MemoPanelContent(
     var menuOpen by remember { mutableStateOf(false) }
     MemoPanelFollow(listState, rows, entries.joinToString("|") { it.key + "=" + it.look }, scrollCause) { scrollCause = MemoPanelScroll.Change }
 
-    suspend fun pollOnce() {
-        if (directives != null && directives.poll() > 0) synced()
-        if (chat != null && chat.poll() > 0) synced()
+    suspend fun pollOnce(cause: String = MemoCheckCause.REFRESH) {
+        if (directives != null && directives.poll(cause) > 0) synced()
+        if (chat != null && chat.poll(cause) > 0) synced()
+    }
+
+    /**
+     * 앱33 추가요청 1 ③: **one** look-up tied to something that happened (coming back to the screen, a sync that just
+     * ended) — never a timer of its own, and only while something is still open. The automatic look-ups after a send
+     * (3·5·15 s, at most 3 min) are untouched.
+     */
+    suspend fun checkOnce(cause: String) {
+        if (directives?.hasOpen() == true && directives.poll(cause) > 0) synced()
+        if (chat?.hasOpen() == true && chat.poll(cause) > 0) synced()
+    }
+
+    /** A sync that brought notes down is such a moment too (추가요청 1 ③). */
+    suspend fun syncedThenCheck() {
+        synced()
+        checkOnce(MemoCheckCause.SYNC)
     }
 
     // Opened: what the phone keeps, then the open instructions are asked about (규약-지시 흐름 3).
     LaunchedEffect(directives) {
         directives ?: return@LaunchedEffect
         directives.load()
-        if (directives.poll() > 0) synced()
+        if (directives.poll(MemoCheckCause.OPEN) > 0) syncedThenCheck()
     }
     // 앱22: the chat of this room, and in 대화 mode the change requests of the memo bot (규약-대화 §6).
     LaunchedEffect(chat) {
         chat ?: return@LaunchedEffect
         chat.load()
         if (chat.mode.value == MemoInputMode.Chat) {
-            if (chat.poll() > 0) synced()
+            if (chat.poll(MemoCheckCause.OPEN) > 0) syncedThenCheck()
             chat.loadRequests()
         }
+    }
+    // 앱33 추가요청 1 ②: an answer that came back after its own call had given up (the 30 s ran out) is taken all the
+    // same: 지시조회 and 대화조회 ask the same question every time. Only while this screen is open — it goes with it.
+    DisposableEffect(room, directives, chat) {
+        val remove = room?.onLateAnswer { answer ->
+            scope.launch {
+                val changed = (directives?.applyLate(answer) ?: 0) + (chat?.applyLate(answer) ?: 0)
+                if (changed > 0) synced()
+            }
+        }
+        onDispose { remove?.invoke() }
+    }
+    // 앱33 추가요청 1 ③: back on the screen (from another screen or from the background) asks once about what is open.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var backs by remember { mutableIntStateOf(0) }
+    var firstStart by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            // The first ON_START is the screen opening (the look-up of the open is right above); the later ones are returns.
+            if (event == Lifecycle.Event.ON_START) {
+                if (firstStart) firstStart = false else backs++
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(backs) {
+        if (backs > 0) checkOnce(MemoCheckCause.BACK)
     }
     // After a send: from 5 s, every 5 s in the first minute, then every 15 s, at most 3 minutes; only while open.
     // 추가요청 3: a send cut short ("보내는중" after the area closed) is asked about too.
@@ -143,7 +199,7 @@ internal fun MemoPanelContent(
         while (true) {
             val wait = directives.nextPollInMs() ?: break
             delay(wait)
-            if (directives.poll() > 0) synced()
+            if (directives.poll() > 0) syncedThenCheck()
         }
     }
     // 앱22: the chat waits longer between look-ups (the memo bot takes 20~30 s or more, 결정기록 3).
@@ -153,7 +209,7 @@ internal fun MemoPanelContent(
         while (true) {
             val wait = chat.nextPollInMs() ?: break
             delay(wait)
-            if (chat.poll() > 0) synced()
+            if (chat.poll() > 0) syncedThenCheck()
         }
     }
     // 추가요청 3: "처리 중… (N초)" counts up once a second while something is on its way.
@@ -215,7 +271,7 @@ internal fun MemoPanelContent(
                     scrollCause = MemoPanelScroll.Refresh
                     scope.launch {
                         synced()
-                        pollOnce()
+                        pollOnce(MemoCheckCause.REFRESH)
                         if (mode == MemoInputMode.Chat) chat?.loadRequests()
                     }
                 }.padding(8.dp),
@@ -267,10 +323,16 @@ internal fun MemoPanelContent(
             items(entries, key = { it.key }) { e ->
                 when (e) {
                     is MemoPanelEntry.Card -> MemoProposalCard(controller, e.group)
-                    is MemoPanelEntry.Order -> MemoDirectiveRow(e.directive, nowMs, onResend = { scope.launch { directives?.resend(e.directive.id) } })
+                    is MemoPanelEntry.Order -> MemoDirectiveRow(
+                        d = e.directive,
+                        nowMs = nowMs,
+                        check = directiveCheck,
+                        onResend = { scope.launch { directives?.resend(e.directive.id) } },
+                    )
                     is MemoPanelEntry.Talk -> MemoChatRow(
                         bubble = e.bubble,
                         nowMs = nowMs,
+                        check = chatCheck,
                         onResend = { scope.launch { chat?.resend(e.bubble.localId) } },
                         onYes = {
                             scrollCause = MemoPanelScroll.Send
@@ -515,7 +577,7 @@ private const val MEMO_PANEL_BOTTOM_STEPS = 4
 
 /** "내 지시 → 메모봇 답": the sentence on the right, the answer (or the state) on the left. */
 @Composable
-private fun MemoDirectiveRow(d: MemoDirective, nowMs: Long, onResend: () -> Unit) {
+private fun MemoDirectiveRow(d: MemoDirective, nowMs: Long, check: MemoCheckState, onResend: () -> Unit) {
     Column(Modifier.fillMaxWidth().testTag(MemoTags.PANEL_DIRECTIVE)) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
             Text(
@@ -532,7 +594,7 @@ private fun MemoDirectiveRow(d: MemoDirective, nowMs: Long, onResend: () -> Unit
         Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             val critical = d.status == MemoDirectiveStatus.NOT_SENT || d.status == MemoDirectiveStatus.FAILED || d.status == MemoDirectiveStatus.REFUSED
             Text(
-                "🤖 " + memoDirectiveAnswerText(d, nowMs),
+                "🤖 " + memoDirectiveAnswerText(d, nowMs, check),
                 modifier = Modifier
                     .widthIn(max = 300.dp)
                     .clip(RoundedCornerShape(10.dp))
@@ -558,7 +620,7 @@ private fun MemoDirectiveRow(d: MemoDirective, nowMs: Long, onResend: () -> Unit
  * the server has a "네" button under it (규약-대화 §5), and a body change shows what would be written (§4).
  */
 @Composable
-private fun MemoChatRow(bubble: MemoBubble, nowMs: Long, onResend: () -> Unit, onYes: () -> Unit) {
+private fun MemoChatRow(bubble: MemoBubble, nowMs: Long, check: MemoCheckState, onResend: () -> Unit, onYes: () -> Unit) {
     Column(Modifier.fillMaxWidth().testTag(MemoTags.PANEL_BUBBLE)) {
         Box(Modifier.fillMaxWidth(), contentAlignment = if (bubble.isUser) Alignment.CenterEnd else Alignment.CenterStart) {
             val critical = !bubble.isUser && (bubble.status == MemoDirectiveStatus.FAILED || bubble.status == MemoDirectiveStatus.REFUSED)
@@ -579,7 +641,7 @@ private fun MemoChatRow(bubble: MemoBubble, nowMs: Long, onResend: () -> Unit, o
         }
         bubble.compare?.let { MemoCompareBox(it) }
         if (bubble.works.isNotEmpty()) MemoWorkCards(bubble)
-        val line = memoBubbleStatusText(bubble, nowMs)
+        val line = memoBubbleStatusText(bubble, nowMs, check)
         if (line.isNotEmpty() || bubble.canResend || bubble.asksYes) {
             Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (line.isNotEmpty()) {

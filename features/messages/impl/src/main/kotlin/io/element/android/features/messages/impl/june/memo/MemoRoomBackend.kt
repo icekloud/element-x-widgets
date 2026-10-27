@@ -10,7 +10,6 @@ package io.element.android.features.messages.impl.june.memo
 
 import io.element.android.libraries.core.extensions.runCatchingExceptions
 import io.element.android.libraries.sessionstorage.api.SessionStore
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -27,7 +26,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 private const val POLL_MILLIS = 800L
 
@@ -46,7 +44,8 @@ internal class MemoRoomBackend(
     private val sessionStore: SessionStore,
     private val roomId: String,
 ) : MemoBackend {
-    private val waiting = ConcurrentHashMap<String, CompletableDeferred<MemoResponse>>()
+    /** Where the answers go: the waiting call, or — when it gave up — the readers of [onLateAnswer] (앱33 ②). */
+    private val router = MemoAnswerRouter()
 
     private fun open(base: String, path: String, token: String, method: String): HttpURLConnection {
         val conn = URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection
@@ -101,15 +100,20 @@ internal class MemoRoomBackend(
         }
     }
 
-    /** An answer seen in the room timeline (the store may be waiting for it). */
+    /**
+     * 앱33 추가요청 1 ②: reads the answers nobody waits for any more (the call that asked gave up after
+     * [MEMO_SYNC_TIMEOUT_MILLIS]). Returns a way to take the reader off again.
+     */
+    fun onLateAnswer(handler: (MemoResponse) -> Unit): () -> Unit = router.onLate(handler)
+
+    /** An answer seen in the room timeline (a call may be waiting for it; a late one goes to [onLateAnswer]). */
     fun deliver(response: MemoResponse) {
-        waiting[response.requestId]?.complete(response)
+        router.deliver(response)
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     override suspend fun call(op: MemoOp, requestId: String): MemoResponse {
-        val answer = CompletableDeferred<MemoResponse>()
-        waiting[requestId] = answer
+        val answer = router.wait(requestId)
         try {
             val since = send(op, requestId)
             while (true) {
@@ -122,7 +126,7 @@ internal class MemoRoomBackend(
                 if (pushed != null) return pushed
             }
         } finally {
-            waiting.remove(requestId)
+            router.drop(requestId)
         }
     }
 

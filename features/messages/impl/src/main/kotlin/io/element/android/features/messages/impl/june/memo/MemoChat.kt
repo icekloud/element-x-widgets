@@ -271,20 +271,29 @@ private const val CHAT_FAST_UNTIL_MS = 180_000L
 private const val CHAT_SLOW_MS = 20_000L
 private const val CHAT_LAST_MS = 600_000L
 
-/** The line under a bubble: what the phone knows, with the seconds while the memo bot is thinking. */
-internal fun memoBubbleStatusText(b: MemoBubble, nowMs: Long? = null): String {
+/**
+ * The line under a bubble: what the phone knows, with the seconds while the memo bot is thinking. 앱33 추가요청 1 ④:
+ * the same four cases as the instructions ([memoDirectiveAnswerText]) — while the look-ups work the line says when the
+ * last one was, a look-up that did not get through says so, and once the automatic ones are over the line asks for a
+ * refresh (the old "오래 걸려요" is gone).
+ */
+internal fun memoBubbleStatusText(b: MemoBubble, nowMs: Long? = null, check: MemoCheckState = MemoCheckState()): String {
     // 앱24: with `작업결과` cards (규약-대화 v2) the cards say what was done; the `요약` line would only say it again
     // (and a 노트작성 summary is a list of objects, not words).
     if (!b.isUser) return if (b.works.isEmpty()) b.summary else ""
     val waiting = b.status == MemoDirectiveStatus.SENDING || b.isOpen
     val age = if (nowMs != null && b.sentMs > 0) ((nowMs - b.sentMs).coerceAtLeast(0) / 1000).toInt() else -1
     val secs = if (waiting && age >= 0) " (${age}초)" else ""
+    val looked = if (nowMs != null) memoLastCheckText(check.lastOkMs, nowMs) else null
+    val tail = looked?.let { " · 마지막 확인 $it" }.orEmpty()
+    val suffix = looked?.let { "(마지막 확인 $it)" }.orEmpty()
     return when {
         b.status == MemoDirectiveStatus.SENDING -> "보내는 중…$secs"
         b.status == MemoDirectiveStatus.NOT_SENT -> "보내지 못했어요"
-        waiting && age * 1000L >= CHAT_LAST_MS -> "오래 걸려요 (${age}초) · 새로고침을 누르면 다시 확인해요"
-        b.status == MemoDirectiveStatus.RECEIVED -> "메모봇이 받았어요$secs"
-        b.status == MemoDirectiveStatus.WORKING -> "메모봇이 생각하는 중…$secs"
+        waiting && age * 1000L >= CHAT_LAST_MS -> MEMO_CHECK_STOPPED_TEXT + suffix
+        waiting && check.failed -> MEMO_CHECK_FAILED_TEXT + suffix
+        b.status == MemoDirectiveStatus.RECEIVED -> "메모봇이 받았어요$secs$tail"
+        b.status == MemoDirectiveStatus.WORKING -> "메모봇이 생각하는 중…$secs$tail"
         b.status == MemoDirectiveStatus.FAILED -> "답을 받지 못했어요"
         else -> ""
     }
@@ -403,7 +412,16 @@ internal class MemoChat(
     /** Not null when the server answered "기능 꺼짐" (규약-대화 §0). */
     val off: StateFlow<String?> = _off.asStateFlow()
 
+    private val _check = MutableStateFlow(MemoCheckState())
+
+    /** 앱33 ④: how the look-ups themselves are going, for the line under a bubble. */
+    val check: StateFlow<MemoCheckState> = _check.asStateFlow()
+
     private var loaded = false
+
+    /** 앱33 ⑤: why the last call brought nothing back ([MemoCheckResult.TIMEOUT] or [MemoCheckResult.FAILED]). */
+    @Volatile
+    private var lastFail = MemoCheckResult.TIMEOUT
 
     /** Reads the mode and the bubbles the phone keeps. A word left on its way by a closed process can go again. */
     suspend fun load(): List<MemoBubble> = mutex.withLock {
@@ -496,28 +514,70 @@ internal class MemoChat(
      * Asks for the bubbles after the last number the phone has (규약-대화 §2), following `더있음` a few times. Returns
      * how many server bubbles arrived that may have changed notes, so the screen syncs once.
      */
-    suspend fun poll(): Int {
+    suspend fun poll(cause: String = MemoCheckCause.AUTO): Int {
         var arrived = 0
         var rounds = 0
         while (rounds++ < CHAT_POLL_ROUNDS) {
-            val answer = callOrNull(MemoOp.chatPoll(chatId(), lastSeq())) ?: return arrived
+            val startMs = clock()
+            val answer = callOrNull(MemoOp.chatPoll(chatId(), lastSeq()))
+            val now = clock()
+            // 앱33 ⑤: one line per look-up (never the words of the chat, only what came of the call).
+            MemoCheckLog.add(
+                kind = MemoCheckKind.CHAT,
+                cause = cause,
+                result = if (answer is MemoResponse.Ok) MemoCheckResult.OK else lastFail,
+                elapsedMs = now - startMs,
+                requestId = (answer as? MemoResponse.Ok)?.requestId.orEmpty(),
+                nowMs = now,
+            )
+            if (answer == null) {
+                _check.value = _check.value.copy(failed = true)
+                return arrived
+            }
             if (answer is MemoResponse.Error) {
                 noteError(answer.reason)
                 return arrived
             }
             val ok = answer as? MemoResponse.Ok ?: return arrived
-            val rows = ok.content.optJSONArray("말풍선") ?: JSONArray()
-            val fresh = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull(MemoBubble::fromServer)
-            val states = ok.content.optJSONArray("상태목록") ?: JSONArray()
-            val byNumber = (0 until states.length()).mapNotNull { states.optJSONObject(it) }
-                .associate { it.optInt("순번") to it.optString("상태") }
-            apply(fresh, byNumber)
-            arrived += fresh.count { !it.isUser }
-            if (fresh.any { it.requests.isNotEmpty() }) loadRequests()
+            _check.value = MemoCheckState(lastOkMs = now, failed = false)
+            arrived += applyAnswer(ok)
             if (!ok.content.optBoolean("더있음")) break
         }
         log("대화조회 답 ${arrived}줄")
         return arrived
+    }
+
+    /**
+     * 앱33 추가요청 1 ②: a `대화조회` answer nobody was waiting for any more (its call had given up). The bubbles come
+     * with their numbers, so writing the same answer down twice changes nothing ([memoBubblesMerge] keeps one row per
+     * number). Returns how many bubbles of the server arrived with it.
+     */
+    suspend fun applyLate(response: MemoResponse): Int {
+        val ok = response as? MemoResponse.Ok ?: return 0
+        if (ok.op != MEMO_OP_CHAT_POLL) return 0
+        val arrived = applyAnswer(ok)
+        val now = clock()
+        MemoCheckLog.add(
+            kind = MemoCheckKind.CHAT,
+            cause = MemoCheckCause.LATE,
+            result = MemoCheckResult.LATE_APPLIED,
+            requestId = ok.requestId,
+            nowMs = now,
+        )
+        _check.value = MemoCheckState(lastOkMs = now, failed = false)
+        return arrived
+    }
+
+    /** Writes down one `대화조회` answer: [poll] and [applyLate] both come here (앱33 ②). */
+    private suspend fun applyAnswer(ok: MemoResponse.Ok): Int {
+        val rows = ok.content.optJSONArray("말풍선") ?: JSONArray()
+        val fresh = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.mapNotNull(MemoBubble::fromServer)
+        val states = ok.content.optJSONArray("상태목록") ?: JSONArray()
+        val byNumber = (0 until states.length()).mapNotNull { states.optJSONObject(it) }
+            .associate { it.optInt("순번") to it.optString("상태") }
+        apply(fresh, byNumber)
+        if (fresh.any { it.requests.isNotEmpty() }) loadRequests()
+        return fresh.count { !it.isUser }
     }
 
     /** 규약-대화 §6: the change requests of the memo bot (read only; the phone cannot change their state). */
@@ -613,11 +673,13 @@ internal class MemoChat(
         transport.call(op)
     } catch (e: TimeoutCancellationException) {
         currentCoroutineContext().ensureActive()
+        lastFail = MemoCheckResult.TIMEOUT
         log("${op.op} 답 시간 초과")
         null
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        lastFail = MemoCheckResult.FAILED
         log("${op.op} 보내지 못함 (${e.javaClass.simpleName})")
         null
     }

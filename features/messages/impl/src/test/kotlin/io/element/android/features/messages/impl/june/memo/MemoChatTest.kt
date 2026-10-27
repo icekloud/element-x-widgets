@@ -502,7 +502,9 @@ class MemoChatTest : RobolectricTest() {
         assertEquals("메모봇이 받았어요 (12초)", memoBubbleStatusText(sent, t0 + 12_000))
         assertEquals("메모봇이 생각하는 중… (40초)", memoBubbleStatusText(sent.copy(status = MemoDirectiveStatus.WORKING), t0 + 40_000))
         assertEquals("보내는 중… (2초)", memoBubbleStatusText(sent.copy(status = MemoDirectiveStatus.SENDING), t0 + 2_000))
-        assertEquals("오래 걸려요 (601초) · 새로고침을 누르면 다시 확인해요", memoBubbleStatusText(sent, t0 + 601_000))
+        // 앱33 추가요청 1 ④: after ten minutes the phone has stopped asking, and the line says that (not that the bot
+        // is slow) — the seconds of a look-up that is no longer happening would only mislead.
+        assertEquals(MEMO_CHECK_STOPPED_TEXT, memoBubbleStatusText(sent, t0 + 601_000))
         assertEquals("답을 받지 못했어요", memoBubbleStatusText(sent.copy(status = MemoDirectiveStatus.FAILED), t0 + 1_000))
         // A finished word says nothing more, and an answer shows the summary of what was done.
         assertEquals("", memoBubbleStatusText(sent.copy(status = MemoDirectiveStatus.DONE), t0 + 1_000))

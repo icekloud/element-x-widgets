@@ -158,7 +158,8 @@ class MemoReviewLogTest : RobolectricTest() {
     fun `a follow-up that gave up says so and points at the refresh`() {
         val e = entry("n1", state = "검토중", stopped = true, checkedMs = t0 + 1_000)
         assertEquals(MemoReviewPhase.Attention, memoReviewPhase(e, t0 + 2_000, "a1"))
-        assertEquals("확인을 멈췄습니다. 새로고침으로 다시 확인하세요", memoReviewStateText(e, t0 + 2_000, "a1"))
+        // 앱33 추가요청 1 ④: the same words as the instructions use, with when the last look-up that worked was.
+        assertEquals("$MEMO_CHECK_STOPPED_TEXT(마지막 확인 방금)", memoReviewStateText(e, t0 + 2_000, "a1"))
         // A look-up after that clears it.
         val again = memoReviewLogLooked(listOf(e), memoReviewStates(answer(row("n1", "완료", "제안 1건"))), "a1", t0 + 3_000)
         assertFalse(again.first().stopped)

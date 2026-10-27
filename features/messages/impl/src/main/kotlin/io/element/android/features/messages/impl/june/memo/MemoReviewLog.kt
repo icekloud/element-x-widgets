@@ -106,8 +106,9 @@ internal fun memoReviewStateText(e: MemoReviewEntry, nowMs: Long, boot: String):
     // (a) the request went out but the server has no such review
     e.state == MemoReviewStates.NONE -> "서버가 모름 — 요청이 가지 않았을 수 있습니다. 다시 요청해 주세요"
     e.state == MemoReviewStates.DONE -> "검토 완료"
-    // (d) the 5 minute follow-up ran out or a look-up failed
-    e.stopped -> "확인을 멈췄습니다. 새로고침으로 다시 확인하세요"
+    // (d) the 5 minute follow-up ran out or a look-up failed. 앱33 ④: the same words as the instructions use, with
+    // when the last look-up that worked was — coming back to the screen also asks once on its own now.
+    e.stopped -> MEMO_CHECK_STOPPED_TEXT + memoLastCheckText(e.checkedMs, nowMs)?.let { "(마지막 확인 $it)" }.orEmpty()
     // (c) another server answers now than the one the request went to
     restarted(e, boot) -> "서버가 다시 시작됐습니다. 다시 확인해 주세요"
     // (b) still only waiting, and nothing happened to it for a while
@@ -427,12 +428,17 @@ internal class MemoReviewLogKeeper(
  * 요구 ⑥: one 새로고침 — the notes still running are asked about **once** (never a timer). Returns how many notes were
  * asked about, 0 when there was nothing to ask or the look-up failed.
  */
-internal suspend fun memoReviewRefresh(keeper: MemoReviewLogKeeper, reviewer: MemoReviewer?): Int {
+internal suspend fun memoReviewRefresh(
+    keeper: MemoReviewLogKeeper,
+    reviewer: MemoReviewer?,
+    /** 앱33 ⑤: what made this one look-up happen (열기 · 복귀 · 새로고침) — for the diagnosis file. */
+    cause: String = MemoCheckCause.REFRESH,
+): Int {
     if (reviewer == null) return 0
     keeper.load()
     val ids = memoReviewLogRunningIds(keeper.entries.value, keeper.now())
     if (ids.isEmpty()) return 0
-    val look = reviewer.lookUp(ids) ?: return 0
+    val look = reviewer.lookUp(ids, cause) ?: return 0
     keeper.sawBoot(look.boot)
     keeper.looked(look.states, look.boot)
     return ids.size

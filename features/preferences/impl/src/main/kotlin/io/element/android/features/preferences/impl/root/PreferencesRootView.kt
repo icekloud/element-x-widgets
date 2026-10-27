@@ -341,6 +341,8 @@ private fun AppSettingsSection(
         JuneVoiceEnginePreference()
         // Element June: what the memo sync did with the photos and the proposals (shown only)
         JuneMemoDiagPreference()
+        // Element June 앱33: the look-up lines of the memo bot, shared as a text (never shown here)
+        JuneMemoCheckLogPreference()
         ListItem(
             content = { Text(stringResource(id = CommonStrings.common_media_upload_quality)) },
             leadingContent = ListItemContent.Icon(IconSource.Vector(CompoundIcons.Image())),
