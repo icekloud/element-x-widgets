@@ -19,6 +19,9 @@ class FakeJuneSpeechEngine(
     var gate: CompletableDeferred<Unit>? = null,
     var speakResult: Boolean = true,
     var speakFailure: Exception? = null,
+    /** 앱34: what the engine says the last focus request answered, and what the phone was doing. */
+    var focusOutcome: JuneFocusOutcome = JuneFocusOutcome.Failed,
+    var state: JunePhoneState? = null,
     private val onSpeak: (String) -> Unit = {},
 ) : JuneSpeechEngine, JuneVoiceLoadReport, JuneVoiceSpeakReport {
     override var lastLoadFailure: String? = null
@@ -47,8 +50,13 @@ class FakeJuneSpeechEngine(
         val result = focusResults.getOrElse(focusRequestCount) { focusResults.last() }
         focusRequestCount++
         hasFocus = result
+        if (result) focusOutcome = JuneFocusOutcome.Granted
         return result
     }
+
+    override fun lastFocusOutcome(): JuneFocusOutcome = focusOutcome
+
+    override fun phoneState(): JunePhoneState? = state
 
     override suspend fun open(): JuneSpeakResult? {
         openCount++

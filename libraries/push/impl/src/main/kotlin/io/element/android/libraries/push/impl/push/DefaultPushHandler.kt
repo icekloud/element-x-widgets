@@ -19,6 +19,7 @@ import io.element.android.libraries.push.impl.history.PushHistoryService
 import io.element.android.libraries.push.impl.history.onDiagnosticPush
 import io.element.android.libraries.push.impl.history.onInvalidPushReceived
 import io.element.android.libraries.push.impl.history.onUnableToRetrieveSession
+import io.element.android.libraries.push.impl.june.JunePushArrivals
 import io.element.android.libraries.push.impl.notifications.NotificationResultProcessor
 import io.element.android.libraries.push.impl.test.DefaultTestPush
 import io.element.android.libraries.push.impl.troubleshoot.DiagnosticPushHandler
@@ -74,6 +75,8 @@ class DefaultPushHandler(
         analyticsService.startLongRunningTransaction(AnalyticsLongRunningTransaction.PushToWorkManager(pushData.eventId.value), parent)
 
         Timber.tag(loggerTag.value).d("## handling pushData: ${pushData.roomId}/${pushData.eventId}")
+        // 앱34: when the push arrived, so the settings can say how long it took until its 🔊 line was read aloud
+        JunePushArrivals.mark(pushData.eventId.value, systemClock.epochMillis())
         if (buildMeta.lowPrivacyLoggingEnabled) {
             Timber.tag(loggerTag.value).d("## pushData: $pushData")
         }

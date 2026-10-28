@@ -7,11 +7,13 @@
 
 package io.element.android.libraries.push.impl.june
 
+import android.app.ActivityManager
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.content.getSystemService
@@ -27,6 +29,9 @@ import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
 
 private const val TAG = "JuneSpeechEngine"
+
+/** Value of AudioManager.AUDIOFOCUS_REQUEST_DELAYED, written here because that name only exists from API 26 on. */
+private const val AUDIOFOCUS_REQUEST_DELAYED = 2
 
 /**
  * Element June: [JuneSpeechEngine] using the Android text to speech engine in Korean.
@@ -49,6 +54,9 @@ class DefaultJuneSpeechEngine(
     private var tts: TextToSpeech? = null
     private var focusRequest: AudioFocusRequest? = null
     private var hasFocus = false
+
+    /** 앱34: what the last focus request answered (an AudioManager AUDIOFOCUS_REQUEST_ value), or null when none was made yet. */
+    @Volatile private var lastFocusResult: Int? = null
 
     /** Set when another app (a call for instance) takes the focus while reading: the reading stops. */
     @Volatile private var focusLost = false
@@ -87,7 +95,10 @@ class DefaultJuneSpeechEngine(
     @Suppress("DEPRECATION")
     private fun requestFocusLocked(): Boolean {
         if (hasFocus) return true
-        val audioManager = audioManager ?: return false
+        val audioManager = audioManager ?: run {
+            lastFocusResult = AudioManager.AUDIOFOCUS_REQUEST_FAILED
+            return false
+        }
         val result = runCatchingExceptions {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
@@ -100,10 +111,32 @@ class DefaultJuneSpeechEngine(
                 audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             }
         }.getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        lastFocusResult = result
         hasFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (hasFocus) focusLost = false
         Timber.tag(TAG).d("Audio focus request: $result, music playing: ${audioManager.isMusicActive}")
         return hasFocus
+    }
+
+    override fun lastFocusOutcome(): JuneFocusOutcome = when (lastFocusResult) {
+        null -> JuneFocusOutcome.NotAsked
+        AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> JuneFocusOutcome.Granted
+        AudioManager.AUDIOFOCUS_REQUEST_FAILED -> JuneFocusOutcome.Failed
+        AUDIOFOCUS_REQUEST_DELAYED -> JuneFocusOutcome.Delayed
+        else -> JuneFocusOutcome.Unknown
+    }
+
+    override fun phoneState(): JunePhoneState? = runCatchingExceptions {
+        val info = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(info)
+        JunePhoneState(
+            appState = juneAppStateOf(info.importance),
+            screenOn = context.getSystemService<PowerManager>()?.isInteractive == true,
+            musicActive = audioManager?.isMusicActive == true,
+        )
+    }.getOrElse {
+        Timber.tag(TAG).w(it, "Cannot read the state of the phone")
+        null
     }
 
     override suspend fun open(): JuneSpeakResult? {

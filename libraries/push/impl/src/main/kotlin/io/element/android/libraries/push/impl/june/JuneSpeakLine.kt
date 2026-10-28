@@ -127,11 +127,17 @@ internal fun juneSpeakBlock(enabled: Boolean, hasBluetoothOutput: Boolean, isInC
  */
 enum class JuneSpeakResult(val label: String) {
     Read("읽음"),
+
+    /** 앱34: read while the audio focus was refused, so the music of the other app was not lowered and both were heard together. */
+    ReadNoFocus("읽음(포커스 없이)"),
     NoSpeakerLine("🔊 줄 없음"),
     Disabled("설정 꺼짐"),
     NoBluetooth("블루투스 아님"),
     InCall("통화 중"),
     MediaMuted("음량 0"),
+
+    /** Up to 앱33 the lines were dropped when the focus was refused. 앱34 reads them anyway ([ReadNoFocus]), so this is not recorded
+     * anymore; it is kept so a value saved by an older version still reads the same way. */
     FocusRefused("포커스 거부"),
     NoKoreanVoice("한국어 음성 없음"),
     EngineNotReady("음성 엔진 준비 실패"),
@@ -153,14 +159,18 @@ internal fun juneSpeakResultText(result: JuneSpeakResult, epochMillis: Long, zon
     return "${result.label} $time"
 }
 
-internal data class JuneSpeakItem(val eventId: EventId, val text: String)
+/** Most lines kept waiting to be read: the older ones are dropped rather than read long after they arrived. */
+internal const val JUNE_SPEAK_QUEUE_MAX = 3
+
+/** A line waiting to be read. 앱34: [arrivalMillis] is when its push arrived in the app, when that is known. */
+internal data class JuneSpeakItem(val eventId: EventId, val text: String, val arrivalMillis: Long? = null)
 
 /**
  * Element June: lines waiting to be read aloud. Keeps at most [maxSize] lines, dropping the oldest one, and accepts each event only once
  * (the last [rememberedIds] event ids are remembered). Not thread safe.
  */
 internal class JuneSpeakQueue(
-    private val maxSize: Int = 3,
+    private val maxSize: Int = JUNE_SPEAK_QUEUE_MAX,
     private val rememberedIds: Int = 200,
 ) {
     private val items = ArrayDeque<JuneSpeakItem>()

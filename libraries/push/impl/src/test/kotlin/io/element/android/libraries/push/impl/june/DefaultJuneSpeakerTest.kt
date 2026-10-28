@@ -11,11 +11,13 @@ import com.google.common.truth.Truth.assertThat
 import io.element.android.libraries.matrix.api.core.EventId
 import io.element.android.libraries.matrix.test.A_SESSION_ID
 import io.element.android.libraries.push.impl.notifications.fixtures.aNotifiableMessageEvent
+import io.element.android.services.toolbox.api.systemclock.SystemClock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -45,7 +47,14 @@ class DefaultJuneSpeakerTest {
         keepAlive: JuneSpeakKeepAlive = FakeJuneSpeakKeepAlive(),
         statusStore: JuneSpeakStatusStore = FakeJuneSpeakStatusStore(),
         coroutineScope: CoroutineScope = backgroundScope,
-    ) = DefaultJuneSpeaker(engine = engine, keepAlive = keepAlive, statusStore = statusStore, coroutineScope = coroutineScope)
+    ) = DefaultJuneSpeaker(
+        engine = engine,
+        keepAlive = keepAlive,
+        statusStore = statusStore,
+        // 앱34: the virtual time of the test, so the times of the diagnosis can be checked
+        systemClock = SystemClock { testScheduler.currentTime },
+        coroutineScope = coroutineScope,
+    )
 
     /** Runs the reading, including the short waits (focus retries, ducking), but less than the line timeout. */
     private fun TestScope.settle() {
@@ -134,18 +143,97 @@ class DefaultJuneSpeakerTest {
     }
 
     @Test
-    fun `nothing is read when the focus is always refused, and the reason is recorded`() = runTest {
+    fun `a line whose focus is always refused is read anyway, and the outcome says it was read without it`() = runTest {
         val engine = FakeJuneSpeechEngine(focusResults = listOf(false))
         val status = FakeJuneSpeakStatusStore()
         val speaker = createSpeaker(engine, statusStore = status)
         speaker.onNotifiableEvents(listOf(aMessage(1)))
         settle()
-        assertThat(engine.spoken).isEmpty()
+        // 앱34: the line is read even without the audio focus (the music is then not lowered)
+        assertThat(engine.spoken).containsExactly("줄 1")
         assertThat(engine.focusRequestCount).isEqualTo(1 + JUNE_SPEAK_FOCUS_ATTEMPTS)
         assertThat(engine.closeCount).isEqualTo(1)
-        assertThat(status.results).containsExactly(JuneSpeakResult.FocusRefused)
+        assertThat(engine.hasFocus).isFalse()
+        assertThat(status.results).containsExactly(JuneSpeakResult.ReadNoFocus)
         // Not stuck
         speaker.awaitIdle(1.seconds)
+    }
+
+    @Test
+    fun `every waiting line is read when the focus is refused, in order, and the music is not waited for`() = runTest {
+        val engine = FakeJuneSpeechEngine(focusResults = listOf(false))
+        val status = FakeJuneSpeakStatusStore()
+        val speaker = createSpeaker(engine, statusStore = status)
+        speaker.onNotifiableEvents((1..2).map { aMessage(it) })
+        // Without the focus there is no music to lower, so the reading does not wait for the ducking
+        advanceTimeBy(JUNE_SPEAK_FOCUS_RETRY_DELAY * (JUNE_SPEAK_FOCUS_ATTEMPTS - 1) + 1.milliseconds)
+        runCurrent()
+        assertThat(engine.spoken).containsExactly("줄 1", "줄 2").inOrder()
+        assertThat(engine.focusWhileSpeaking).containsExactly(false, false)
+        assertThat(status.results).containsExactly(JuneSpeakResult.ReadNoFocus, JuneSpeakResult.ReadNoFocus)
+    }
+
+    @Test
+    fun `the outcome of a reading without the focus carries the answer of the phone, the state and the times`() = runTest {
+        val phone = JunePhoneState(appState = JuneAppState.Cached, screenOn = false, musicActive = true)
+        val engine = FakeJuneSpeechEngine(focusResults = listOf(false), focusOutcome = JuneFocusOutcome.Failed, state = phone)
+        val status = FakeJuneSpeakStatusStore()
+        val speaker = createSpeaker(engine, statusStore = status)
+        JunePushArrivals.clear()
+        JunePushArrivals.mark("\$event1", testScheduler.currentTime)
+        speaker.onNotifiableEvents(listOf(aMessage(1)))
+        settle()
+        val diag = status.diags.single()
+        assertThat(status.results).containsExactly(JuneSpeakResult.ReadNoFocus)
+        assertThat(diag?.focus).isEqualTo(JuneFocusOutcome.Failed)
+        assertThat(diag?.focusAttempts).isEqualTo(JUNE_SPEAK_FOCUS_ATTEMPTS)
+        assertThat(diag?.phone).isEqualTo(phone)
+        // The two focus retries happened between the push and the reading
+        assertThat(diag?.pushToSpeakMillis).isEqualTo(JUNE_SPEAK_FOCUS_RETRY_DELAY.inWholeMilliseconds * (JUNE_SPEAK_FOCUS_ATTEMPTS - 1))
+        assertThat(diag?.engineOpenMillis).isEqualTo(0L)
+    }
+
+    @Test
+    fun `a line read with the focus says so, with the state of the phone`() = runTest {
+        val phone = JunePhoneState(appState = JuneAppState.Top, screenOn = true, musicActive = false)
+        val engine = FakeJuneSpeechEngine(state = phone)
+        val status = FakeJuneSpeakStatusStore()
+        val speaker = createSpeaker(engine, statusStore = status)
+        speaker.onNotifiableEvents(listOf(aMessage(1)))
+        settle()
+        assertThat(status.results).containsExactly(JuneSpeakResult.Read)
+        assertThat(status.diags.single()?.focus).isEqualTo(JuneFocusOutcome.Granted)
+        assertThat(status.diags.single()?.focusAttempts).isEqualTo(1)
+        assertThat(status.diags.single()?.phone).isEqualTo(phone)
+    }
+
+    @Test
+    fun `a call or a muted phone still stops the reading, with or without the focus`() = runTest {
+        listOf(JuneSpeakBlock.InCall to JuneSpeakResult.InCall, JuneSpeakBlock.MediaMuted to JuneSpeakResult.MediaMuted).forEach { pair ->
+            val engine = FakeJuneSpeechEngine(block = pair.first, focusResults = listOf(false))
+            val status = FakeJuneSpeakStatusStore()
+            val speaker = createSpeaker(engine, statusStore = status)
+            speaker.onNotifiableEvents(listOf(aMessage(1)))
+            settle()
+            assertThat(engine.spoken).isEmpty()
+            assertThat(engine.focusRequestCount).isEqualTo(0)
+            assertThat(status.results).containsExactly(pair.second)
+        }
+    }
+
+    @Test
+    fun `the time the engine took to open is measured`() = runTest {
+        val engine = object : JuneSpeechEngine by FakeJuneSpeechEngine() {
+            override suspend fun open(): JuneSpeakResult? {
+                delay(2.seconds)
+                return null
+            }
+        }
+        val status = FakeJuneSpeakStatusStore()
+        val speaker = createSpeaker(engine, statusStore = status)
+        speaker.onNotifiableEvents(listOf(aMessage(1)))
+        settle()
+        assertThat(status.diags.single()?.engineOpenMillis).isEqualTo(2_000L)
     }
 
     @Test

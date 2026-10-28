@@ -35,8 +35,14 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import kotlin.time.Duration.Companion.seconds
 
-/** Longest time the keep alive work waits for the lines to be read. */
-internal val JUNE_SPEAK_KEEP_ALIVE = 90.seconds
+/**
+ * Longest time the keep alive work waits for the lines to be read.
+ *
+ * 앱34: the queue holds up to [JUNE_SPEAK_QUEUE_MAX] lines and each line may take up to [JUNE_SPEAK_LINE_TIMEOUT], so a work ending
+ * sooner could let the system freeze the process in the middle of a reading. It is the longest a reading can last, plus the short
+ * waits before it (opening the engine, asking for the focus again).
+ */
+internal val JUNE_SPEAK_KEEP_ALIVE = JUNE_SPEAK_LINE_TIMEOUT * JUNE_SPEAK_QUEUE_MAX + 30.seconds
 
 private const val WORK_NAME = "june_speak"
 

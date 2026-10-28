@@ -23,7 +23,9 @@ class DefaultJuneSpeakStatusStore(
     @ApplicationContext private val context: Context,
     private val systemClock: SystemClock,
 ) : JuneSpeakStatusStore {
-    override fun record(result: JuneSpeakResult) {
-        JuneSettings.setBtSpeakStatus(context, juneSpeakResultText(result, systemClock.epochMillis()))
+    override fun record(result: JuneSpeakResult) = record(result, null)
+
+    override fun record(result: JuneSpeakResult, diag: JuneSpeakDiag?) {
+        JuneSettings.setBtSpeakStatus(context, juneSpeakStatusText(result, systemClock.epochMillis(), diag))
     }
 }

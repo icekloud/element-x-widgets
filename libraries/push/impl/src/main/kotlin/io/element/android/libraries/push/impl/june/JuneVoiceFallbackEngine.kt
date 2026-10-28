@@ -86,6 +86,11 @@ internal class JuneVoiceFallbackEngine(
 
     override fun requestFocus(): Boolean = phone.requestFocus()
 
+    /** 앱34: the focus and the state of the phone are the ones of the phone engine, whichever voice reads. */
+    override fun lastFocusOutcome(): JuneFocusOutcome = phone.lastFocusOutcome()
+
+    override fun phoneState(): JunePhoneState? = phone.phoneState()
+
     override suspend fun open(): JuneSpeakResult? {
         val choice = chosenEngine()
         val chosen = engineOf(choice)
